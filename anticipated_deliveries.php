@@ -867,10 +867,10 @@ if (!empty($project['account_id'])) {
 
     <!-- Leg Editor Modal -->
     <div class="flow-modal-overlay" id="legEditorModal">
-        <div class="flow-modal flow-modal-wide">
-            <div class="flow-modal-header">
-                <div class="flow-modal-header-icon leg-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <div class="flow-modal" style="max-width: 900px;">
+            <div class="flow-modal-header" style="background: linear-gradient(135deg, #1a365d 0%, #2d4a7a 100%);">
+                <div class="flow-modal-header-icon" style="background: rgba(255,255,255,0.15);">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
                         <rect x="1" y="3" width="15" height="13"/>
                         <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
                         <circle cx="5.5" cy="18.5" r="2.5"/>
@@ -878,110 +878,151 @@ if (!empty($project['account_id'])) {
                     </svg>
                 </div>
                 <div class="flow-modal-header-text">
-                    <h3 id="legModalTitle">Configure Transport</h3>
-                    <p id="legModalSubtitle">Set transport details for this leg</p>
+                    <h3 id="legModalTitle" style="color: white;">Configure Shipping</h3>
+                    <p id="legModalSubtitle" style="color: rgba(255,255,255,0.7);">Set transport details for this route</p>
                 </div>
-                <button type="button" class="flow-modal-close" onclick="closeLegEditor()">
+                <button type="button" class="flow-modal-close" onclick="closeLegEditor()" style="color: white;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                 </button>
             </div>
-            <div class="flow-modal-body" id="legModalBody">
+            <div class="flow-modal-body" id="legModalBody" style="padding: 28px; overflow-y: auto; max-height: calc(90vh - 160px);">
                 <input type="hidden" id="editLegId" value="">
                 <input type="hidden" id="legFromStopId" value="">
                 <input type="hidden" id="legToStopId" value="">
+                <input type="hidden" id="legTriggersMilestone" value="">
 
-                <div class="modal-form-row">
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/></svg>
-                            Transport Mode
-                        </label>
-                        <select class="modal-form-input" id="legTransportMode">
-                            <option value="truck">Truck</option>
-                            <option value="rail">Rail</option>
-                            <option value="ocean">Ocean</option>
-                            <option value="air">Air</option>
-                        </select>
-                    </div>
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                            Trucks Required
-                        </label>
-                        <input type="number" class="modal-form-input" id="legTrucksRequired" placeholder="Auto-calculated if empty" oninput="calculateLegTotal()">
+                <!-- Inventory Overview Card -->
+                <div class="leg-inventory-card" id="legInventoryCard">
+                    <div class="leg-inventory-stats">
+                        <div class="leg-inv-stat">
+                            <span class="leg-inv-stat-value" id="legAvailableTrucks">--</span>
+                            <span class="leg-inv-stat-label">Available Trucks</span>
+                        </div>
+                        <div class="leg-inv-stat">
+                            <span class="leg-inv-stat-value" id="legAvailablePallets">--</span>
+                            <span class="leg-inv-stat-label">Pallets</span>
+                        </div>
+                        <div class="leg-inv-stat">
+                            <span class="leg-inv-stat-value" id="legAvailableModules">--</span>
+                            <span class="leg-inv-stat-label">Modules</span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="modal-form-row">
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">Start Date</label>
-                        <input type="text" class="modal-form-input flatpickr-date" id="legStartDate" placeholder="Select start date">
-                    </div>
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">End Date</label>
-                        <input type="text" class="modal-form-input flatpickr-date" id="legEndDate" placeholder="Select end date">
-                    </div>
-                </div>
-
-                <div class="modal-form-row">
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">Delivery Rate</label>
-                        <input type="number" class="modal-form-input" id="legDeliveryRate" placeholder="e.g., 5" step="0.1">
-                    </div>
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">Rate Unit</label>
-                        <select class="modal-form-input" id="legRateUnit">
-                            <option value="per_day">Per Day</option>
-                            <option value="per_week" selected>Per Week</option>
-                            <option value="per_month">Per Month</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="modal-section-divider">
-                    <span>Cost Details</span>
-                </div>
-
-                <div class="modal-form-row">
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">Freight Cost / Truck</label>
-                        <input type="number" class="modal-form-input" id="legFreightCost" placeholder="$0.00" step="0.01" oninput="calculateLegTotal()">
-                    </div>
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">Accessorial Cost / Truck</label>
-                        <input type="number" class="modal-form-input" id="legAccessorialCost" placeholder="$0.00" step="0.01" oninput="calculateLegTotal()">
+                <!-- Transport Mode + Trucks Row -->
+                <div class="leg-form-section">
+                    <div class="leg-form-row-3">
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Transport Mode</label>
+                            <div class="leg-transport-modes" id="legTransportModeSelector">
+                                <button type="button" class="leg-mode-btn active" data-mode="truck" onclick="selectLegTransportMode('truck')">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                                    Truck
+                                </button>
+                                <button type="button" class="leg-mode-btn" data-mode="rail" onclick="selectLegTransportMode('rail')">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/><path d="M12 3v8"/><path d="M8 19l-2 3"/><path d="M16 19l2 3"/></svg>
+                                    Rail
+                                </button>
+                                <button type="button" class="leg-mode-btn" data-mode="ocean" onclick="selectLegTransportMode('ocean')">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2s2.4-1 3.5-1.5"/><path d="M12 10V4l4 2-4 2"/><path d="M12 10l-4-2"/></svg>
+                                    Ocean
+                                </button>
+                                <button type="button" class="leg-mode-btn" data-mode="air" onclick="selectLegTransportMode('air')">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2"/></svg>
+                                    Air
+                                </button>
+                            </div>
+                            <select class="modal-form-input" id="legTransportMode" style="display:none;">
+                                <option value="truck">Truck</option>
+                                <option value="rail">Rail</option>
+                                <option value="ocean">Ocean</option>
+                                <option value="air">Air</option>
+                            </select>
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Trucks to Ship</label>
+                            <input type="number" class="modal-form-input" id="legTrucksRequired" placeholder="All available" min="1" oninput="calculateLegTotal(); autoCalcEndDate();">
+                        </div>
                     </div>
                 </div>
 
-                <div class="modal-total-row" style="background: var(--gray-50); border-radius: 8px; padding: 12px 16px; margin-top: 16px;">
-                    <span class="modal-total-label">Estimated Total:</span>
-                    <span class="modal-total-value" id="legTotalDisplay">$0.00</span>
+                <!-- Schedule Section -->
+                <div class="leg-form-section">
+                    <div class="leg-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        Schedule
+                    </div>
+                    <div class="leg-form-row-3">
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Start Date</label>
+                            <input type="text" class="modal-form-input flatpickr-date" id="legStartDate" placeholder="Select date" oninput="autoCalcEndDate();">
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Delivery Rate</label>
+                            <div class="leg-rate-group">
+                                <input type="number" class="modal-form-input" id="legDeliveryRate" placeholder="e.g., 5" step="1" min="1" oninput="autoCalcEndDate();" style="border-radius: 8px 0 0 8px;">
+                                <select class="modal-form-input" id="legRateUnit" onchange="autoCalcEndDate();" style="border-radius: 0 8px 8px 0; border-left: none; max-width: 110px;">
+                                    <option value="per_day">/ day</option>
+                                    <option value="per_week" selected>/ week</option>
+                                    <option value="per_month">/ month</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Est. End Date</label>
+                            <input type="text" class="modal-form-input" id="legEndDate" placeholder="Auto-calculated" readonly style="background: var(--gray-50); color: var(--gray-600);">
+                        </div>
+                    </div>
                 </div>
 
-                <div class="modal-form-group" style="margin-top: 16px;">
-                    <label class="modal-form-label">Triggers Milestone</label>
-                    <select class="modal-form-input" id="legTriggersMilestone">
-                        <option value="">None</option>
-                        <option value="shipping">Shipping</option>
-                        <option value="customs_cleared">Customs Clearance</option>
-                        <option value="project_delivery">Project Delivery</option>
-                    </select>
+                <!-- Cost Details Section -->
+                <div class="leg-form-section">
+                    <div class="leg-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                        Cost Details
+                    </div>
+                    <div class="leg-form-row-3">
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Freight Cost / Truck</label>
+                            <div class="leg-input-prefix">
+                                <span class="leg-prefix">$</span>
+                                <input type="number" class="modal-form-input" id="legFreightCost" placeholder="0.00" step="0.01" oninput="calculateLegTotal()">
+                            </div>
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-form-label" style="display: flex; align-items: center; gap: 4px;">
+                                Accessorial / Truck
+                                <span class="leg-tooltip-trigger" title="TONUs, driver detention, lumper fees, fuel surcharges, and other miscellaneous charges">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                </span>
+                            </label>
+                            <div class="leg-input-prefix">
+                                <span class="leg-prefix">$</span>
+                                <input type="number" class="modal-form-input" id="legAccessorialCost" placeholder="0.00" step="0.01" oninput="calculateLegTotal()">
+                            </div>
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-form-label">Estimated Total</label>
+                            <div class="leg-total-display" id="legTotalDisplay">$0.00</div>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="modal-form-group" style="margin-top: 16px;">
+                <!-- Notes -->
+                <div class="modal-form-group" style="margin-top: 8px;">
                     <label class="modal-form-label">Notes</label>
-                    <textarea class="modal-form-input" id="legNotes" rows="2" placeholder="Optional notes about this transport leg"></textarea>
+                    <textarea class="modal-form-input" id="legNotes" rows="2" placeholder="Optional notes about this shipment" style="resize: vertical;"></textarea>
                 </div>
             </div>
             <div class="flow-modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeLegEditor()">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveLegEditor()">
+                <button type="button" class="btn btn-primary" onclick="saveLegEditor()" style="background: linear-gradient(135deg, #1a365d 0%, #2d4a7a 100%); border-color: #1a365d;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"/>
                     </svg>
-                    Save Transport
+                    Save Shipping
                 </button>
             </div>
         </div>

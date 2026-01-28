@@ -142,13 +142,13 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                             <!-- PO Execution Date -->
                             <div class="po-execution-section">
                                 <div class="section-header">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2">
                                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                                         <line x1="16" y1="2" x2="16" y2="6"/>
                                         <line x1="8" y1="2" x2="8" y2="6"/>
                                         <line x1="3" y1="10" x2="21" y2="10"/>
                                     </svg>
-                                    <span>PO Execution Date</span>
+                                    <span style="color: #dc3545;">PO Execution Date <span style="color: #dc3545;">*</span></span>
                                 </div>
                                 <div class="po-execution-input">
                                     <input type="text" class="form-input flatpickr-date po-date-input"
@@ -1341,8 +1341,9 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 
 /* PO Execution Section */
 .po-execution-section {
-    background: linear-gradient(135deg, rgba(72, 140, 154, 0.05) 0%, rgba(58, 110, 127, 0.05) 100%);
-    border: 1px solid rgba(72, 140, 154, 0.2);
+    background: linear-gradient(135deg, rgba(220, 53, 69, 0.03) 0%, rgba(220, 53, 69, 0.06) 100%);
+    border: 1px solid rgba(220, 53, 69, 0.25);
+    border-left: 3px solid #dc3545;
     border-radius: 12px;
     padding: 20px;
 }

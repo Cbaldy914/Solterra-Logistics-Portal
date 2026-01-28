@@ -288,7 +288,13 @@
             document.querySelectorAll('.flatpickr-date').forEach(input => {
                 const fp = flatpickr(input, {
                     dateFormat: 'Y-m-d',
-                    allowInput: true
+                    allowInput: true,
+                    onChange: function(selectedDates, dateStr) {
+                        // Auto-calculate end date when start date changes
+                        if (input.id === 'legStartDate' && typeof autoCalcEndDate === 'function') {
+                            autoCalcEndDate();
+                        }
+                    }
                 });
                 datePickerInstances.push(fp);
             });
@@ -1521,19 +1527,35 @@
             // Set currentEditingLeg for saveLegEditor compatibility
             currentEditingLeg = leg;
 
-            // Determine title and get stop names for context
-            let title = leg ? 'Edit Shipping Leg' : 'Configure Shipping';
-            const fromStop = (leg?.from_stop_id || fromStopId) ? workingState.stops.find(s => s.id == (leg?.from_stop_id || fromStopId)) : null;
-            const toStop = (leg?.to_stop_id || toStopId) ? workingState.stops.find(s => s.id == (leg?.to_stop_id || toStopId)) : null;
+            const effectiveFromId = leg?.from_stop_id || fromStopId;
+            const effectiveToId = leg?.to_stop_id || toStopId;
+            const fromStop = effectiveFromId ? workingState.stops.find(s => s.id == effectiveFromId) : null;
+            const toStop = effectiveToId ? workingState.stops.find(s => s.id == effectiveToId) : null;
 
-            if (fromStop && toStop) {
-                title = `Configure Shipping: ${fromStop.location_name} → ${toStop.location_name}`;
-            }
+            // Title
+            const fromName = fromStop?.location_name || 'Origin';
+            const toName = toStop?.location_name || 'Destination';
+            document.getElementById('legModalTitle').textContent = `${fromName} \u2192 ${toName}`;
+            document.getElementById('legModalSubtitle').textContent = 'Set transport details for this route';
 
-            document.getElementById('legModalTitle').textContent = title;
+            // Populate inventory card
+            const totalModules = workingState.moduleAllocations.reduce((sum, a) => sum + (a.quantity || 0), 0);
+            const avgModsPerPallet = workingState.moduleAllocations[0]?.modules_per_pallet || 30;
+            const avgPalletsPerTruck = workingState.moduleAllocations[0]?.pallets_per_truck || 20;
+            const totalPallets = Math.ceil(totalModules / avgModsPerPallet);
+            const totalTrucks = Math.ceil(totalPallets / avgPalletsPerTruck);
+
+            const avTrucks = document.getElementById('legAvailableTrucks');
+            const avPallets = document.getElementById('legAvailablePallets');
+            const avModules = document.getElementById('legAvailableModules');
+            if (avTrucks) avTrucks.textContent = totalTrucks;
+            if (avPallets) avPallets.textContent = totalPallets;
+            if (avModules) avModules.textContent = totalModules;
+
+            // Populate form
             document.getElementById('editLegId').value = leg?.id || '';
-            document.getElementById('legFromStopId').value = leg?.from_stop_id || fromStopId || '';
-            document.getElementById('legToStopId').value = leg?.to_stop_id || toStopId || '';
+            document.getElementById('legFromStopId').value = effectiveFromId || '';
+            document.getElementById('legToStopId').value = effectiveToId || '';
             document.getElementById('legTransportMode').value = leg?.transport_mode || 'truck';
             document.getElementById('legStartDate').value = leg?.start_date || '';
             document.getElementById('legEndDate').value = leg?.end_date || '';
@@ -1545,17 +1567,46 @@
             document.getElementById('legTriggersMilestone').value = leg?.triggers_milestone || '';
             document.getElementById('legNotes').value = leg?.notes || '';
 
+            // Set active transport mode button
+            selectLegTransportMode(leg?.transport_mode || 'truck');
+
             calculateLegTotal();
 
             document.getElementById('legEditorModal').classList.add('active');
             initializeDatePickers();
         }
 
-        function closeLegEditorModal() {
-            const modal = document.getElementById('legEditorModal');
-            if (modal) {
-                modal.classList.remove('active');
+        function selectLegTransportMode(mode) {
+            const selector = document.getElementById('legTransportModeSelector');
+            const hiddenSelect = document.getElementById('legTransportMode');
+            if (selector) {
+                selector.querySelectorAll('.leg-mode-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.mode === mode);
+                });
             }
+            if (hiddenSelect) hiddenSelect.value = mode;
+        }
+
+        function autoCalcEndDate() {
+            const startDate = document.getElementById('legStartDate')?.value;
+            const rate = parseInt(document.getElementById('legDeliveryRate')?.value, 10);
+            const unit = document.getElementById('legRateUnit')?.value;
+            const trucks = parseInt(document.getElementById('legTrucksRequired')?.value, 10) || getTotalTrucks();
+
+            if (!startDate || !rate || rate <= 0 || !trucks) {
+                document.getElementById('legEndDate').value = '';
+                return;
+            }
+
+            const endDate = calculateEndDate(startDate, rate, unit, trucks);
+            if (endDate) {
+                document.getElementById('legEndDate').value = endDate;
+            }
+        }
+
+        // Alias for closeLegEditor (used by some code paths)
+        function closeLegEditorModal() {
+            closeLegEditor();
         }
 
         function calculateLegTotal() {
@@ -1567,48 +1618,9 @@
             document.getElementById('legTotalDisplay').textContent = '$' + total.toLocaleString('en-US', { minimumFractionDigits: 2 });
         }
 
+        // Alias for saveLegEditor (used by some code paths)
         function saveLeg() {
-            const legId = document.getElementById('editLegId').value;
-            const trucks = parseInt(document.getElementById('legTrucksRequired').value) || getTotalTrucks();
-            const freightCost = parseFloat(document.getElementById('legFreightCost').value) || 0;
-            const accessorialCost = parseFloat(document.getElementById('legAccessorialCost').value) || 0;
-
-            const legData = {
-                from_stop_id: document.getElementById('legFromStopId').value,
-                to_stop_id: document.getElementById('legToStopId').value,
-                transport_mode: document.getElementById('legTransportMode').value,
-                start_date: document.getElementById('legStartDate').value || null,
-                end_date: document.getElementById('legEndDate').value || null,
-                delivery_rate: parseFloat(document.getElementById('legDeliveryRate').value) || null,
-                delivery_rate_unit: document.getElementById('legRateUnit').value,
-                trucks_required: trucks,
-                freight_cost_per_truck: freightCost,
-                accessorial_cost_per_truck: accessorialCost,
-                total_freight_cost: trucks * (freightCost + accessorialCost),
-                triggers_milestone: document.getElementById('legTriggersMilestone').value || null,
-                notes: document.getElementById('legNotes').value
-            };
-
-            if (legId) {
-                // Update existing leg
-                const legIndex = workingState.legs.findIndex(l => l.id == legId);
-                if (legIndex >= 0) {
-                    legData.id = legId;
-                    workingState.legs[legIndex] = { ...workingState.legs[legIndex], ...legData };
-                }
-            } else {
-                // New leg
-                legData.id = 'new_' + Date.now();
-                workingState.legs.push(legData);
-            }
-
-            closeLegEditorModal();
-            showToast('Leg updated. Remember to save the projection!', 'success');
-            markAsUnsaved();
-            renderJourneyPlan();
-            updateMapFromState();
-            updateTimelineChart();
-            updateBadges();
+            saveLegEditor();
         }
 
         // ==================== LOGISTICS PLAN (INLINE) ====================
@@ -2183,11 +2195,10 @@
             const defsContent = svgContainer.querySelector('defs')?.outerHTML || '';
             svgContainer.innerHTML = defsContent;
 
-            // Remove any existing leg badges
-            layoutContainer.querySelectorAll('.journey-leg-badge').forEach(badge => badge.remove());
+            // Remove any existing leg badges and popovers
+            layoutContainer.querySelectorAll('.journey-leg-badge, .leg-popover').forEach(el => el.remove());
 
             const legs = workingState.legs || [];
-            const stops = workingState.stops || [];
 
             legs.forEach(leg => {
                 const fromNode = layoutContainer.querySelector(`[data-stop-id="${leg.from_stop_id}"]`);
@@ -2214,11 +2225,115 @@
                 path.setAttribute('stroke', 'url(#legGradient)');
                 path.setAttribute('marker-end', 'url(#legArrow)');
                 path.style.cursor = 'pointer';
-                path.onclick = () => openLegEditorModal(leg.id);
+
+                // Click on path to show popover
+                path.onclick = (e) => {
+                    e.stopPropagation();
+                    showLegPopover(leg, (fromX + toX) / 2, (fromY + toY) / 2);
+                };
 
                 svgContainer.appendChild(path);
 
+                // Add transport mode badge on the line midpoint
+                const badgeMidX = (fromX + toX) / 2;
+                const badgeMidY = (fromY + toY) / 2;
+                const modeIcons = {
+                    truck: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>',
+                    rail: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/></svg>',
+                    ocean: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2"/></svg>',
+                    air: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2"/></svg>'
+                };
+
+                const badge = document.createElement('div');
+                badge.className = 'journey-leg-badge';
+                badge.dataset.legId = leg.id;
+                badge.style.left = `${badgeMidX}px`;
+                badge.style.top = `${badgeMidY}px`;
+                badge.style.transform = 'translate(-50%, -50%)';
+                badge.innerHTML = modeIcons[leg.transport_mode] || modeIcons.truck;
+                badge.title = `${(leg.transport_mode || 'truck').charAt(0).toUpperCase() + (leg.transport_mode || 'truck').slice(1)} - Click for details`;
+                badge.onclick = (e) => {
+                    e.stopPropagation();
+                    showLegPopover(leg, badgeMidX, badgeMidY);
+                };
+
+                layoutContainer.appendChild(badge);
             });
+        }
+
+        function showLegPopover(leg, x, y) {
+            const layoutContainer = document.getElementById('journeyFlowLayout');
+            if (!layoutContainer) return;
+
+            // Remove any existing popover
+            layoutContainer.querySelectorAll('.leg-popover').forEach(el => el.remove());
+
+            const fromStop = workingState.stops.find(s => s.id == leg.from_stop_id);
+            const toStop = workingState.stops.find(s => s.id == leg.to_stop_id);
+            const mode = (leg.transport_mode || 'truck').charAt(0).toUpperCase() + (leg.transport_mode || 'truck').slice(1);
+            const trucks = leg.trucks_required || '--';
+            const cost = leg.total_freight_cost ? '$' + Number(leg.total_freight_cost).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '--';
+            const startDate = leg.start_date ? formatDateForDisplay(leg.start_date) : '--';
+            const endDate = leg.end_date ? formatDateForDisplay(leg.end_date) : '--';
+
+            const popover = document.createElement('div');
+            popover.className = 'leg-popover';
+            popover.style.left = `${x}px`;
+            popover.style.top = `${y + 20}px`;
+            popover.innerHTML = `
+                <div class="leg-popover-header">
+                    <span class="leg-popover-title">${mode} Shipment</span>
+                    <button type="button" class="leg-popover-close" onclick="this.closest('.leg-popover').remove()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="leg-popover-body">
+                    <div class="leg-popover-row">
+                        <span class="leg-popover-label">Trucks</span>
+                        <span class="leg-popover-value">${trucks}</span>
+                    </div>
+                    <div class="leg-popover-row">
+                        <span class="leg-popover-label">Schedule</span>
+                        <span class="leg-popover-value">${startDate} - ${endDate}</span>
+                    </div>
+                    <div class="leg-popover-row">
+                        <span class="leg-popover-label">Total Cost</span>
+                        <span class="leg-popover-value" style="font-weight: 700; color: var(--primary);">${cost}</span>
+                    </div>
+                </div>
+                <div class="leg-popover-actions">
+                    <button type="button" class="leg-popover-btn edit" onclick="this.closest('.leg-popover').remove(); openLegEditorModal('${leg.id}');">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        Edit
+                    </button>
+                    <button type="button" class="leg-popover-btn delete" onclick="this.closest('.leg-popover').remove(); deleteLeg('${leg.id}');">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Delete
+                    </button>
+                </div>
+            `;
+
+            layoutContainer.appendChild(popover);
+
+            // Close popover when clicking elsewhere
+            const closeHandler = (e) => {
+                if (!popover.contains(e.target)) {
+                    popover.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+
+        function deleteLeg(legId) {
+            if (!confirm('Delete this shipping route? Inventory will be returned to the previous location.')) return;
+
+            workingState.legs = workingState.legs.filter(l => l.id != legId);
+            markAsUnsaved();
+            renderJourneyFlow();
+            updateMapFromState();
+            updateTimelineChart();
+            showToast('Shipping route deleted. Inventory returned to previous location.', 'info');
         }
 
         function bindJourneyFlowListeners() {
@@ -3027,6 +3142,7 @@
                         <div class="modal-fees-column-headers" id="modalFeesHeaders" style="${fees.length === 0 ? 'display: none;' : ''}">
                             <span>Fee Name</span>
                             <span>Amount</span>
+                            <span>Billing Unit</span>
                             <span>When Charged</span>
                             <span></span>
                         </div>
@@ -3077,15 +3193,13 @@
             return fees.map((fee, index) => `
                 <div class="modal-fee-item" data-fee-index="${index}">
                     <input type="text" class="modal-form-input" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee name" onchange="updateModalFee(${index}, 'fee_name', this.value)">
-                    <div class="modal-input-group">
-                        <input type="number" class="modal-form-input" value="${fee.rate || ''}" placeholder="0" step="0.01" onchange="updateModalFee(${index}, 'rate', this.value)">
-                        <select class="modal-input-suffix" style="border-left: 1px solid var(--gray-200); background: var(--gray-50);" onchange="updateModalFee(${index}, 'rate_unit', this.value)">
-                            <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
-                            <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
-                            <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per SQFT</option>
-                            <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
-                        </select>
-                    </div>
+                    <input type="number" class="modal-form-input" value="${fee.rate || ''}" placeholder="$0" step="0.01" onchange="updateModalFee(${index}, 'rate', this.value)">
+                    <select class="modal-form-input" onchange="updateModalFee(${index}, 'rate_unit', this.value)">
+                        <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
+                        <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
+                        <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per SQFT</option>
+                        <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
+                    </select>
                     <select class="modal-form-input" onchange="updateModalFee(${index}, 'fee_type', this.value)">
                         <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
                         <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
@@ -3204,140 +3318,18 @@
 
         // ==================== LEG EDITOR MODAL ====================
 
+        // openLegEditor delegates to the static-DOM version
         function openLegEditor(legId) {
-            const leg = workingState.legs.find(l => l.id == legId);
-            if (!leg) return;
-
-            currentEditingLeg = leg;
-
-            const modal = document.getElementById('legEditorModal');
-            const title = document.getElementById('legModalTitle');
-            const subtitle = document.getElementById('legModalSubtitle');
-            const body = document.getElementById('legModalBody');
-
-            // Find from/to stops for context
-            const fromStop = workingState.stops.find(s => s.id == leg.from_stop_id);
-            const toStop = workingState.stops.find(s => s.id == leg.to_stop_id);
-
-            title.textContent = 'Configure Transport';
-            subtitle.textContent = `${fromStop?.location_name || 'Origin'} → ${toStop?.location_name || 'Destination'}`;
-
-            const maxTrucks = getTotalTrucks();
-            const trucks = parseInt(leg.trucks_required, 10) || maxTrucks;
-            const cadence = parseInt(leg.delivery_rate, 10) || 0;
-            const cadenceUnit = leg.delivery_rate_unit || 'per_week';
-
-            let html = `
-                <!-- Transport Mode -->
-                <div class="transport-mode-selector">
-                    <div class="transport-mode-option ${leg.transport_mode === 'truck' ? 'selected' : ''}" data-mode="truck" onclick="selectTransportMode('truck')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-                        <span class="mode-label">Truck</span>
-                    </div>
-                    <div class="transport-mode-option ${leg.transport_mode === 'ocean' ? 'selected' : ''}" data-mode="ocean" onclick="selectTransportMode('ocean')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2 2.4 0 2.4-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M12 10v4"/></svg>
-                        <span class="mode-label">Ocean</span>
-                    </div>
-                    <div class="transport-mode-option ${leg.transport_mode === 'rail' ? 'selected' : ''}" data-mode="rail" onclick="selectTransportMode('rail')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/></svg>
-                        <span class="mode-label">Rail</span>
-                    </div>
-                    <div class="transport-mode-option ${leg.transport_mode === 'air' ? 'selected' : ''}" data-mode="air" onclick="selectTransportMode('air')">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2"/></svg>
-                        <span class="mode-label">Air</span>
-                    </div>
-                </div>
-
-                <div class="modal-form-row">
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/></svg>
-                            Trucks Required <span style="font-weight: 400; color: var(--gray-500);">(max ${maxTrucks})</span>
-                        </label>
-                        <input type="number" class="modal-form-input" id="legTrucks" value="${trucks}" min="1" max="${maxTrucks}">
-                    </div>
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                            Start Date
-                        </label>
-                        <input type="text" class="modal-form-input flatpickr-date" id="legStartDate" value="${leg.start_date || ''}" placeholder="Select date">
-                    </div>
-                </div>
-
-                <div class="modal-form-row">
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                            Delivery Cadence
-                        </label>
-                        <div class="modal-input-group">
-                            <input type="number" class="modal-form-input" id="legCadence" value="${cadence}" min="1" placeholder="0">
-                            <select class="modal-input-suffix" id="legCadenceUnit" style="min-width: 80px;">
-                                <option value="per_week" ${cadenceUnit === 'per_week' ? 'selected' : ''}>/week</option>
-                                <option value="per_day" ${cadenceUnit === 'per_day' ? 'selected' : ''}>/day</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="modal-form-group">
-                        <label class="modal-form-label">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                            Freight Cost per Truck
-                        </label>
-                        <div class="modal-input-group">
-                            <span class="modal-input-suffix" style="border-radius: var(--radius-sm) 0 0 var(--radius-sm); border-right: none;">$</span>
-                            <input type="number" class="modal-form-input" id="legFreightCost" value="${leg.freight_cost_per_truck || ''}" step="0.01" placeholder="0.00" style="border-radius: 0 var(--radius-sm) var(--radius-sm) 0;">
-                        </div>
-                    </div>
-                </div>
-
-                <div class="modal-total-row" style="margin-top: 24px;">
-                    <span class="modal-total-label">Total Freight Cost:</span>
-                    <span class="modal-total-value" id="legTotalCost">$${(leg.total_freight_cost || 0).toLocaleString()}</span>
-                </div>
-            `;
-
-            body.innerHTML = html;
-
-            // Initialize date picker
-            const dateInput = body.querySelector('.flatpickr-date');
-            if (dateInput && typeof flatpickr !== 'undefined') {
-                flatpickr(dateInput, {
-                    dateFormat: 'Y-m-d',
-                    allowInput: true
-                });
-            }
-
-            // Add event listeners for real-time calculation
-            const trucksInput = document.getElementById('legTrucks');
-            const freightInput = document.getElementById('legFreightCost');
-
-            const updateTotal = () => {
-                const trucks = parseInt(trucksInput?.value, 10) || 0;
-                const freight = parseFloat(freightInput?.value) || 0;
-                const total = trucks * freight;
-                const totalEl = document.getElementById('legTotalCost');
-                if (totalEl) totalEl.textContent = '$' + total.toLocaleString();
-            };
-
-            trucksInput?.addEventListener('input', updateTotal);
-            freightInput?.addEventListener('input', updateTotal);
-
-            modal.classList.add('active');
+            openLegEditorModal(legId);
         }
 
         function selectTransportMode(mode) {
-            if (!currentEditingLeg) return;
-            currentEditingLeg.transport_mode = mode;
-
-            document.querySelectorAll('.transport-mode-option').forEach(el => {
-                el.classList.toggle('selected', el.dataset.mode === mode);
-            });
+            selectLegTransportMode(mode);
         }
 
         function closeLegEditor() {
             const modal = document.getElementById('legEditorModal');
-            modal.classList.remove('active');
+            if (modal) modal.classList.remove('active');
             currentEditingLeg = null;
         }
 
@@ -3390,7 +3382,9 @@
             markAsUnsaved();
             closeLegEditor();
             renderJourneyPlan();
+            updateMapFromState();
             updateTimelineChart();
+            updateBadges();
 
             showToast('Transport configured successfully', 'success');
         }
