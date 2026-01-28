@@ -657,7 +657,11 @@
         }
 
         function removeAllocation(allocationId) {
-            workingState.moduleAllocations = workingState.moduleAllocations.filter(a => a.id != allocationId);
+            const allocationKey = String(allocationId);
+            workingState.moduleAllocations = workingState.moduleAllocations.filter(a => {
+                const key = a.id ?? a.module_id;
+                return String(key) !== allocationKey;
+            });
             showToast('Module removed. Remember to save!', 'info');
 
             // Mark as unsaved and update UI
@@ -696,7 +700,6 @@
         }
 
         function renderModuleAllocations() {
-            // Re-render the module allocations list based on workingState
             const container = document.getElementById('moduleAllocationsList');
             if (!container) return;
 
@@ -718,169 +721,210 @@
                 return;
             }
 
+            const triggerLabels = {
+                po_execution: 'PO Execution',
+                shipping: 'Shipping',
+                customs_cleared: 'Customs Clearance',
+                project_delivery: 'Project Delivery'
+            };
+
+            const formatContractValue = (value) => {
+                const amount = Number(value || 0);
+                return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            };
+
+            const formatPoDate = (value) => {
+                if (!value) return '';
+                const parsed = new Date(value);
+                if (Number.isNaN(parsed.getTime())) {
+                    return value;
+                }
+                return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            };
+
             let html = '';
             workingState.moduleAllocations.forEach((alloc, index) => {
+                const allocationKey = alloc.id ?? alloc.module_id ?? `allocation_${index}`;
+                const allocationKeyLiteral = JSON.stringify(String(allocationKey));
+                const allocationKeyAttr = escapeHtml(String(allocationKey));
                 const pallets = alloc.pallets || Math.ceil(alloc.quantity / (alloc.modules_per_pallet || 30));
                 const contractValue = alloc.contract_value || 0;
-                const vendorName = alloc.vendor_name || alloc.manufacturer_name || 'Unknown Manufacturer';
-                const modsPerPallet = alloc.modules_per_pallet || 30;
-                const palletsPerTruck = alloc.pallets_per_truck || 20;
-                const trucks = Math.ceil(pallets / palletsPerTruck);
+                const vendorName = alloc.vendor_name || alloc.manufacturer_name || 'Unknown Vendor';
+                const poDate = alloc.po_execution_date || '';
+                const isCollapsed = poDate ? 'collapsed' : '';
+                const formattedPoDate = formatPoDate(poDate);
+                const modulesPerPallet = alloc.modules_per_pallet || '-';
+                const palletsPerTruck = alloc.pallets_per_truck || '-';
                 const milestones = alloc.milestones || [];
 
-                // Trigger labels for milestones
-                const triggerLabels = {
-                    'po_execution': 'PO Execution',
-                    'shipping': 'Shipping',
-                    'customs_cleared': 'Customs Clearance',
-                    'project_delivery': 'Project Delivery'
-                };
+                const headerStats = [
+                    `
+                        <div class="stat-item">
+                            <span class="stat-value">${(alloc.wattage || 0).toLocaleString()}W</span>
+                        </div>
+                    `,
+                    `
+                        <div class="stat-item">
+                            <span class="stat-value">${(alloc.quantity || 0).toLocaleString()}</span>
+                            <span class="stat-label">modules</span>
+                        </div>
+                    `,
+                    `
+                        <div class="stat-item">
+                            <span class="stat-value">${pallets.toLocaleString()}</span>
+                            <span class="stat-label">pallets</span>
+                        </div>
+                    `
+                ];
 
-                // Build milestones HTML
+                if (alloc.pallets_per_truck) {
+                    headerStats.push(`
+                        <div class="stat-item">
+                            <span class="stat-value">${alloc.pallets_per_truck.toLocaleString()}</span>
+                            <span class="stat-label">pallets/truck</span>
+                        </div>
+                    `);
+                }
+
+                headerStats.push(`
+                    <div class="stat-item highlight">
+                        <span class="stat-value">$${formatContractValue(contractValue)}</span>
+                    </div>
+                `);
+
                 let milestonesHtml = '';
                 if (milestones.length > 0) {
-                    const milestonesItems = milestones.map(m => {
-                        const label = triggerLabels[m.trigger_event] || m.milestone_name || m.name || 'Milestone';
-                        const pct = m.percentage || 0;
-                        const amount = contractValue * (pct / 100);
+                    const milestonesItems = milestones.map(milestone => {
+                        const triggerEvent = milestone.trigger_event || milestone.trigger || '';
+                        const label = triggerLabels[triggerEvent] || milestone.milestone_name || milestone.name || 'Milestone';
+                        const percentage = parseFloat(milestone.percentage) || 0;
+                        const amount = parseFloat(milestone.amount) || 0;
+                        const amountLabel = percentage > 0
+                            ? `${percentage.toFixed(1)}%`
+                            : `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
                         return `
-                            <div class="milestone-item">
-                                <span class="milestone-trigger">${escapeHtml(label)}</span>
-                                <span class="milestone-pct">${pct}%</span>
-                                <span class="milestone-amount">$${amount.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}</span>
+                            <div class="milestone-row">
+                                <div class="milestone-info">
+                                    <span class="milestone-name">${escapeHtml(label)}</span>
+                                </div>
+                                <div class="milestone-amount">${amountLabel}</div>
                             </div>
                         `;
                     }).join('');
 
                     milestonesHtml = `
-                        <div class="allocation-milestones">
-                            <div class="milestones-header">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                    <polyline points="22 4 12 14.01 9 11.01"/>
-                                </svg>
-                                <span>Payment Milestones</span>
-                            </div>
-                            <div class="milestones-grid">
-                                ${milestonesItems}
-                            </div>
+                        <div class="milestones-list">
+                            ${milestonesItems}
+                        </div>
+                    `;
+                } else {
+                    milestonesHtml = `
+                        <div class="milestones-empty">
+                            <p>No milestones configured for this batch.</p>
+                            <small>Milestones are configured in the module batch settings.</small>
                         </div>
                     `;
                 }
 
+                const actionsHtml = canEdit
+                    ? `
+                        <div class="module-item-actions">
+                            <button type="button" class="btn btn-sm btn-danger" onclick="removeModuleAllocation(${allocationKeyLiteral})">
+                                Remove Batch
+                            </button>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="saveAndCollapseModuleItem(${allocationKeyLiteral})">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                Save &amp; Next
+                            </button>
+                        </div>
+                    `
+                    : '';
+
                 html += `
-                    <div class="module-allocation-card" data-allocation-index="${index}">
-                        <!-- Manufacturer Header -->
-                        <div class="allocation-card-header">
-                            <div class="manufacturer-icon">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                                    <polyline points="9 22 9 12 15 12 15 22"/>
-                                </svg>
-                            </div>
-                            <div class="manufacturer-info">
-                                <h4 class="manufacturer-name">${escapeHtml(vendorName)}</h4>
+                    <div class="module-item ${isCollapsed}" data-allocation-id="${allocationKeyAttr}">
+                        <div class="module-item-header" onclick="toggleModuleItem(${allocationKeyLiteral})">
+                            <div class="module-header-left">
+                                <div class="module-vendor-name">${escapeHtml(vendorName)}</div>
                                 ${alloc.manufacturer_address ? `
-                                    <p class="manufacturer-address">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                                            <circle cx="12" cy="10" r="3"/>
-                                        </svg>
-                                        ${escapeHtml(alloc.manufacturer_address)}
-                                    </p>
+                                    <div class="module-manufacturer-location">${escapeHtml(alloc.manufacturer_address)}</div>
+                                ` : ''}
+                                ${poDate ? `
+                                    <span class="po-badge-sm">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                                        PO: ${formattedPoDate}
+                                    </span>
                                 ` : ''}
                             </div>
-                            <div class="allocation-card-value">
-                                <span class="value-amount">$${contractValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                                <span class="value-label">Contract Value</span>
+                            <div class="module-header-stats">
+                                ${headerStats.join('')}
+                            </div>
+                            <div class="module-header-toggle">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                             </div>
                         </div>
 
-                        <!-- Module Specs Grid -->
-                        <div class="allocation-specs-grid">
-                            <div class="spec-card spec-wattage">
-                                <div class="spec-icon">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                                    </svg>
+                        <div class="module-item-body">
+                            <div class="module-details-grid">
+                                <div class="detail-card">
+                                    <span class="detail-label">Wattage</span>
+                                    <span class="detail-value">${(alloc.wattage || 0).toLocaleString()}W</span>
                                 </div>
-                                <div class="spec-content">
-                                    <span class="spec-value">${alloc.wattage}W</span>
-                                    <span class="spec-label">Wattage</span>
+                                <div class="detail-card">
+                                    <span class="detail-label">Total Modules</span>
+                                    <span class="detail-value">${(alloc.quantity || 0).toLocaleString()}</span>
                                 </div>
-                            </div>
-                            <div class="spec-card spec-modules">
-                                <div class="spec-icon">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                                        <line x1="8" y1="21" x2="16" y2="21"/>
-                                        <line x1="12" y1="17" x2="12" y2="21"/>
-                                    </svg>
+                                <div class="detail-card">
+                                    <span class="detail-label">Total Pallets</span>
+                                    <span class="detail-value">${pallets.toLocaleString()}</span>
                                 </div>
-                                <div class="spec-content">
-                                    <span class="spec-value">${alloc.quantity.toLocaleString()}</span>
-                                    <span class="spec-label">Modules</span>
+                                <div class="detail-card">
+                                    <span class="detail-label">Mods/Pallet</span>
+                                    <span class="detail-value">${modulesPerPallet}</span>
                                 </div>
-                            </div>
-                            <div class="spec-card spec-pallets">
-                                <div class="spec-icon">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                                        <path d="M2 17l10 5 10-5"/>
-                                        <path d="M2 12l10 5 10-5"/>
-                                    </svg>
+                                <div class="detail-card">
+                                    <span class="detail-label">Pallets/Truck</span>
+                                    <span class="detail-value">${palletsPerTruck}</span>
                                 </div>
-                                <div class="spec-content">
-                                    <span class="spec-value">${pallets.toLocaleString()}</span>
-                                    <span class="spec-label">Pallets</span>
+                                <div class="detail-card highlight">
+                                    <span class="detail-label">Contract Value</span>
+                                    <span class="detail-value">$${formatContractValue(contractValue)}</span>
                                 </div>
                             </div>
-                            <div class="spec-card spec-trucks">
-                                <div class="spec-icon">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="1" y="3" width="15" height="13"/>
-                                        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
-                                        <circle cx="5.5" cy="18.5" r="2.5"/>
-                                        <circle cx="18.5" cy="18.5" r="2.5"/>
-                                    </svg>
-                                </div>
-                                <div class="spec-content">
-                                    <span class="spec-value">${trucks}</span>
-                                    <span class="spec-label">Trucks</span>
-                                </div>
-                            </div>
-                        </div>
 
-                        <!-- Packing Config -->
-                        <div class="allocation-packing">
-                            <div class="packing-item">
-                                <span class="packing-value">${modsPerPallet}</span>
-                                <span class="packing-label">mods/pallet</span>
-                            </div>
-                            <div class="packing-divider">×</div>
-                            <div class="packing-item">
-                                <span class="packing-value">${palletsPerTruck}</span>
-                                <span class="packing-label">pallets/truck</span>
-                            </div>
-                            <div class="packing-equals">=</div>
-                            <div class="packing-item packing-result">
-                                <span class="packing-value">${modsPerPallet * palletsPerTruck}</span>
-                                <span class="packing-label">mods/truck</span>
-                            </div>
-                        </div>
+                            <div class="module-expanded-columns">
+                                <div class="po-execution-section">
+                                    <div class="section-header">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                            <line x1="16" y1="2" x2="16" y2="6"/>
+                                            <line x1="8" y1="2" x2="8" y2="6"/>
+                                            <line x1="3" y1="10" x2="21" y2="10"/>
+                                        </svg>
+                                        <span>PO Execution Date</span>
+                                    </div>
+                                    <div class="po-execution-input">
+                                        <input type="text" class="form-input flatpickr-date po-date-input"
+                                               data-allocation-id="${allocationKeyAttr}"
+                                               value="${escapeHtml(poDate)}"
+                                               placeholder="Select date when PO was executed"
+                                               ${canEdit ? '' : 'disabled'}>
+                                    </div>
+                                </div>
 
-                        <!-- Milestones Section -->
-                        ${milestonesHtml}
+                                <div class="milestones-section">
+                                    <div class="section-header">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                            <polyline points="22 4 12 14.01 9 11.01"/>
+                                        </svg>
+                                        <span>Milestone Payments</span>
+                                    </div>
+                                    ${milestonesHtml}
+                                </div>
+                            </div>
 
-                        <!-- Actions -->
-                        <div class="allocation-card-actions">
-                            <button type="button" class="btn-allocation-remove" onclick="removeAllocation('${alloc.id || alloc.module_id || index}')">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="3 6 5 6 21 6"/>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                                Remove
-                            </button>
+                            ${actionsHtml}
                         </div>
                     </div>
                 `;
@@ -890,6 +934,9 @@
             updateModuleSummary();
             if (typeof updateAvailableBatchStates === 'function') {
                 updateAvailableBatchStates();
+            }
+            if (typeof initializePoDatePickers === 'function') {
+                initializePoDatePickers();
             }
         }
 
@@ -1205,10 +1252,6 @@
                 showToast('Please add at least one module batch before continuing.', 'warning');
                 return;
             }
-
-            // Check if there are unsaved changes
-            const saveBtn = document.querySelector('.save-btn, [onclick*="saveProjection"]');
-            const hasUnsavedChanges = saveBtn && (saveBtn.classList.contains('unsaved') || document.body.classList.contains('has-unsaved-changes'));
 
             if (hasUnsavedChanges) {
                 // Save first, then navigate
@@ -1916,7 +1959,7 @@
 
                 // Show/hide add stop button (max 5 stops)
                 if (addStopBtn) {
-                    addStopBtn.style.display = intermediateStops.length < 5 ? 'flex' : 'none';
+                    addStopBtn.style.display = intermediateStops.length < 5 ? 'inline-flex' : 'none';
                 }
             }
 
@@ -2091,8 +2134,17 @@
 
                 svgContainer.appendChild(path);
 
-                // Add leg badge (truck info)
-                if (leg.trucks_required || leg.freight_cost_per_truck) {
+                const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
+                const defaultTrucks = getTotalTrucks();
+                const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
+                    || parseFloat(leg.accessorial_cost_per_truck) > 0
+                    || parseFloat(leg.total_freight_cost) > 0;
+                const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
+                const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== defaultTrucks;
+                const shouldShowBadge = hasCost || hasSchedule || hasMode || hasExplicitTrucks;
+
+                if (shouldShowBadge) {
                     const badgeX = midX;
                     const badgeY = (fromY + toY) / 2 - 15;
 
@@ -2104,7 +2156,7 @@
                     badge.dataset.legId = leg.id;
                     badge.onclick = () => openLegEditorModal(leg.id);
 
-                    const truckCount = leg.trucks_required || '?';
+                    const truckCount = trucksRequired || defaultTrucks || '?';
                     const cost = leg.total_freight_cost ? `$${parseFloat(leg.total_freight_cost).toLocaleString()}` : '';
 
                     badge.innerHTML = `
@@ -4602,7 +4654,8 @@
         }
 
         function updateModuleAllocationPoDate(allocationId, dateValue) {
-            const allocation = workingState.moduleAllocations.find(item => item.id == allocationId);
+            const allocationKey = String(allocationId);
+            const allocation = workingState.moduleAllocations.find(item => String(item.id ?? item.module_id) === allocationKey);
             if (!allocation) {
                 return;
             }

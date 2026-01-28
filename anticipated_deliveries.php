@@ -507,23 +507,25 @@ if (!empty($project['account_id'])) {
                                     <!-- INTERMEDIATE STOPS (Warehouses/Ports) - Scrollable row -->
                                     <div class="journey-column journey-stops-column">
                                         <div class="column-header">
-                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                                            </svg>
-                                            <span>Intermediate Stops</span>
-                                            <span class="column-subtext">(warehouses, ports, storage)</span>
-                                        </div>
-                                        <div class="journey-stops-wrapper">
-                                            <div class="journey-stops-scroll" id="journeyStopsScroll">
-                                                <!-- Stops rendered by JS, up to 5 -->
+                                            <div class="column-header-left">
+                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                                                </svg>
+                                                <span>Intermediate Stops</span>
+                                                <span class="column-subtext">(warehouses, ports, storage)</span>
                                             </div>
                                             <button type="button" class="journey-add-stop-btn" id="journeyAddStopBtn" onclick="openAddStopModal()">
-                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                                     <line x1="12" y1="5" x2="12" y2="19"/>
                                                     <line x1="5" y1="12" x2="19" y2="12"/>
                                                 </svg>
                                                 <span>Add Stop</span>
                                             </button>
+                                        </div>
+                                        <div class="journey-stops-wrapper">
+                                            <div class="journey-stops-scroll" id="journeyStopsScroll">
+                                                <!-- Stops rendered by JS, up to 5 -->
+                                            </div>
                                         </div>
                                     </div>
 
