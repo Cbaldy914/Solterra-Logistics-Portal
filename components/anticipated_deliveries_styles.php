@@ -3427,7 +3427,11 @@
         }
 
         /* Journey Node Card */
-        .journey-node {
+        .journey-flow-layout .journey-node {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
             background: white;
             border-radius: var(--radius-lg);
             padding: 20px;
@@ -3437,31 +3441,32 @@
             transition: all 0.3s ease;
         }
 
-        .journey-node:hover {
+        .journey-flow-layout .journey-node:hover {
             border-color: var(--primary);
             box-shadow: 0 8px 32px rgba(72, 140, 154, 0.15);
         }
 
-        .journey-node.origin-node {
+        .journey-flow-layout .journey-node.origin-node {
             border-left: 4px solid var(--primary);
         }
 
-        .journey-node.destination-node {
+        .journey-flow-layout .journey-node.destination-node {
             border-left: 4px solid var(--success);
         }
 
-        .journey-node.stop-node {
+        .journey-flow-layout .journey-node.stop-node {
             border-left: 4px solid var(--accent);
         }
 
-        .journey-node-header {
+        .journey-flow-layout .journey-node-header {
             display: flex;
             align-items: flex-start;
+            justify-content: flex-start;
             gap: 12px;
-            margin-bottom: 12px;
+            margin-bottom: 0;
         }
 
-        .journey-node-icon {
+        .journey-flow-layout .journey-node-icon {
             width: 44px;
             height: 44px;
             border-radius: 12px;
@@ -3471,27 +3476,27 @@
             flex-shrink: 0;
         }
 
-        .journey-node.origin-node .journey-node-icon {
+        .journey-flow-layout .journey-node.origin-node .journey-node-icon {
             background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
             color: white;
         }
 
-        .journey-node.destination-node .journey-node-icon {
+        .journey-flow-layout .journey-node.destination-node .journey-node-icon {
             background: linear-gradient(135deg, var(--success) 0%, #1e7e34 100%);
             color: white;
         }
 
-        .journey-node.stop-node .journey-node-icon {
+        .journey-flow-layout .journey-node.stop-node .journey-node-icon {
             background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
             color: white;
         }
 
-        .journey-node-info {
+        .journey-flow-layout .journey-node-info {
             flex: 1;
             min-width: 0;
         }
 
-        .journey-node-title {
+        .journey-flow-layout .journey-node-title {
             font-weight: 600;
             color: var(--dark);
             font-size: 0.95em;
@@ -3499,7 +3504,7 @@
             line-height: 1.3;
         }
 
-        .journey-node-address {
+        .journey-flow-layout .journey-node-address {
             font-size: 0.8em;
             color: var(--gray-600);
             display: -webkit-box;
@@ -3509,7 +3514,7 @@
         }
 
         /* Inventory Display */
-        .journey-node-inventory {
+        .journey-flow-layout .journey-node-inventory {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 10px;
@@ -3538,7 +3543,7 @@
         }
 
         /* Connect Button */
-        .journey-node-connect {
+        .journey-flow-layout .journey-node-connect {
             position: absolute;
             right: -14px;
             top: 50%;
@@ -3558,12 +3563,12 @@
             z-index: 10;
         }
 
-        .journey-node-connect:hover {
+        .journey-flow-layout .journey-node-connect:hover {
             transform: translateY(-50%) scale(1.15);
             box-shadow: 0 4px 16px rgba(72, 140, 154, 0.5);
         }
 
-        .journey-node-connect.connecting {
+        .journey-flow-layout .journey-node-connect.connecting {
             animation: pulse-connect 1s infinite;
         }
 
@@ -3573,7 +3578,7 @@
         }
 
         /* Destination Receive Port (left side) */
-        .journey-node-receive {
+        .journey-flow-layout .journey-node-receive {
             position: absolute;
             left: -14px;
             top: 50%;
@@ -3591,7 +3596,7 @@
             z-index: 10;
         }
 
-        .journey-node-receive.can-receive {
+        .journey-flow-layout .journey-node-receive.can-receive {
             background: var(--success);
             animation: pulse-receive 1s infinite;
         }
@@ -3621,6 +3626,10 @@
             padding: 8px 0;
             scrollbar-width: thin;
             scrollbar-color: var(--gray-300) transparent;
+        }
+
+        .journey-stops-scroll.is-empty {
+            justify-content: center;
         }
 
         .journey-stops-scroll::-webkit-scrollbar {

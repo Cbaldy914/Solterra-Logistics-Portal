@@ -396,6 +396,10 @@
                 return;
             }
 
+            if (!validateModulePoDates()) {
+                return;
+            }
+
             syncPlanState();
             showLoading('Saving projection...');
 
@@ -827,15 +831,17 @@
                     `;
                 }
 
+                const requiresPoExecution = milestones.some(milestone => {
+                    const triggerEvent = milestone.trigger_event || milestone.trigger || '';
+                    return triggerEvent === 'po_execution';
+                });
+                const poRequiredAttr = requiresPoExecution ? 'required data-po-required="true"' : '';
+
                 const actionsHtml = canEdit
                     ? `
                         <div class="module-item-actions">
                             <button type="button" class="btn btn-sm btn-danger" onclick="removeModuleAllocation(${allocationKeyLiteral})">
                                 Remove Batch
-                            </button>
-                            <button type="button" class="btn btn-sm btn-primary" onclick="saveAndCollapseModuleItem(${allocationKeyLiteral})">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                                Save &amp; Next
                             </button>
                         </div>
                     `
@@ -908,7 +914,8 @@
                                                data-allocation-id="${allocationKeyAttr}"
                                                value="${escapeHtml(poDate)}"
                                                placeholder="Select date when PO was executed"
-                                               ${canEdit ? '' : 'disabled'}>
+                                               ${canEdit ? '' : 'disabled'}
+                                               ${poRequiredAttr}>
                                     </div>
                                 </div>
 
@@ -976,18 +983,48 @@
         function getStepCompletionState() {
             const hasModules = Array.isArray(workingState.moduleAllocations) && workingState.moduleAllocations.length > 0;
 
-            // Logistics is only "done" if there are intermediate stops (warehouses/ports)
-            // OR if any leg has been actually configured (has freight cost, start date, or explicit truck count)
-            const intermediateStops = (workingState.stops || []).filter(s =>
-                !['origin', 'destination'].includes(s.stop_type)
-            );
-            const hasIntermediateStops = intermediateStops.length > 0;
-            const hasConfiguredLegs = (workingState.legs || []).some(leg =>
-                leg.start_date ||
-                parseFloat(leg.freight_cost_per_truck) > 0 ||
-                parseFloat(leg.total_freight_cost) > 0
-            );
-            const hasLogistics = hasIntermediateStops || hasConfiguredLegs;
+            // Logistics is "done" when all inventory is delivered to the destination
+            const palletsPerTruck = projectInfo.palletsPerTruck || 20;
+            const totalPallets = getTotalPallets();
+            const destinationStop = (workingState.stops || []).find(s => s.stop_type === 'destination');
+
+            const hasDeliveredInventory = (workingState.legs || []).some(leg => {
+                if (!destinationStop || leg.to_stop_id != destinationStop.id) {
+                    return false;
+                }
+                const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
+                const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
+                    || parseFloat(leg.accessorial_cost_per_truck) > 0
+                    || parseFloat(leg.total_freight_cost) > 0;
+                const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
+                const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== getTotalTrucks();
+                const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
+                if (!isConfigured) {
+                    return false;
+                }
+                const deliveredPallets = trucksRequired * palletsPerTruck;
+                return deliveredPallets > 0;
+            });
+
+            let deliveredPalletsTotal = 0;
+            if (destinationStop) {
+                (workingState.legs || []).forEach(leg => {
+                    if (leg.to_stop_id != destinationStop.id) return;
+                    const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
+                    const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
+                        || parseFloat(leg.accessorial_cost_per_truck) > 0
+                        || parseFloat(leg.total_freight_cost) > 0;
+                    const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                    const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
+                    const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== getTotalTrucks();
+                    const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
+                    if (!isConfigured) return;
+                    deliveredPalletsTotal += trucksRequired * palletsPerTruck;
+                });
+            }
+
+            const hasLogistics = totalPallets > 0 && hasDeliveredInventory && deliveredPalletsTotal >= totalPallets;
 
             const hasTimelineDates = (workingState.legs || []).some(leg => leg.start_date || leg.end_date)
                 || (workingState.stops || []).some(stop => stop.estimated_arrival_date || stop.estimated_departure_date);
@@ -1289,6 +1326,41 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function validateModulePoDates() {
+            const allocations = workingState.moduleAllocations || [];
+            const missingPoAllocations = allocations.filter(alloc => {
+                const milestones = alloc.milestones || [];
+                const requiresPo = milestones.some(milestone => {
+                    const triggerEvent = milestone.trigger_event || milestone.trigger || '';
+                    return triggerEvent === 'po_execution';
+                });
+                return requiresPo && !(alloc.po_execution_date || '').trim();
+            });
+
+            if (missingPoAllocations.length === 0) {
+                return true;
+            }
+
+            showToast('Please enter the PO Execution date for module batches with PO milestones.', 'warning');
+
+            const firstAllocation = missingPoAllocations[0];
+            const allocationId = firstAllocation.id ?? firstAllocation.module_id;
+            if (allocationId) {
+                expandSection('modules-costs');
+                const moduleItem = document.querySelector(`.module-item[data-allocation-id="${allocationId}"]`);
+                if (moduleItem) {
+                    moduleItem.classList.remove('collapsed');
+                    moduleItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const input = moduleItem.querySelector('.po-date-input');
+                    if (input) {
+                        setTimeout(() => input.focus(), 200);
+                    }
+                }
+            }
+
+            return false;
         }
 
         // ==================== STOP MANAGEMENT ====================
@@ -1876,6 +1948,39 @@
             const totalPallets = Math.ceil(totalModules / avgModsPerPallet);
             const totalTrucks = Math.ceil(totalPallets / avgPalletsPerTruck);
 
+            const defaultTrucks = getTotalTrucks();
+            const getLegPallets = (leg) => {
+                const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
+                const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
+                    || parseFloat(leg.accessorial_cost_per_truck) > 0
+                    || parseFloat(leg.total_freight_cost) > 0;
+                const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
+                const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== defaultTrucks;
+                const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
+                if (!isConfigured) {
+                    return 0;
+                }
+                return trucksRequired * avgPalletsPerTruck;
+            };
+
+            const inboundPallets = {};
+            const outboundPallets = {};
+
+            legs.forEach(leg => {
+                const pallets = getLegPallets(leg);
+                if (!pallets) return;
+                const fromId = leg.from_stop_id;
+                const toId = leg.to_stop_id;
+                outboundPallets[fromId] = (outboundPallets[fromId] || 0) + pallets;
+                inboundPallets[toId] = (inboundPallets[toId] || 0) + pallets;
+            });
+
+            const originStopId = originStop?.id;
+            const originOutbound = originStopId ? (outboundPallets[originStopId] || 0) : 0;
+            const remainingOriginPallets = Math.max(totalPallets - originOutbound, 0);
+            const remainingOriginRatio = totalPallets > 0 ? remainingOriginPallets / totalPallets : 0;
+
             // Render origin node(s) - each manufacturer is shown separately
             if (originContainer) {
                 let originHtml = '';
@@ -1897,16 +2002,18 @@
                 });
 
                 Object.values(manufacturers).forEach((mfg, idx) => {
-                    const trucks = Math.ceil(mfg.pallets / avgPalletsPerTruck);
+                    const remainingPallets = Math.max(Math.round(mfg.pallets * remainingOriginRatio), 0);
+                    const remainingModules = Math.max(Math.round(mfg.modules * remainingOriginRatio), 0);
+                    const trucks = remainingPallets ? Math.ceil(remainingPallets / avgPalletsPerTruck) : 0;
                     originHtml += renderJourneyNode({
                         id: originStop?.id || `origin_${idx}`,
                         type: 'origin',
                         title: mfg.name,
                         address: mfg.address,
-                        modules: mfg.modules,
-                        pallets: mfg.pallets,
+                        modules: remainingModules,
+                        pallets: remainingPallets,
                         trucks: trucks,
-                        showConnect: canEdit
+                        showConnect: canEdit && remainingPallets > 0
                     });
                 });
 
@@ -1926,16 +2033,12 @@
                         </div>
                     `;
                 } else {
-                    intermediateStops.slice(0, 5).forEach((stop, idx) => {
-                        // Calculate inventory at this stop based on incoming legs
-                        const incomingLegs = legs.filter(l => l.to_stop_id === stop.id);
-                        let stopModules = 0;
-                        let stopPallets = 0;
-                        incomingLegs.forEach(leg => {
-                            const trucksOnLeg = leg.trucks_required || 0;
-                            stopPallets += trucksOnLeg * avgPalletsPerTruck;
-                            stopModules += trucksOnLeg * avgPalletsPerTruck * avgModsPerPallet;
-                        });
+                    intermediateStops.slice(0, 5).forEach((stop) => {
+                        const incomingPallets = inboundPallets[stop.id] || 0;
+                        const outgoingPallets = outboundPallets[stop.id] || 0;
+                        const remainingPallets = Math.max(incomingPallets - outgoingPallets, 0);
+                        const remainingModules = Math.max(Math.round(remainingPallets * avgModsPerPallet), 0);
+                        const remainingTrucks = remainingPallets ? Math.ceil(remainingPallets / avgPalletsPerTruck) : 0;
 
                         stopsHtml += `<div class="journey-stop-card">`;
                         stopsHtml += renderJourneyNode({
@@ -1944,11 +2047,11 @@
                             stopType: stop.stop_type,
                             title: stop.location_name || getStopTypeLabel(stop.stop_type),
                             address: stop.location_address || '',
-                            modules: stopModules,
-                            pallets: stopPallets,
-                            trucks: Math.ceil(stopPallets / avgPalletsPerTruck),
+                            modules: remainingModules,
+                            pallets: remainingPallets,
+                            trucks: remainingTrucks,
                             fees: stop.fees || [],
-                            showConnect: canEdit,
+                            showConnect: canEdit && remainingPallets > 0,
                             showReceive: canEdit,
                             showDelete: canEdit
                         });
@@ -1956,6 +2059,7 @@
                     });
                 }
                 stopsContainer.innerHTML = stopsHtml;
+                stopsContainer.classList.toggle('is-empty', intermediateStops.length === 0);
 
                 // Show/hide add stop button (max 5 stops)
                 if (addStopBtn) {
@@ -1965,13 +2069,9 @@
 
             // Render destination node
             if (destinationContainer) {
-                // Calculate total delivered
-                const deliveredLegs = legs.filter(l => l.to_stop_id === destinationStop?.id);
-                let deliveredPallets = 0;
-                deliveredLegs.forEach(leg => {
-                    deliveredPallets += (leg.trucks_required || 0) * avgPalletsPerTruck;
-                });
-                const deliveredModules = deliveredPallets * avgModsPerPallet;
+                const destinationId = destinationStop?.id;
+                const deliveredPallets = destinationId ? (inboundPallets[destinationId] || 0) : 0;
+                const deliveredModules = Math.max(Math.round(deliveredPallets * avgModsPerPallet), 0);
 
                 destinationContainer.innerHTML = renderJourneyNode({
                     id: destinationStop?.id || 'destination',
@@ -1980,7 +2080,7 @@
                     address: projectInfo.address || '',
                     modules: deliveredModules,
                     pallets: deliveredPallets,
-                    trucks: Math.ceil(deliveredPallets / avgPalletsPerTruck),
+                    trucks: deliveredPallets ? Math.ceil(deliveredPallets / avgPalletsPerTruck) : 0,
                     showReceive: canEdit
                 });
             }
@@ -2142,7 +2242,8 @@
                 const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
                 const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
                 const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== defaultTrucks;
-                const shouldShowBadge = hasCost || hasSchedule || hasMode || hasExplicitTrucks;
+                const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
+                const shouldShowBadge = isConfigured;
 
                 if (shouldShowBadge) {
                     const badgeX = midX;
@@ -3254,6 +3355,8 @@
                     currentEditingLeg.trucks_required
                 );
             }
+
+            currentEditingLeg.is_configured = true;
 
             markAsUnsaved();
             closeLegEditor();
