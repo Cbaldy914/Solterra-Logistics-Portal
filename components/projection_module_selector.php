@@ -52,6 +52,14 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                 $milestones = $alloc['milestones'] ?? [];
                 $po_execution_date = $alloc['po_execution_date'] ?? '';
                 $is_collapsed = !empty($po_execution_date); // Collapse if PO date is set
+                $requires_po_execution = false;
+                foreach ($milestones as $milestone) {
+                    if (($milestone['trigger_event'] ?? '') === 'po_execution') {
+                        $requires_po_execution = true;
+                        break;
+                    }
+                }
+                $po_required_attr = $requires_po_execution ? 'required data-po-required="true"' : '';
             ?>
                 <div class="module-item <?php echo $is_collapsed ? 'collapsed' : ''; ?>" data-allocation-id="<?php echo $alloc['id']; ?>">
                     <!-- Collapsed Summary Header -->
@@ -147,7 +155,8 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                            data-allocation-id="<?php echo $alloc['id']; ?>"
                                            value="<?php echo htmlspecialchars($po_execution_date); ?>"
                                            placeholder="Select date when PO was executed"
-                                           <?php echo $can_edit ? '' : 'disabled'; ?>>
+                                           <?php echo $can_edit ? '' : 'disabled'; ?>
+                                           <?php echo $po_required_attr; ?>>
                                 </div>
                             </div>
 
@@ -206,11 +215,6 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                 <button type="button" class="btn btn-sm btn-danger"
                                         onclick="removeModuleAllocation(<?php echo $alloc['id']; ?>)">
                                     Remove Batch
-                                </button>
-                                <button type="button" class="btn btn-sm btn-primary"
-                                        onclick="saveAndCollapseModuleItem(<?php echo $alloc['id']; ?>)">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                                    Save &amp; Next
                                 </button>
                             <?php endif; ?>
                         </div>
