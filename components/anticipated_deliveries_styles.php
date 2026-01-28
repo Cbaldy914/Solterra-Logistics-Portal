@@ -3403,6 +3403,13 @@
             border: 1px solid var(--gray-200);
         }
 
+        .column-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
         .column-header svg {
             color: var(--primary);
         }
@@ -3608,6 +3615,7 @@
 
         .journey-stops-scroll {
             display: flex;
+            align-items: flex-start;
             gap: 16px;
             overflow-x: auto;
             padding: 8px 0;
@@ -3640,39 +3648,47 @@
 
         /* Add Stop Button */
         .journey-add-stop-btn {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 20px;
-            background: white;
-            border: 2px dashed var(--gray-300);
-            border-radius: var(--radius-lg);
-            color: var(--gray-500);
+            gap: 6px;
+            padding: 6px 12px;
+            background: transparent;
+            border: 1px solid var(--gray-300);
+            border-radius: 999px;
+            color: var(--primary);
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s ease;
-            min-width: 160px;
+            min-width: 0;
+            white-space: nowrap;
+            margin-left: auto;
+        }
+
+        .journey-add-stop-btn svg {
+            width: 14px;
+            height: 14px;
         }
 
         .journey-add-stop-btn:hover {
             border-color: var(--primary);
             color: var(--primary);
-            background: rgba(72, 140, 154, 0.05);
+            background: rgba(72, 140, 154, 0.08);
         }
 
         /* Empty Stops State */
         .journey-stops-empty {
-            flex: 1;
+            flex: 0 0 auto;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: white;
+            background: var(--gray-50);
             border-radius: var(--radius-lg);
-            padding: 40px 20px;
+            padding: 16px 20px;
             text-align: center;
-            border: 2px dashed var(--gray-200);
+            border: 1px dashed var(--gray-300);
+            min-width: 220px;
+            max-width: 240px;
         }
 
         .journey-stops-empty svg {
