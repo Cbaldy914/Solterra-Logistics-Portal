@@ -2292,7 +2292,10 @@ function updateModuleHeaderBadge(allocationId, poDate) {
     }
 
     if (poDate) {
-        const formattedDate = new Date(poDate).toLocaleDateString('en-US', {
+        // Parse date string without timezone conversion (YYYY-MM-DD format)
+        const parts = poDate.split('-');
+        const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+        const formattedDate = dateObj.toLocaleDateString('en-US', {
             month: 'short',
             day: 'numeric',
             year: 'numeric'

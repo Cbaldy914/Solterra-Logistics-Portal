@@ -485,7 +485,7 @@ if (!empty($project['account_id'])) {
                                         <path d="M12 16v-4"/>
                                         <path d="M12 8h.01"/>
                                     </svg>
-                                    <span>Click a location's <strong>connect button</strong> to draw a route to the next stop. Add warehouses or ports between origin and destination.</span>
+                                    <span>Click a location's <strong>connect button</strong> to start drawing a route, then click on the <strong>receive port</strong> of the destination. Add warehouses or ports between origin and destination.</span>
                                 </div>
 
                                 <!-- Journey Flow Layout -->
@@ -558,7 +558,7 @@ if (!empty($project['account_id'])) {
                                     </svg>
 
                                     <!-- Drag Preview Line -->
-                                    <svg class="journey-drag-preview" id="journeyDragPreview">
+                                    <svg class="journey-drag-preview" id="journeyDragPreview" width="100%" height="100%" style="overflow: visible;">
                                         <line id="journeyDragLine" stroke="rgba(72,140,154,0.5)" stroke-width="3" stroke-dasharray="8 4"/>
                                     </svg>
                                 </div>
