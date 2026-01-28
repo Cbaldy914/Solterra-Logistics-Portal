@@ -3717,6 +3717,7 @@
             inset: 0;
             pointer-events: none;
             z-index: 5;
+            overflow: visible;
         }
 
         .journey-leg-line {
@@ -3730,6 +3731,15 @@
         .journey-leg-line:hover {
             stroke-width: 4;
             opacity: 1;
+        }
+
+        .journey-leg-line-placeholder {
+            fill: none;
+            stroke-width: 2;
+            stroke: #ccc;
+            stroke-dasharray: 6 4;
+            opacity: 0.5;
+            pointer-events: none;
         }
 
         /* Leg Badge (on the connection) */

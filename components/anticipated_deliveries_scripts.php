@@ -2186,10 +2186,29 @@
             `;
         }
 
+        function isLegConfigured(leg) {
+            const defaultTrucks = getTotalTrucks();
+            const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
+            const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
+                || parseFloat(leg.accessorial_cost_per_truck) > 0
+                || parseFloat(leg.total_freight_cost) > 0;
+            const hasSchedule = leg.start_date || leg.end_date || parseFloat(leg.delivery_rate) > 0;
+            const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
+            const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== defaultTrucks;
+            return !!(leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks);
+        }
+
         function renderJourneyConnections() {
             const svgContainer = document.getElementById('journeyConnectionsSvg');
             const layoutContainer = document.getElementById('journeyFlowLayout');
             if (!svgContainer || !layoutContainer) return;
+
+            // Size the SVG to match the layout container
+            const containerRect = layoutContainer.getBoundingClientRect();
+            svgContainer.setAttribute('width', containerRect.width);
+            svgContainer.setAttribute('height', containerRect.height);
+            svgContainer.style.width = containerRect.width + 'px';
+            svgContainer.style.height = containerRect.height + 'px';
 
             // Clear existing paths (keep defs)
             const defsContent = svgContainer.querySelector('defs')?.outerHTML || '';
@@ -2208,7 +2227,6 @@
 
                 const fromRect = fromNode.getBoundingClientRect();
                 const toRect = toNode.getBoundingClientRect();
-                const containerRect = layoutContainer.getBoundingClientRect();
 
                 // Calculate connection points
                 const fromX = fromRect.right - containerRect.left;
@@ -2216,23 +2234,31 @@
                 const toX = toRect.left - containerRect.left;
                 const toY = toRect.top + toRect.height / 2 - containerRect.top;
 
+                const configured = isLegConfigured(leg);
+
                 // Create curved path
                 const midX = (fromX + toX) / 2;
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('d', `M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}`);
-                path.setAttribute('class', 'journey-leg-line');
                 path.setAttribute('data-leg-id', leg.id);
-                path.setAttribute('stroke', 'url(#legGradient)');
-                path.setAttribute('marker-end', 'url(#legArrow)');
-                path.style.cursor = 'pointer';
 
-                // Click on path to show popover
-                path.onclick = (e) => {
-                    e.stopPropagation();
-                    showLegPopover(leg, (fromX + toX) / 2, (fromY + toY) / 2);
-                };
+                if (configured) {
+                    path.setAttribute('class', 'journey-leg-line');
+                    path.setAttribute('stroke', 'url(#legGradient)');
+                    path.setAttribute('marker-end', 'url(#legArrow)');
+                    path.style.cursor = 'pointer';
+                    path.onclick = (e) => {
+                        e.stopPropagation();
+                        showLegPopover(leg, (fromX + toX) / 2, (fromY + toY) / 2);
+                    };
+                } else {
+                    path.setAttribute('class', 'journey-leg-line-placeholder');
+                }
 
                 svgContainer.appendChild(path);
+
+                // Only add badge for configured legs
+                if (!configured) return;
 
                 // Add transport mode badge on the line midpoint
                 const badgeMidX = (fromX + toX) / 2;
@@ -2259,6 +2285,19 @@
 
                 layoutContainer.appendChild(badge);
             });
+        }
+
+        function formatDateForDisplay(dateStr) {
+            if (!dateStr) return '--';
+            const parts = dateStr.split('-');
+            if (parts.length !== 3) return dateStr;
+            const y = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10) - 1;
+            const d = parseInt(parts[2], 10);
+            const date = new Date(y, m, d);
+            if (isNaN(date.getTime())) return dateStr;
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
         }
 
         function showLegPopover(leg, x, y) {
@@ -2328,7 +2367,21 @@
         function deleteLeg(legId) {
             if (!confirm('Delete this shipping route? Inventory will be returned to the previous location.')) return;
 
-            workingState.legs = workingState.legs.filter(l => l.id != legId);
+            const leg = workingState.legs.find(l => l.id == legId);
+            if (leg) {
+                // Reset to unconfigured state - syncPlanState will recreate anyway
+                leg.is_configured = false;
+                leg.trucks_required = null;
+                leg.start_date = '';
+                leg.end_date = '';
+                leg.delivery_rate = 0;
+                leg.delivery_rate_unit = 'per_week';
+                leg.freight_cost_per_truck = 0;
+                leg.accessorial_cost_per_truck = 0;
+                leg.total_freight_cost = 0;
+                leg.transport_mode = 'truck';
+                leg.notes = '';
+            }
             markAsUnsaved();
             renderJourneyFlow();
             updateMapFromState();
@@ -4237,6 +4290,17 @@
             renderJourneyPlan();
             updateMapFromState();
             updateTimelineChart();
+
+            // Scroll the new stop into view
+            requestAnimationFrame(() => {
+                const stopsScroll = document.getElementById('journeyStopsScroll');
+                if (stopsScroll) {
+                    const newStopEl = stopsScroll.querySelector(`[data-stop-id="${newStop.id}"]`);
+                    if (newStopEl) {
+                        newStopEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                    }
+                }
+            });
 
             if (options.openEditor) {
                 setTimeout(() => openNodeEditor(newStop.id), 100);
