@@ -3768,6 +3768,7 @@
             inset: 0;
             pointer-events: none;
             z-index: 100;
+            overflow: visible;
         }
 
         .journey-drag-preview line {
@@ -3938,7 +3939,7 @@
             background: white;
             border-radius: var(--radius-xl);
             width: 100%;
-            max-width: 520px;
+            max-width: 900px;
             max-height: 90vh;
             overflow: hidden;
             display: flex;

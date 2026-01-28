@@ -739,11 +739,14 @@
 
             const formatPoDate = (value) => {
                 if (!value) return '';
-                const parsed = new Date(value);
-                if (Number.isNaN(parsed.getTime())) {
+                // Parse date string without timezone conversion (YYYY-MM-DD format)
+                const parts = value.split('-');
+                if (parts.length !== 3) return value;
+                const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+                if (Number.isNaN(dateObj.getTime())) {
                     return value;
                 }
-                return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                return dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             };
 
             let html = '';
@@ -1384,33 +1387,31 @@
             const rowId = 'fee_' + Date.now();
 
             const html = `
-                <div class="fee-row" id="${rowId}" style="display: grid; grid-template-columns: 1fr 1fr 100px 100px 40px; gap: 10px; margin-bottom: 12px; align-items: end;">
+                <div class="fee-row" id="${rowId}" style="display: grid; grid-template-columns: 1fr 100px 120px 120px 40px; gap: 10px; margin-bottom: 12px; align-items: end;">
                     <div>
-                        <label class="form-label" style="font-size: 0.8em;">Fee Type</label>
-                        <select class="form-input fee-type" style="padding: 10px;">
-                            <option value="receiving" ${feeData?.fee_type === 'receiving' ? 'selected' : ''}>Receiving</option>
-                            <option value="storage" ${feeData?.fee_type === 'storage' ? 'selected' : ''}>Storage</option>
-                            <option value="outbound" ${feeData?.fee_type === 'outbound' ? 'selected' : ''}>Outbound</option>
-                            <option value="customs" ${feeData?.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
-                            <option value="handling" ${feeData?.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
-                            <option value="other" ${feeData?.fee_type === 'other' ? 'selected' : ''}>Other</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="form-label" style="font-size: 0.8em;">Description</label>
+                        <label class="form-label" style="font-size: 0.8em;">Fee Name</label>
                         <input type="text" class="form-input fee-name" value="${feeData?.fee_name || ''}" placeholder="Fee name" style="padding: 10px;">
                     </div>
                     <div>
-                        <label class="form-label" style="font-size: 0.8em;">Rate</label>
+                        <label class="form-label" style="font-size: 0.8em;">Amount</label>
                         <input type="number" class="form-input fee-rate" value="${feeData?.rate || ''}" placeholder="$0" step="0.01" style="padding: 10px;">
                     </div>
                     <div>
-                        <label class="form-label" style="font-size: 0.8em;">Per</label>
+                        <label class="form-label" style="font-size: 0.8em;">Billing Unit</label>
                         <select class="form-input fee-unit" style="padding: 10px;">
-                            <option value="per_pallet" ${feeData?.rate_unit === 'per_pallet' ? 'selected' : ''}>Pallet</option>
-                            <option value="per_module" ${feeData?.rate_unit === 'per_module' ? 'selected' : ''}>Module</option>
-                            <option value="per_truck" ${feeData?.rate_unit === 'per_truck' ? 'selected' : ''}>Truck</option>
-                            <option value="flat" ${feeData?.rate_unit === 'flat' ? 'selected' : ''}>Flat</option>
+                            <option value="per_pallet" ${feeData?.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
+                            <option value="per_truck" ${feeData?.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
+                            <option value="per_sqft" ${feeData?.rate_unit === 'per_sqft' ? 'selected' : ''}>Per SQFT</option>
+                            <option value="flat" ${feeData?.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size: 0.8em;">When Charged</label>
+                        <select class="form-input fee-type" style="padding: 10px;">
+                            <option value="receiving" ${feeData?.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
+                            <option value="outbound" ${feeData?.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
+                            <option value="storage" ${feeData?.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
+                            <option value="one_time" ${feeData?.fee_type === 'one_time' ? 'selected' : ''}>One Time</option>
                         </select>
                     </div>
                     <button type="button" onclick="document.getElementById('${rowId}').remove()" style="padding: 10px; background: #f8d7da; border: none; border-radius: 8px; cursor: pointer; color: #dc3545;">
@@ -1608,9 +1609,10 @@
             let origin = stops.find(stop => stop.stop_type === 'origin');
             let destination = stops.find(stop => stop.stop_type === 'destination');
 
+            const manufacturer = workingState.moduleAllocations[0]?.manufacturer_name || workingState.moduleAllocations[0]?.vendor_name || 'Manufacturer';
+            const manufacturerAddress = workingState.moduleAllocations[0]?.manufacturer_address || '';
+
             if (!origin) {
-                const manufacturer = workingState.moduleAllocations[0]?.manufacturer_name || 'Manufacturer';
-                const manufacturerAddress = workingState.moduleAllocations[0]?.manufacturer_address || '';
                 origin = {
                     id: `origin_${Date.now()}`,
                     stop_type: 'origin',
@@ -1620,16 +1622,27 @@
                     longitude: null,
                     fees: []
                 };
-                // Geocode manufacturer address if available
-                if (manufacturerAddress && !origin.latitude) {
-                    geocodeAddress(manufacturerAddress, (coords) => {
-                        if (coords) {
-                            origin.latitude = coords.lat;
-                            origin.longitude = coords.lng;
-                            updateMapFromState();
-                        }
-                    });
+            } else {
+                // Sync origin with latest allocation data if address is missing or changed
+                if (manufacturerAddress && !origin.location_address) {
+                    origin.location_address = manufacturerAddress;
+                    origin.latitude = null;
+                    origin.longitude = null;
                 }
+                if (manufacturer && (!origin.location_name || origin.location_name === 'Manufacturer')) {
+                    origin.location_name = manufacturer;
+                }
+            }
+
+            // Geocode origin address if available and coordinates are missing
+            if (origin.location_address && !origin.latitude) {
+                geocodeAddress(origin.location_address, (coords) => {
+                    if (coords) {
+                        origin.latitude = coords.lat;
+                        origin.longitude = coords.lng;
+                        updateMapFromState();
+                    }
+                });
             }
 
             if (!destination) {
@@ -2204,27 +2217,67 @@
             const layoutContainer = document.getElementById('journeyFlowLayout');
             if (!layoutContainer) return;
 
-            let isDragging = false;
-            let dragFromStopId = null;
-            let dragLine = document.getElementById('journeyDragLine');
+            // Use a global state for connection mode (click-to-start, click-to-connect)
+            if (!window.journeyConnectionState) {
+                window.journeyConnectionState = {
+                    isConnecting: false,
+                    fromStopId: null,
+                    fromButton: null
+                };
+            }
+            const connectionState = window.journeyConnectionState;
+            const dragLine = document.getElementById('journeyDragLine');
 
-            // Connect button click - start dragging
+            // Helper to reset connection state
+            function resetConnectionState() {
+                connectionState.isConnecting = false;
+                connectionState.fromStopId = null;
+                if (connectionState.fromButton) {
+                    connectionState.fromButton.classList.remove('connecting');
+                }
+                connectionState.fromButton = null;
+                layoutContainer.classList.remove('dragging');
+                layoutContainer.querySelectorAll('.journey-node-receive').forEach(port => {
+                    port.classList.remove('can-receive');
+                });
+                if (dragLine) {
+                    dragLine.style.display = 'none';
+                }
+            }
+
+            // Connect button click - toggle connection mode
             layoutContainer.querySelectorAll('.journey-node-connect').forEach(btn => {
-                btn.addEventListener('mousedown', (e) => {
+                btn.addEventListener('click', (e) => {
                     e.preventDefault();
-                    isDragging = true;
-                    dragFromStopId = btn.dataset.stopId;
+                    e.stopPropagation();
+
+                    // If already connecting from this button, cancel
+                    if (connectionState.isConnecting && connectionState.fromButton === btn) {
+                        resetConnectionState();
+                        return;
+                    }
+
+                    // If connecting from another button, switch to this one
+                    if (connectionState.isConnecting) {
+                        resetConnectionState();
+                    }
+
+                    // Start connection mode
+                    connectionState.isConnecting = true;
+                    connectionState.fromStopId = btn.dataset.stopId;
+                    connectionState.fromButton = btn;
                     layoutContainer.classList.add('dragging');
                     btn.classList.add('connecting');
 
                     // Highlight valid receive targets
                     layoutContainer.querySelectorAll('.journey-node-receive').forEach(port => {
                         const portStopId = port.dataset.stopId;
-                        if (portStopId !== dragFromStopId) {
+                        if (portStopId !== connectionState.fromStopId) {
                             port.classList.add('can-receive');
                         }
                     });
 
+                    // Initialize drag line position
                     if (dragLine) {
                         const rect = btn.getBoundingClientRect();
                         const containerRect = layoutContainer.getBoundingClientRect();
@@ -2239,37 +2292,50 @@
                 });
             });
 
-            // Mouse move - update drag line
+            // Mouse move - update drag line (follows cursor without needing to hold mouse)
             layoutContainer.addEventListener('mousemove', (e) => {
-                if (!isDragging || !dragLine) return;
+                if (!connectionState.isConnecting || !dragLine) return;
                 const containerRect = layoutContainer.getBoundingClientRect();
                 dragLine.setAttribute('x2', e.clientX - containerRect.left);
                 dragLine.setAttribute('y2', e.clientY - containerRect.top);
             });
 
-            // Mouse up - complete connection or cancel
-            document.addEventListener('mouseup', (e) => {
-                if (!isDragging) return;
+            // Receive port click - complete connection
+            layoutContainer.querySelectorAll('.journey-node-receive').forEach(port => {
+                port.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
 
-                const targetReceive = e.target.closest('.journey-node-receive');
-                if (targetReceive && targetReceive.classList.contains('can-receive')) {
-                    const toStopId = targetReceive.dataset.stopId;
+                    if (!connectionState.isConnecting) return;
+                    if (!port.classList.contains('can-receive')) return;
+
+                    const toStopId = port.dataset.stopId;
+                    const fromStopId = connectionState.fromStopId;
+
+                    // Reset state before creating leg
+                    resetConnectionState();
+
                     // Create or edit leg
-                    createOrEditLeg(dragFromStopId, toStopId);
+                    createOrEditLeg(fromStopId, toStopId);
+                });
+            });
+
+            // Click anywhere else to cancel connection mode
+            document.addEventListener('click', (e) => {
+                if (!connectionState.isConnecting) return;
+
+                // Don't cancel if clicking on connect or receive buttons (handled above)
+                if (e.target.closest('.journey-node-connect') || e.target.closest('.journey-node-receive')) {
+                    return;
                 }
 
-                // Reset drag state
-                isDragging = false;
-                dragFromStopId = null;
-                layoutContainer.classList.remove('dragging');
-                layoutContainer.querySelectorAll('.journey-node-connect').forEach(btn => {
-                    btn.classList.remove('connecting');
-                });
-                layoutContainer.querySelectorAll('.journey-node-receive').forEach(port => {
-                    port.classList.remove('can-receive');
-                });
-                if (dragLine) {
-                    dragLine.style.display = 'none';
+                resetConnectionState();
+            });
+
+            // Escape key to cancel
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && connectionState.isConnecting) {
+                    resetConnectionState();
                 }
             });
 
@@ -2997,21 +3063,21 @@
             return fees.map((fee, index) => `
                 <div class="modal-fee-item" data-fee-index="${index}">
                     <input type="text" class="modal-form-input" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee name" onchange="updateModalFee(${index}, 'fee_name', this.value)">
-                    <select class="modal-form-input" onchange="updateModalFee(${index}, 'fee_type', this.value)">
-                        <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
-                        <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
-                        <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
-                        <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
-                        <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
-                    </select>
                     <div class="modal-input-group">
                         <input type="number" class="modal-form-input" value="${fee.rate || ''}" placeholder="0" step="0.01" onchange="updateModalFee(${index}, 'rate', this.value)">
                         <select class="modal-input-suffix" style="border-left: 1px solid var(--gray-200); background: var(--gray-50);" onchange="updateModalFee(${index}, 'rate_unit', this.value)">
-                            <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>/pallet</option>
-                            <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>/truck</option>
-                            <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>flat</option>
+                            <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
+                            <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
+                            <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per SQFT</option>
+                            <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
                         </select>
                     </div>
+                    <select class="modal-form-input" onchange="updateModalFee(${index}, 'fee_type', this.value)">
+                        <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
+                        <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
+                        <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
+                        <option value="one_time" ${fee.fee_type === 'one_time' ? 'selected' : ''}>One Time</option>
+                    </select>
                     <button type="button" class="modal-fee-remove" onclick="removeModalFee(${index})">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
@@ -3522,11 +3588,9 @@
                             <td>
                                 <select class="delivery-select" data-fee-field="fee_type" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
                                     <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
-                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
                                     <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
-                                    <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs Clearance</option>
-                                    <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Drayage</option>
-                                    <option value="other" ${fee.fee_type === 'other' ? 'selected' : ''}>Other</option>
+                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
+                                    <option value="one_time" ${fee.fee_type === 'one_time' ? 'selected' : ''}>One Time</option>
                                 </select>
                             </td>
                             <td class="fee-amount-col">
@@ -3536,7 +3600,7 @@
                                 <select class="delivery-select" data-fee-field="rate_unit" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
                                     <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
                                     <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
-                                    <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per Sq. Ft.</option>
+                                    <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per SQFT</option>
                                     <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
                                 </select>
                             </td>
@@ -4326,12 +4390,10 @@
                             <div>
                                 <label class="form-label" style="font-size: 0.8em;">Fee Type</label>
                                 <select class="delivery-select" data-fee-field="fee_type" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
-                                    <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>Receiving</option>
-                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Storage</option>
-                                    <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>Outbound</option>
-                                    <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
-                                    <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
-                                    <option value="other" ${fee.fee_type === 'other' ? 'selected' : ''}>Other</option>
+                                    <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
+                                    <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
+                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
+                                    <option value="one_time" ${fee.fee_type === 'one_time' ? 'selected' : ''}>One Time</option>
                                 </select>
                             </div>
                             <div>
@@ -4345,10 +4407,10 @@
                             <div>
                                 <label class="form-label" style="font-size: 0.8em;">Per</label>
                                 <select class="delivery-select" data-fee-field="rate_unit" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
-                                    <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Pallet</option>
-                                    <option value="per_module" ${fee.rate_unit === 'per_module' ? 'selected' : ''}>Module</option>
-                                    <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Truck</option>
-                                    <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat</option>
+                                    <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
+                                    <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
+                                    <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per SQFT</option>
+                                    <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
                                 </select>
                             </div>
                             ${canEdit ? `
