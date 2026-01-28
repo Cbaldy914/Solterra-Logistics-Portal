@@ -803,7 +803,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 }
 
 .modal-content.modal-lg {
-    max-width: 700px;
+    max-width: 900px;
 }
 
 /* Module Mode Tabs */
@@ -1635,7 +1635,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 
 /* Add Modules Modal */
 .add-modules-modal {
-    max-width: 700px;
+    max-width: 900px;
     max-height: 85vh;
 }
 

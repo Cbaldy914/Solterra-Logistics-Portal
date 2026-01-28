@@ -1511,19 +1511,27 @@
 
         // ==================== LEG MANAGEMENT ====================
         function openLegEditorModal(legId, fromStopId, toStopId) {
-            const leg = legId ? workingState.legs.find(l => l.id == legId) : null;
+            let leg = legId ? workingState.legs.find(l => l.id == legId) : null;
+
+            // If no existing leg but we have from/to stops, find it or create reference
+            if (!leg && fromStopId && toStopId) {
+                leg = workingState.legs.find(l => l.from_stop_id == fromStopId && l.to_stop_id == toStopId);
+            }
+
+            // Set currentEditingLeg for saveLegEditor compatibility
+            currentEditingLeg = leg;
 
             // Determine title and get stop names for context
             let title = leg ? 'Edit Shipping Leg' : 'Configure Shipping';
-            const fromStop = fromStopId ? workingState.stops.find(s => s.id == fromStopId) : null;
-            const toStop = toStopId ? workingState.stops.find(s => s.id == toStopId) : null;
+            const fromStop = (leg?.from_stop_id || fromStopId) ? workingState.stops.find(s => s.id == (leg?.from_stop_id || fromStopId)) : null;
+            const toStop = (leg?.to_stop_id || toStopId) ? workingState.stops.find(s => s.id == (leg?.to_stop_id || toStopId)) : null;
 
             if (fromStop && toStop) {
                 title = `Configure Shipping: ${fromStop.location_name} → ${toStop.location_name}`;
             }
 
             document.getElementById('legModalTitle').textContent = title;
-            document.getElementById('editLegId').value = legId || '';
+            document.getElementById('editLegId').value = leg?.id || '';
             document.getElementById('legFromStopId').value = leg?.from_stop_id || fromStopId || '';
             document.getElementById('legToStopId').value = leg?.to_stop_id || toStopId || '';
             document.getElementById('legTransportMode').value = leg?.transport_mode || 'truck';
@@ -3016,6 +3024,12 @@
                             </h4>
                             <button type="button" class="btn btn-sm btn-secondary" onclick="addFeeToModal()">+ Add Fee</button>
                         </div>
+                        <div class="modal-fees-column-headers" id="modalFeesHeaders" style="${fees.length === 0 ? 'display: none;' : ''}">
+                            <span>Fee Name</span>
+                            <span>Amount</span>
+                            <span>When Charged</span>
+                            <span></span>
+                        </div>
                         <div id="modalFeesList">
                             ${renderModalFees(fees)}
                         </div>
@@ -3100,7 +3114,7 @@
             if (!Array.isArray(currentEditingNode.fees)) currentEditingNode.fees = [];
 
             currentEditingNode.fees.push({
-                fee_type: 'storage',
+                fee_type: 'receiving',
                 fee_name: '',
                 rate: '',
                 rate_unit: 'per_pallet',
@@ -3111,6 +3125,12 @@
             const list = document.getElementById('modalFeesList');
             if (list) list.innerHTML = renderModalFees(currentEditingNode.fees);
 
+            // Show headers if we now have fees
+            const headers = document.getElementById('modalFeesHeaders');
+            if (headers && currentEditingNode.fees.length > 0) {
+                headers.style.display = '';
+            }
+
             recalculateModalFees();
         }
 
@@ -3120,6 +3140,12 @@
 
             const list = document.getElementById('modalFeesList');
             if (list) list.innerHTML = renderModalFees(currentEditingNode.fees);
+
+            // Hide headers if no fees left
+            const headers = document.getElementById('modalFeesHeaders');
+            if (headers) {
+                headers.style.display = currentEditingNode.fees.length === 0 ? 'none' : '';
+            }
 
             recalculateModalFees();
         }
@@ -3316,38 +3342,50 @@
         }
 
         function saveLegEditor() {
-            if (!currentEditingLeg) {
+            // Get leg ID and stop IDs from form
+            const legId = document.getElementById('editLegId')?.value;
+            const fromStopId = document.getElementById('legFromStopId')?.value;
+            const toStopId = document.getElementById('legToStopId')?.value;
+
+            // Find the leg to update, or use currentEditingLeg
+            let leg = currentEditingLeg;
+            if (!leg && legId) {
+                leg = workingState.legs.find(l => l.id == legId);
+            }
+            if (!leg && fromStopId && toStopId) {
+                leg = workingState.legs.find(l => l.from_stop_id == fromStopId && l.to_stop_id == toStopId);
+            }
+
+            if (!leg) {
                 closeLegEditor();
                 return;
             }
 
             // Get values from form
-            const trucksInput = document.getElementById('legTrucks');
-            const startDateInput = document.getElementById('legStartDate');
-            const cadenceInput = document.getElementById('legCadence');
-            const cadenceUnitInput = document.getElementById('legCadenceUnit');
-            const freightInput = document.getElementById('legFreightCost');
+            const trucks = parseInt(document.getElementById('legTrucksRequired')?.value, 10) || getTotalTrucks();
+            const startDate = document.getElementById('legStartDate')?.value || '';
+            const endDate = document.getElementById('legEndDate')?.value || '';
+            const deliveryRate = parseFloat(document.getElementById('legDeliveryRate')?.value) || 0;
+            const rateUnit = document.getElementById('legRateUnit')?.value || 'per_week';
+            const freightCost = parseFloat(document.getElementById('legFreightCost')?.value) || 0;
+            const accessorialCost = parseFloat(document.getElementById('legAccessorialCost')?.value) || 0;
+            const transportMode = document.getElementById('legTransportMode')?.value || 'truck';
+            const triggersMilestone = document.getElementById('legTriggersMilestone')?.value || '';
+            const notes = document.getElementById('legNotes')?.value || '';
 
-            if (trucksInput) currentEditingLeg.trucks_required = parseInt(trucksInput.value, 10) || getTotalTrucks();
-            if (startDateInput) currentEditingLeg.start_date = startDateInput.value;
-            if (cadenceInput) currentEditingLeg.delivery_rate = parseInt(cadenceInput.value, 10) || 0;
-            if (cadenceUnitInput) currentEditingLeg.delivery_rate_unit = cadenceUnitInput.value;
-            if (freightInput) currentEditingLeg.freight_cost_per_truck = parseFloat(freightInput.value) || 0;
-
-            // Recalculate totals
-            currentEditingLeg.total_freight_cost = (currentEditingLeg.trucks_required || 0) * (currentEditingLeg.freight_cost_per_truck || 0);
-
-            // Calculate end date
-            if (currentEditingLeg.start_date && currentEditingLeg.delivery_rate > 0) {
-                currentEditingLeg.end_date = calculateEndDate(
-                    currentEditingLeg.start_date,
-                    currentEditingLeg.delivery_rate,
-                    currentEditingLeg.delivery_rate_unit,
-                    currentEditingLeg.trucks_required
-                );
-            }
-
-            currentEditingLeg.is_configured = true;
+            // Update leg properties
+            leg.trucks_required = trucks;
+            leg.start_date = startDate;
+            leg.end_date = endDate;
+            leg.delivery_rate = deliveryRate;
+            leg.delivery_rate_unit = rateUnit;
+            leg.freight_cost_per_truck = freightCost;
+            leg.accessorial_cost_per_truck = accessorialCost;
+            leg.transport_mode = transportMode;
+            leg.triggers_milestone = triggersMilestone;
+            leg.notes = notes;
+            leg.total_freight_cost = trucks * (freightCost + accessorialCost);
+            leg.is_configured = true;
 
             markAsUnsaved();
             closeLegEditor();

@@ -4246,15 +4246,43 @@
             color: var(--accent);
         }
 
+        .modal-fees-column-headers {
+            display: grid;
+            grid-template-columns: 1fr 180px 120px 36px;
+            gap: 10px;
+            padding: 0 12px 8px 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .modal-fee-item {
             display: grid;
-            grid-template-columns: 1fr 120px 100px 36px;
+            grid-template-columns: 1fr 180px 120px 36px;
             gap: 10px;
             align-items: center;
             padding: 12px;
             background: var(--gray-50);
             border-radius: var(--radius-sm);
             margin-bottom: 10px;
+        }
+
+        .modal-fee-item .modal-input-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .modal-fee-item .modal-input-group input {
+            flex: 1;
+            min-width: 60px;
+            border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+        }
+
+        .modal-fee-item .modal-input-group select {
+            border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+            border-left: none;
         }
 
         .modal-fee-item:last-child {

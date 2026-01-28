@@ -888,7 +888,92 @@ if (!empty($project['account_id'])) {
                 </button>
             </div>
             <div class="flow-modal-body" id="legModalBody">
-                <!-- Dynamic content -->
+                <input type="hidden" id="editLegId" value="">
+                <input type="hidden" id="legFromStopId" value="">
+                <input type="hidden" id="legToStopId" value="">
+
+                <div class="modal-form-row">
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/></svg>
+                            Transport Mode
+                        </label>
+                        <select class="modal-form-input" id="legTransportMode">
+                            <option value="truck">Truck</option>
+                            <option value="rail">Rail</option>
+                            <option value="ocean">Ocean</option>
+                            <option value="air">Air</option>
+                        </select>
+                    </div>
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            Trucks Required
+                        </label>
+                        <input type="number" class="modal-form-input" id="legTrucksRequired" placeholder="Auto-calculated if empty" oninput="calculateLegTotal()">
+                    </div>
+                </div>
+
+                <div class="modal-form-row">
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">Start Date</label>
+                        <input type="text" class="modal-form-input flatpickr-date" id="legStartDate" placeholder="Select start date">
+                    </div>
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">End Date</label>
+                        <input type="text" class="modal-form-input flatpickr-date" id="legEndDate" placeholder="Select end date">
+                    </div>
+                </div>
+
+                <div class="modal-form-row">
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">Delivery Rate</label>
+                        <input type="number" class="modal-form-input" id="legDeliveryRate" placeholder="e.g., 5" step="0.1">
+                    </div>
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">Rate Unit</label>
+                        <select class="modal-form-input" id="legRateUnit">
+                            <option value="per_day">Per Day</option>
+                            <option value="per_week" selected>Per Week</option>
+                            <option value="per_month">Per Month</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="modal-section-divider">
+                    <span>Cost Details</span>
+                </div>
+
+                <div class="modal-form-row">
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">Freight Cost / Truck</label>
+                        <input type="number" class="modal-form-input" id="legFreightCost" placeholder="$0.00" step="0.01" oninput="calculateLegTotal()">
+                    </div>
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">Accessorial Cost / Truck</label>
+                        <input type="number" class="modal-form-input" id="legAccessorialCost" placeholder="$0.00" step="0.01" oninput="calculateLegTotal()">
+                    </div>
+                </div>
+
+                <div class="modal-total-row" style="background: var(--gray-50); border-radius: 8px; padding: 12px 16px; margin-top: 16px;">
+                    <span class="modal-total-label">Estimated Total:</span>
+                    <span class="modal-total-value" id="legTotalDisplay">$0.00</span>
+                </div>
+
+                <div class="modal-form-group" style="margin-top: 16px;">
+                    <label class="modal-form-label">Triggers Milestone</label>
+                    <select class="modal-form-input" id="legTriggersMilestone">
+                        <option value="">None</option>
+                        <option value="shipping">Shipping</option>
+                        <option value="customs_cleared">Customs Clearance</option>
+                        <option value="project_delivery">Project Delivery</option>
+                    </select>
+                </div>
+
+                <div class="modal-form-group" style="margin-top: 16px;">
+                    <label class="modal-form-label">Notes</label>
+                    <textarea class="modal-form-input" id="legNotes" rows="2" placeholder="Optional notes about this transport leg"></textarea>
+                </div>
             </div>
             <div class="flow-modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeLegEditor()">Cancel</button>
