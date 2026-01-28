@@ -996,7 +996,7 @@
                 const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
                     || parseFloat(leg.accessorial_cost_per_truck) > 0
                     || parseFloat(leg.total_freight_cost) > 0;
-                const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                const hasSchedule = leg.start_date || leg.end_date || parseFloat(leg.delivery_rate) > 0;
                 const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
                 const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== getTotalTrucks();
                 const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
@@ -1015,7 +1015,7 @@
                     const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
                         || parseFloat(leg.accessorial_cost_per_truck) > 0
                         || parseFloat(leg.total_freight_cost) > 0;
-                    const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                    const hasSchedule = leg.start_date || leg.end_date || parseFloat(leg.delivery_rate) > 0;
                     const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
                     const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== getTotalTrucks();
                     const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
@@ -1364,52 +1364,12 @@
         }
 
         // ==================== STOP MANAGEMENT ====================
-        function openAddStopModal() {
-            document.getElementById('stopModalTitle').textContent = 'Add Warehouse Stop';
-            document.getElementById('editStopId').value = '';
-            document.getElementById('stopType').value = 'warehouse';
-            document.getElementById('stopName').value = '';
-            document.getElementById('stopAddress').value = '';
-            document.getElementById('stopArrival').value = '';
-            document.getElementById('stopDeparture').value = '';
-            document.getElementById('stopIsCustoms').checked = false;
-            document.getElementById('stopNotes').value = '';
-            document.getElementById('feesContainer').innerHTML = '';
-
-            // Add one empty fee row
-            addFeeRow();
-
-            document.getElementById('stopEditorModal').classList.add('active');
-            initializeDatePickers();
+        function openAddStopModal(afterStopId = null) {
+            addJourneyStop(afterStopId, { openEditor: true });
         }
 
         function openStopEditorModal(stopId) {
-            const stop = workingState.stops.find(s => s.id == stopId);
-            if (!stop) {
-                showToast('Stop not found', 'error');
-                return;
-            }
-
-            document.getElementById('stopModalTitle').textContent = 'Edit Stop';
-            document.getElementById('editStopId').value = stopId;
-            document.getElementById('stopType').value = stop.stop_type || 'warehouse';
-            document.getElementById('stopName').value = stop.location_name || '';
-            document.getElementById('stopAddress').value = stop.location_address || '';
-            document.getElementById('stopArrival').value = stop.estimated_arrival_date || '';
-            document.getElementById('stopDeparture').value = stop.estimated_departure_date || '';
-            document.getElementById('stopIsCustoms').checked = stop.is_customs_clearance == 1;
-            document.getElementById('stopNotes').value = stop.notes || '';
-
-            // Populate fees
-            document.getElementById('feesContainer').innerHTML = '';
-            if (stop.fees && stop.fees.length > 0) {
-                stop.fees.forEach(fee => addFeeRow(fee));
-            } else {
-                addFeeRow();
-            }
-
-            document.getElementById('stopEditorModal').classList.add('active');
-            initializeDatePickers();
+            openNodeEditor(stopId);
         }
 
         function closeStopEditorModal() {
@@ -1954,7 +1914,7 @@
                 const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
                     || parseFloat(leg.accessorial_cost_per_truck) > 0
                     || parseFloat(leg.total_freight_cost) > 0;
-                const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
+                const hasSchedule = leg.start_date || leg.end_date || parseFloat(leg.delivery_rate) > 0;
                 const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
                 const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== defaultTrucks;
                 const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
@@ -2202,6 +2162,9 @@
             const defsContent = svgContainer.querySelector('defs')?.outerHTML || '';
             svgContainer.innerHTML = defsContent;
 
+            // Remove any existing leg badges
+            layoutContainer.querySelectorAll('.journey-leg-badge').forEach(badge => badge.remove());
+
             const legs = workingState.legs || [];
             const stops = workingState.stops || [];
 
@@ -2234,44 +2197,6 @@
 
                 svgContainer.appendChild(path);
 
-                const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
-                const defaultTrucks = getTotalTrucks();
-                const hasCost = parseFloat(leg.freight_cost_per_truck) > 0
-                    || parseFloat(leg.accessorial_cost_per_truck) > 0
-                    || parseFloat(leg.total_freight_cost) > 0;
-                const hasSchedule = leg.start_date || leg.end_date || leg.delivery_rate || leg.delivery_rate_unit;
-                const hasMode = leg.transport_mode && leg.transport_mode !== 'truck';
-                const hasExplicitTrucks = trucksRequired > 0 && trucksRequired !== defaultTrucks;
-                const isConfigured = leg.is_configured || hasCost || hasSchedule || hasMode || hasExplicitTrucks;
-                const shouldShowBadge = isConfigured;
-
-                if (shouldShowBadge) {
-                    const badgeX = midX;
-                    const badgeY = (fromY + toY) / 2 - 15;
-
-                    const badge = document.createElement('div');
-                    badge.className = 'journey-leg-badge';
-                    badge.style.left = `${badgeX}px`;
-                    badge.style.top = `${badgeY}px`;
-                    badge.style.transform = 'translate(-50%, -50%)';
-                    badge.dataset.legId = leg.id;
-                    badge.onclick = () => openLegEditorModal(leg.id);
-
-                    const truckCount = trucksRequired || defaultTrucks || '?';
-                    const cost = leg.total_freight_cost ? `$${parseFloat(leg.total_freight_cost).toLocaleString()}` : '';
-
-                    badge.innerHTML = `
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="1" y="3" width="15" height="13"/>
-                            <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
-                            <circle cx="5.5" cy="18.5" r="2.5"/>
-                            <circle cx="18.5" cy="18.5" r="2.5"/>
-                        </svg>
-                        ${truckCount} truck${truckCount !== 1 ? 's' : ''} ${cost}
-                    `;
-
-                    layoutContainer.appendChild(badge);
-                }
             });
         }
 
@@ -3368,7 +3293,7 @@
 
         // ==================== ADD STOP MODAL ====================
 
-        function openAddStopModal(afterStopId) {
+        function openAddStopOptionsModal(afterStopId) {
             currentAddStopParentId = afterStopId;
             const modal = document.getElementById('addStopModal');
             const subtitle = document.getElementById('addStopSubtitle');
@@ -4165,7 +4090,7 @@
             updateTimelineChart();
         }
 
-        function addJourneyStop(afterStopId) {
+        function addJourneyStop(afterStopId, options = {}) {
             if (!canEdit) return;
 
             // IMPORTANT: Capture all current form values before re-rendering
@@ -4216,6 +4141,12 @@
             renderJourneyPlan();
             updateMapFromState();
             updateTimelineChart();
+
+            if (options.openEditor) {
+                setTimeout(() => openNodeEditor(newStop.id), 100);
+            }
+
+            return newStop;
         }
 
         function updateBadges() {
