@@ -486,15 +486,20 @@
                 return data;
             })
             .then(data => {
-                hideLoading();
                 if (data.success) {
                     markAsSaved();
-                    showToast('Projection saved successfully', 'success');
-                    // Refresh to show updated data
-                    setTimeout(() => {
+                    // If navigating to another section after save, keep spinner and reload immediately
+                    if (sessionStorage.getItem('navigateToSection')) {
                         window.location.reload();
-                    }, 1000);
+                    } else {
+                        hideLoading();
+                        showToast('Projection saved successfully', 'success');
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    }
                 } else {
+                    hideLoading();
                     showToast('Failed to save: ' + data.error, 'error');
                 }
             })
@@ -1042,7 +1047,8 @@
                 || (workingState.stops || []).some(stop => (stop.fees || []).some(fee => parseFloat(fee.estimated_cost) > 0))
                 || (typeof collectMilestoneEvents === 'function' && collectMilestoneEvents().some(event => parseFloat(event.amount) > 0));
 
-            const hasTimeline = hasTimelineDates || hasTimelineCosts;
+            // Costs step is only complete when logistics is done (all inventory at project site) AND has cost/date data
+            const hasTimeline = hasLogistics && (hasTimelineDates || hasTimelineCosts);
 
             return {
                 'modules-costs': hasModules,
@@ -1327,6 +1333,7 @@
                     if (section) {
                         section.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }
+                    hideLoading();
                 }, 300);
             }
         }
