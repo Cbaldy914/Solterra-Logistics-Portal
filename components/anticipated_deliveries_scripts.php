@@ -1993,14 +1993,27 @@
 
             // For monthly (storage) fees, multiply by number of months in storage
             if (fee.fee_type === 'storage' && stop) {
-                const stopIndex = workingState.stops.indexOf(stop);
-                if (stopIndex === -1) return baseCost;
+                const entryDateStr = stop.estimated_arrival_date;
+                if (!entryDateStr) return baseCost;
 
-                const nextStop = workingState.stops[stopIndex + 1];
+                // Find departure date: use estimated_departure_date, or outgoing leg start_date
+                let exitDateStr = stop.estimated_departure_date;
+                if (!exitDateStr) {
+                    const outLegs = (workingState.legs || []).filter(l => l.from_stop_id == stop.id);
+                    for (const ol of outLegs) {
+                        if (ol.start_date) { exitDateStr = ol.start_date; break; }
+                    }
+                }
+                // Fallback: next stop in array (legacy behavior)
+                if (!exitDateStr) {
+                    const stopIndex = workingState.stops.indexOf(stop);
+                    const nextStop = stopIndex >= 0 ? workingState.stops[stopIndex + 1] : null;
+                    if (nextStop?.estimated_arrival_date) exitDateStr = nextStop.estimated_arrival_date;
+                }
 
-                if (stop.estimated_arrival_date && nextStop?.estimated_arrival_date) {
-                    const entryDate = new Date(stop.estimated_arrival_date);
-                    const exitDate = new Date(nextStop.estimated_arrival_date);
+                if (exitDateStr) {
+                    const entryDate = new Date(entryDateStr);
+                    const exitDate = new Date(exitDateStr);
                     const daysInStorage = Math.ceil((exitDate - entryDate) / (1000 * 60 * 60 * 24));
                     const monthsInStorage = Math.max(1, Math.ceil(daysInStorage / 30));
                     return baseCost * monthsInStorage;
@@ -2537,8 +2550,8 @@
                     const vertDist = Math.abs(otherCY - lineYAtOther);
 
                     if (vertDist < otherRect.height) {
-                        // Offset the control points away from the blocking node
-                        const offsetAmount = otherRect.height + 40;
+                        // Offset the control points just enough to clear the blocking node
+                        const offsetAmount = (otherRect.height / 2) + 18;
                         // Offset downward if node is above the line, upward if below
                         const direction = (otherCY < lineYAtOther) ? 1 : -1;
                         cpFromY = fromY + direction * offsetAmount;
@@ -2757,12 +2770,20 @@
                     let detailParts = [];
                     if (rate > 0) detailParts.push('$' + rate.toLocaleString(undefined, {minimumFractionDigits: 2}) + ' ' + rateUnit);
                     detailParts.push(feeTypeLabels[fee.fee_type] || fee.fee_type || '');
-                    // For monthly fees, show months
-                    if (fee.fee_type === 'storage') {
-                        const stopIndex = workingState.stops.indexOf(stop);
-                        const nextStop = stopIndex >= 0 ? workingState.stops[stopIndex + 1] : null;
-                        if (stop.estimated_arrival_date && nextStop?.estimated_arrival_date) {
-                            const days = Math.ceil((new Date(nextStop.estimated_arrival_date) - new Date(stop.estimated_arrival_date)) / (1000*60*60*24));
+                    // For monthly fees, show months using outgoing leg departure
+                    if (fee.fee_type === 'storage' && stop.estimated_arrival_date) {
+                        let exitStr = stop.estimated_departure_date;
+                        if (!exitStr) {
+                            const outLegs = (workingState.legs || []).filter(l => l.from_stop_id == stop.id);
+                            for (const ol of outLegs) { if (ol.start_date) { exitStr = ol.start_date; break; } }
+                        }
+                        if (!exitStr) {
+                            const si = workingState.stops.indexOf(stop);
+                            const ns = si >= 0 ? workingState.stops[si + 1] : null;
+                            if (ns?.estimated_arrival_date) exitStr = ns.estimated_arrival_date;
+                        }
+                        if (exitStr) {
+                            const days = Math.ceil((new Date(exitStr) - new Date(stop.estimated_arrival_date)) / (1000*60*60*24));
                             const months = Math.max(1, Math.ceil(days / 30));
                             detailParts.push('x ' + months + ' mo');
                         }
@@ -2865,23 +2886,29 @@
                     </button>
                 </div>
                 <div class="stop-popover-body">
-                    <div class="stop-popover-section-title">Inventory</div>
-                    <div class="stop-popover-stats">
-                        <div class="stop-popover-stat">
-                            <div class="stop-popover-stat-value">${trucks}</div>
-                            <div class="stop-popover-stat-label">Trucks</div>
+                    <div class="stop-popover-top-row">
+                        <div>
+                            <div class="stop-popover-section-title">Inventory</div>
+                            <div class="stop-popover-stats">
+                                <div class="stop-popover-stat">
+                                    <div class="stop-popover-stat-value">${trucks}</div>
+                                    <div class="stop-popover-stat-label">Trucks</div>
+                                </div>
+                                <div class="stop-popover-stat">
+                                    <div class="stop-popover-stat-value">${Number(pallets).toLocaleString()}</div>
+                                    <div class="stop-popover-stat-label">Pallets</div>
+                                </div>
+                                <div class="stop-popover-stat">
+                                    <div class="stop-popover-stat-value">${Number(modules).toLocaleString()}</div>
+                                    <div class="stop-popover-stat-label">Modules</div>
+                                </div>
+                            </div>
+                            ${durationHtml}
                         </div>
-                        <div class="stop-popover-stat">
-                            <div class="stop-popover-stat-value">${Number(pallets).toLocaleString()}</div>
-                            <div class="stop-popover-stat-label">Pallets</div>
-                        </div>
-                        <div class="stop-popover-stat">
-                            <div class="stop-popover-stat-value">${Number(modules).toLocaleString()}</div>
-                            <div class="stop-popover-stat-label">Modules</div>
+                        <div>
+                            ${datesHtml}
                         </div>
                     </div>
-                    ${datesHtml}
-                    ${durationHtml}
                     ${feesHtml}
                 </div>
                 ${canEdit ? `

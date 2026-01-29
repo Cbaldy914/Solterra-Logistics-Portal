@@ -3511,8 +3511,7 @@
             border-radius: 14px;
             box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
             z-index: 200;
-            min-width: 340px;
-            max-width: 420px;
+            width: 460px;
             overflow: hidden;
             animation: popoverIn 0.2s ease;
         }
@@ -3558,6 +3557,13 @@
             padding: 14px 18px;
         }
 
+        .stop-popover-top-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-bottom: 6px;
+        }
+
         .stop-popover-section-title {
             font-size: 0.7em;
             font-weight: 700;
@@ -3574,8 +3580,8 @@
         .stop-popover-stats {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
-            gap: 8px;
-            margin-bottom: 8px;
+            gap: 6px;
+            margin-bottom: 0;
         }
 
         .stop-popover-stat {
@@ -3600,10 +3606,10 @@
         }
 
         .stop-popover-dates {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-bottom: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 0;
         }
 
         .stop-popover-date-card {
