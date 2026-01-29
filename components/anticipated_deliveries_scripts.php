@@ -88,7 +88,7 @@
                     content.classList.remove('collapsed');
                 }
 
-                // Switch to Monthly Forecast tab which contains the weekly projections table
+                // Switch to Cashflow Forecast tab which contains the weekly projections table
                 setTimeout(() => {
                     if (typeof switchTimelineTab === 'function') {
                         switchTimelineTab('line-chart');
@@ -5647,7 +5647,7 @@
             }
         }
 
-        // ==================== MONTHLY FORECAST LINE CHART ====================
+        // ==================== CASHFLOW FORECAST LINE CHART ====================
         let monthlyChartInstance = null;
 
         function renderMonthlyForecastChart() {
@@ -5659,22 +5659,22 @@
                 monthlyChartInstance.destroy();
             }
 
-            // Collect monthly data
-            const monthlyData = collectMonthlyData();
+            // Collect cashflow data
+            const cashflowData = collectCashflowData();
 
-            if (monthlyData.labels.length === 0) {
-                ctx.parentElement.innerHTML = '<div style="text-align: center; padding: 60px; color: #6c757d;">Add dates to your stops and legs to see the monthly forecast.</div>';
+            if (cashflowData.labels.length === 0) {
+                ctx.parentElement.innerHTML = '<div style="text-align: center; padding: 60px; color: #6c757d;">Add dates to your stops and legs to see the cashflow forecast.</div>';
                 return;
             }
 
             monthlyChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: monthlyData.labels,
+                    labels: cashflowData.labels,
                     datasets: [
                         {
                             label: 'Freight Costs',
-                            data: monthlyData.freight,
+                            data: cashflowData.freight,
                             borderColor: '#488C9A',
                             backgroundColor: 'rgba(72, 140, 154, 0.1)',
                             fill: true,
@@ -5682,7 +5682,7 @@
                         },
                         {
                             label: 'Warehousing Costs',
-                            data: monthlyData.warehousing,
+                            data: cashflowData.warehousing,
                             borderColor: '#E07F3A',
                             backgroundColor: 'rgba(224, 127, 58, 0.1)',
                             fill: true,
@@ -5690,7 +5690,7 @@
                         },
                         {
                             label: 'Milestone Payments',
-                            data: monthlyData.milestones,
+                            data: cashflowData.milestones,
                             borderColor: '#28a745',
                             backgroundColor: 'rgba(40, 167, 69, 0.1)',
                             fill: true,
@@ -5698,7 +5698,7 @@
                         },
                         {
                             label: 'Cumulative Total',
-                            data: monthlyData.cumulative,
+                            data: cashflowData.cumulative,
                             borderColor: '#293E4C',
                             backgroundColor: 'transparent',
                             borderWidth: 3,
@@ -5744,150 +5744,103 @@
             });
         }
 
-        function collectMonthlyData() {
-            const monthlyBuckets = {};
-            const milestoneEvents = collectMilestoneEvents();
-            const milestoneTotals = collectMilestoneTotals(milestoneEvents);
-            const addedMilestones = new Set();
+        function collectCashflowData() {
+            const weeklyData = collectWeeklyData();
+            if (weeklyData.length === 0) {
+                return {
+                    labels: [],
+                    freight: [],
+                    warehousing: [],
+                    milestones: [],
+                    cumulative: [],
+                    cadence: 'weekly'
+                };
+            }
 
-            // Collect freight costs by month
-            workingState.legs.forEach(leg => {
-                if (leg.start_date) {
-                    const monthKey = leg.start_date.substring(0, 7); // YYYY-MM
-                    if (!monthlyBuckets[monthKey]) {
-                        monthlyBuckets[monthKey] = { freight: 0, warehousing: 0, milestones: 0 };
-                    }
-                    monthlyBuckets[monthKey].freight += leg.total_freight_cost || 0;
+            const cadence = getCashflowCadence(weeklyData.length);
+            const buckets = [];
+            const formatRange = (startValue, endValue) => {
+                if (!startValue || !endValue) return '';
+                const start = startValue instanceof Date ? startValue : new Date(startValue);
+                const end = endValue instanceof Date ? endValue : new Date(endValue);
+                if (isNaN(start.getTime()) || isNaN(end.getTime())) return '';
+                const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                return `${startFormatted} - ${endFormatted}`;
+            };
 
-                    // Add milestone payment if triggered
-                    if (leg.triggers_milestone && milestoneTotals[leg.triggers_milestone] && !addedMilestones.has(leg.triggers_milestone)) {
-                        monthlyBuckets[monthKey].milestones += milestoneTotals[leg.triggers_milestone].amount || 0;
-                        addedMilestones.add(leg.triggers_milestone);
-                    }
-                }
-            });
-
-            milestoneEvents
-                .filter(event => event.trigger === 'po_execution')
-                .forEach(event => {
-                    const eventDate = event.date || new Date().toISOString().split('T')[0];
-                    const monthKey = eventDate.substring(0, 7);
-                    if (!monthlyBuckets[monthKey]) {
-                        monthlyBuckets[monthKey] = { freight: 0, warehousing: 0, milestones: 0 };
-                    }
-                    monthlyBuckets[monthKey].milestones += event.amount || 0;
+            if (cadence === 'weekly') {
+                weeklyData.forEach(week => {
+                    buckets.push({
+                        label: week.dateRange,
+                        freight: week.freight,
+                        warehousing: week.warehousing,
+                        milestones: week.milestones
+                    });
                 });
-
-            // Collect warehousing costs by month
-            workingState.stops.forEach((stop, stopIndex) => {
-                if (stop.estimated_arrival_date && stop.fees && stop.fees.length > 0) {
-                    const arrivalDate = new Date(stop.estimated_arrival_date);
-                    if (isNaN(arrivalDate.getTime())) return; // skip invalid dates
-
-                    stop.fees.forEach(fee => {
-                        const cost = fee.estimated_cost || 0;
-                        if (cost <= 0) return;
-
-                        if (fee.fee_type === 'storage' || fee.trigger === 'monthly') {
-                            // Monthly storage fees: distribute to each month starting from arrival month
-                            let departureDate;
-                            if (stop.estimated_departure_date && new Date(stop.estimated_departure_date) > arrivalDate) {
-                                departureDate = new Date(stop.estimated_departure_date);
-                            } else {
-                                const nextStop = workingState.stops[stopIndex + 1];
-                                departureDate = (nextStop?.estimated_arrival_date && new Date(nextStop.estimated_arrival_date) > arrivalDate)
-                                    ? new Date(nextStop.estimated_arrival_date)
-                                    : new Date(arrivalDate.getTime() + 90 * 24 * 60 * 60 * 1000);
-                            }
-
-                            const monthsInStorage = Math.max(1, Math.ceil((departureDate - arrivalDate) / (30 * 24 * 60 * 60 * 1000)));
-                            const monthlyFee = cost / monthsInStorage;
-
-                            // Use 1st of month as the bucket key
-                            const startMonth = new Date(arrivalDate.getFullYear(), arrivalDate.getMonth(), 1);
-                            for (let i = 0; i < monthsInStorage; i++) {
-                                const storageMonth = new Date(startMonth);
-                                storageMonth.setMonth(storageMonth.getMonth() + i);
-                                const storageMonthKey = storageMonth.toISOString().substring(0, 7);
-                                if (!monthlyBuckets[storageMonthKey]) {
-                                    monthlyBuckets[storageMonthKey] = { freight: 0, warehousing: 0, milestones: 0 };
-                                }
-                                monthlyBuckets[storageMonthKey].warehousing += monthlyFee;
-                            }
-                        } else {
-                            // In/out/handling fees: place at arrival month (in/receiving) or departure month (out/outbound)
-                            let feeMonthKey = stop.estimated_arrival_date.substring(0, 7);
-                            if (fee.fee_type === 'outbound' || fee.fee_type === 'out') {
-                                // Try to get departure date from stop, or fall back to next leg/stop
-                                let departureDate = null;
-                                let departureDateStr = null;
-                                if (stop.estimated_departure_date) {
-                                    const depDate = new Date(stop.estimated_departure_date);
-                                    if (!isNaN(depDate.getTime())) {
-                                        departureDate = depDate;
-                                        departureDateStr = stop.estimated_departure_date;
-                                    }
-                                }
-                                // Fallback: use the outgoing leg's start date or next stop's arrival
-                                if (!departureDate) {
-                                    const outgoingLeg = workingState.legs.find(l => l.from_stop_id == stop.id);
-                                    if (outgoingLeg?.start_date) {
-                                        const legDate = new Date(outgoingLeg.start_date);
-                                        if (!isNaN(legDate.getTime())) {
-                                            departureDate = legDate;
-                                            departureDateStr = outgoingLeg.start_date;
-                                        }
-                                    }
-                                }
-                                if (!departureDate) {
-                                    const nextStop = workingState.stops[stopIndex + 1];
-                                    if (nextStop?.estimated_arrival_date) {
-                                        const nextDate = new Date(nextStop.estimated_arrival_date);
-                                        if (!isNaN(nextDate.getTime())) {
-                                            departureDate = nextDate;
-                                            departureDateStr = nextStop.estimated_arrival_date;
-                                        }
-                                    }
-                                }
-                                if (departureDate && departureDateStr && departureDate > arrivalDate) {
-                                    feeMonthKey = departureDateStr.substring(0, 7);
-                                }
-                            }
-                            if (!monthlyBuckets[feeMonthKey]) {
-                                monthlyBuckets[feeMonthKey] = { freight: 0, warehousing: 0, milestones: 0 };
-                            }
-                            monthlyBuckets[feeMonthKey].warehousing += cost;
-                        }
+            } else if (cadence === 'biweekly') {
+                for (let i = 0; i < weeklyData.length; i += 2) {
+                    const slice = weeklyData.slice(i, i + 2);
+                    const first = slice[0];
+                    const last = slice[slice.length - 1];
+                    buckets.push({
+                        label: formatRange(first.weekStartDate, last.weekEndDate),
+                        freight: slice.reduce((sum, item) => sum + item.freight, 0),
+                        warehousing: slice.reduce((sum, item) => sum + item.warehousing, 0),
+                        milestones: slice.reduce((sum, item) => sum + item.milestones, 0)
                     });
                 }
-            });
+            } else {
+                const monthlyMap = new Map();
+                weeklyData.forEach(week => {
+                    const monthKey = week.weekStartDate.toISOString().substring(0, 7);
+                    if (!monthlyMap.has(monthKey)) {
+                        const labelDate = new Date(week.weekStartDate.getFullYear(), week.weekStartDate.getMonth(), 1);
+                        monthlyMap.set(monthKey, {
+                            label: labelDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+                            freight: 0,
+                            warehousing: 0,
+                            milestones: 0
+                        });
+                    }
+                    const bucket = monthlyMap.get(monthKey);
+                    bucket.freight += week.freight;
+                    bucket.warehousing += week.warehousing;
+                    bucket.milestones += week.milestones;
+                });
+                monthlyMap.forEach(bucket => buckets.push(bucket));
+            }
 
-            // Sort months and prepare arrays
-            const sortedMonths = Object.keys(monthlyBuckets).sort();
-
-            const labels = sortedMonths.map(m => {
-                const date = new Date(m + '-01');
-                return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-            });
-
-            let cumulativeTotal = 0;
+            const labels = [];
             const freight = [];
             const warehousing = [];
             const milestones = [];
             const cumulative = [];
+            let runningTotal = 0;
 
-            sortedMonths.forEach(month => {
-                const data = monthlyBuckets[month];
-                freight.push(data.freight);
-                warehousing.push(data.warehousing);
-                milestones.push(data.milestones);
-                cumulativeTotal += data.freight + data.warehousing + data.milestones;
-                cumulative.push(cumulativeTotal);
+            buckets.forEach(bucket => {
+                const total = bucket.freight + bucket.warehousing + bucket.milestones;
+                runningTotal += total;
+                labels.push(bucket.label);
+                freight.push(bucket.freight);
+                warehousing.push(bucket.warehousing);
+                milestones.push(bucket.milestones);
+                cumulative.push(runningTotal);
             });
 
-            return { labels, freight, warehousing, milestones, cumulative };
+            return { labels, freight, warehousing, milestones, cumulative, cadence };
         }
 
+        function getCashflowCadence(totalWeeks) {
+            if (totalWeeks <= 8) return 'weekly';
+            if (totalWeeks <= 24) return 'biweekly';
+            return 'monthly';
+        }
+
+        function collectMonthlyData() {
+            const cashflowData = collectCashflowData();
+            return cashflowData;
+        }
         // ==================== WEEKLY PROJECTIONS TABLE ====================
         function renderWeeklyProjectionsTable() {
             const tbody = document.getElementById('weeklyProjectionsBody');
@@ -5962,7 +5915,7 @@
             tbody.innerHTML = html;
         }
 
-        function collectWeeklyData() {
+        function collectWeeklyDataLegacy() {
             const weeklyBuckets = {};
             const milestoneEvents = collectMilestoneEvents();
             const milestoneTotals = collectMilestoneTotals(milestoneEvents);
@@ -6082,6 +6035,274 @@
                             if (!weeklyBuckets[feeWeekKey]) {
                                 weeklyBuckets[feeWeekKey] = { freight: 0, warehousing: 0, milestones: 0 };
                             }
+                            weeklyBuckets[feeWeekKey].warehousing += cost;
+                        }
+                    });
+                }
+            });
+
+            // Sort weeks and prepare array with date ranges
+            const sortedWeeks = Object.keys(weeklyBuckets).sort();
+
+            return sortedWeeks.map(weekStart => {
+                const weekStartDate = new Date(weekStart);
+                const weekEndDate = getWeekEnd(weekStart);
+                const startFormatted = weekStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const endFormatted = weekEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+                return {
+                    weekStartDate,
+                    weekEndDate,
+                    dateRange: `${startFormatted} - ${endFormatted}`,
+                    freight: weeklyBuckets[weekStart].freight,
+                    warehousing: weeklyBuckets[weekStart].warehousing,
+                    milestones: weeklyBuckets[weekStart].milestones
+                };
+            });
+        }
+
+        function collectWeeklyData() {
+            const weeklyBuckets = {};
+            const milestoneEvents = collectMilestoneEvents();
+            const milestoneTotals = collectMilestoneTotals(milestoneEvents);
+            const stopLookup = {};
+
+            (workingState.stops || []).forEach(stop => {
+                stopLookup[String(stop.id)] = stop;
+            });
+
+            const dayMs = 24 * 60 * 60 * 1000;
+
+            const normalizeDate = (value) => {
+                if (!value) return null;
+                const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+                if (isNaN(date.getTime())) return null;
+                date.setHours(0, 0, 0, 0);
+                return date;
+            };
+
+            const getWeekStart = (date) => {
+                const start = new Date(date.getTime());
+                start.setHours(0, 0, 0, 0);
+                start.setDate(start.getDate() - start.getDay());
+                return start;
+            };
+
+            const getWeekKey = (value) => {
+                const date = normalizeDate(value);
+                if (!date) return null;
+                return getWeekStart(date).toISOString().split('T')[0];
+            };
+
+            const getWeekEnd = (weekStartStr) => {
+                const start = new Date(weekStartStr);
+                const end = new Date(start);
+                end.setDate(start.getDate() + 6);
+                return end;
+            };
+
+            const ensureBucket = (weekKey) => {
+                if (!weekKey) return;
+                if (!weeklyBuckets[weekKey]) {
+                    weeklyBuckets[weekKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                }
+            };
+
+            const getLegScheduleRange = (leg) => {
+                const startDateValue = leg.start_date || leg.end_date;
+                const startDate = normalizeDate(startDateValue);
+                if (!startDate) return null;
+                let endDate = normalizeDate(leg.end_date);
+                if (!endDate || endDate < startDate) {
+                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                    const rate = parseFloat(leg.delivery_rate);
+                    if (rate > 0) {
+                        const computedEnd = calculateEndDate(startDateValue, rate, leg.delivery_rate_unit, trucks);
+                        endDate = normalizeDate(computedEnd);
+                    }
+                }
+                if (!endDate || endDate < startDate) {
+                    endDate = new Date(startDate.getTime());
+                }
+                return { startDate, endDate };
+            };
+
+            const distributeValueByWeek = (startDate, endDate, totalValue) => {
+                const buckets = {};
+                if (!totalValue) return buckets;
+                const start = normalizeDate(startDate);
+                let end = normalizeDate(endDate);
+                if (!start) return buckets;
+                if (!end || end < start) end = new Date(start.getTime());
+
+                let startMs = start.getTime();
+                let endMs = end.getTime();
+                if (endMs <= startMs) {
+                    endMs = startMs + dayMs;
+                }
+                const totalDays = Math.max(1, Math.round((endMs - startMs) / dayMs));
+                const valuePerDay = totalValue / totalDays;
+
+                const weekStart = getWeekStart(start);
+                for (let weekStartMs = weekStart.getTime(); weekStartMs < endMs; weekStartMs += 7 * dayMs) {
+                    const weekEndMs = weekStartMs + 7 * dayMs;
+                    const overlapDays = Math.max(0, Math.min(endMs, weekEndMs) - Math.max(startMs, weekStartMs)) / dayMs;
+                    if (overlapDays > 0) {
+                        const weekKey = new Date(weekStartMs).toISOString().split('T')[0];
+                        buckets[weekKey] = (buckets[weekKey] || 0) + valuePerDay * overlapDays;
+                    }
+                }
+
+                return buckets;
+            };
+
+            const distributeLegValueByWeek = (leg, totalValue) => {
+                const range = getLegScheduleRange(leg);
+                if (!range) return {};
+                return distributeValueByWeek(range.startDate, range.endDate, totalValue);
+            };
+
+            // Collect freight costs by week (spread across shipping cadence)
+            (workingState.legs || []).forEach(leg => {
+                const cost = parseFloat(leg.total_freight_cost) || 0;
+                if (cost <= 0) return;
+                const allocations = distributeLegValueByWeek(leg, cost);
+                Object.entries(allocations).forEach(([weekKey, value]) => {
+                    ensureBucket(weekKey);
+                    weeklyBuckets[weekKey].freight += value;
+                });
+            });
+
+            const getStop = (stopId) => stopLookup[String(stopId)] || stopLookup[stopId];
+            const legs = workingState.legs || [];
+            const originLegs = legs.filter(leg => getStop(leg.from_stop_id)?.stop_type === 'origin');
+            const destinationLegs = legs.filter(leg => getStop(leg.to_stop_id)?.stop_type === 'destination');
+            const customsLegs = legs.filter(leg => {
+                const stop = getStop(leg.to_stop_id);
+                return stop?.is_customs_clearance || stop?.stop_type === 'customs';
+            });
+
+            const resolveMilestoneLegs = (trigger) => {
+                if (trigger === 'shipping') {
+                    const shippingLegs = originLegs.length ? originLegs : legs.filter(leg => leg.triggers_milestone === trigger);
+                    return shippingLegs.length ? shippingLegs : (legs.length ? [legs[0]] : []);
+                }
+                if (trigger === 'project_delivery') {
+                    const deliveryLegs = destinationLegs.length ? destinationLegs : legs.filter(leg => leg.triggers_milestone === trigger);
+                    return deliveryLegs.length ? deliveryLegs : (legs.length ? [legs[legs.length - 1]] : []);
+                }
+                if (trigger === 'customs_cleared') {
+                    const customsTargets = customsLegs.length ? customsLegs : legs.filter(leg => leg.triggers_milestone === trigger);
+                    return customsTargets;
+                }
+                return legs.filter(leg => leg.triggers_milestone === trigger);
+            };
+
+            const allocateMilestone = (trigger, amount) => {
+                if (!amount) return;
+                const milestoneLegs = resolveMilestoneLegs(trigger);
+                if (!milestoneLegs.length) return;
+
+                const weeklyTrucks = {};
+                let totalTrucks = 0;
+
+                milestoneLegs.forEach(leg => {
+                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                    if (!trucks) return;
+                    const distribution = distributeLegValueByWeek(leg, trucks);
+                    const distributedTotal = Object.values(distribution).reduce((sum, value) => sum + value, 0);
+                    if (distributedTotal <= 0) return;
+                    totalTrucks += distributedTotal;
+                    Object.entries(distribution).forEach(([weekKey, value]) => {
+                        weeklyTrucks[weekKey] = (weeklyTrucks[weekKey] || 0) + value;
+                    });
+                });
+
+                if (totalTrucks <= 0) return;
+
+                Object.entries(weeklyTrucks).forEach(([weekKey, value]) => {
+                    ensureBucket(weekKey);
+                    weeklyBuckets[weekKey].milestones += amount * (value / totalTrucks);
+                });
+            };
+
+            Object.keys(milestoneTotals).forEach(trigger => {
+                if (trigger === 'po_execution') return;
+                allocateMilestone(trigger, milestoneTotals[trigger].amount || 0);
+            });
+
+            milestoneEvents
+                .filter(event => event.trigger === 'po_execution')
+                .forEach(event => {
+                    const eventDate = event.date || new Date().toISOString().split('T')[0];
+                    const weekKey = getWeekKey(eventDate);
+                    if (!weekKey) return;
+                    ensureBucket(weekKey);
+                    weeklyBuckets[weekKey].milestones += event.amount || 0;
+                });
+
+            // Collect warehousing costs by week
+            (workingState.stops || []).forEach((stop, stopIndex) => {
+                if (stop.estimated_arrival_date && stop.fees && stop.fees.length > 0) {
+                    const arrivalDate = normalizeDate(stop.estimated_arrival_date);
+                    if (!arrivalDate) return;
+
+                    stop.fees.forEach(fee => {
+                        const cost = fee.estimated_cost || 0;
+                        if (cost <= 0) return;
+
+                        if (fee.fee_type === 'storage' || fee.trigger === 'monthly') {
+                            // Monthly storage fees: place on week containing 1st of each month
+                            let departureDate;
+                            const plannedDeparture = normalizeDate(stop.estimated_departure_date);
+                            if (plannedDeparture && plannedDeparture > arrivalDate) {
+                                departureDate = plannedDeparture;
+                            } else {
+                                const nextStop = workingState.stops[stopIndex + 1];
+                                const nextArrival = normalizeDate(nextStop?.estimated_arrival_date);
+                                departureDate = (nextArrival && nextArrival > arrivalDate)
+                                    ? nextArrival
+                                    : new Date(arrivalDate.getTime() + 90 * dayMs);
+                            }
+
+                            const monthsInStorage = Math.max(1, Math.ceil((departureDate - arrivalDate) / (30 * dayMs)));
+                            const monthlyFee = cost / monthsInStorage;
+
+                            // Place each monthly payment on the 1st of the month
+                            const startMonth = new Date(arrivalDate.getFullYear(), arrivalDate.getMonth(), 1);
+                            for (let i = 0; i < monthsInStorage; i++) {
+                                const monthFirst = new Date(startMonth);
+                                monthFirst.setMonth(monthFirst.getMonth() + i);
+                                const monthFirstKey = getWeekKey(monthFirst);
+                                if (!monthFirstKey) {
+                                    continue;
+                                }
+                                ensureBucket(monthFirstKey);
+                                weeklyBuckets[monthFirstKey].warehousing += monthlyFee;
+                            }
+                        } else {
+                            // In/out/handling fees: place at arrival (in/receiving) or departure (out/outbound)
+                            let feeDate = arrivalDate;
+                            // Outbound fees should be placed at departure date
+                            if (fee.fee_type === 'outbound' || fee.fee_type === 'out') {
+                                // Try to get departure date from stop, or fall back to next leg/stop
+                                let departureDate = normalizeDate(stop.estimated_departure_date);
+                                if (!departureDate) {
+                                    const outgoingLeg = workingState.legs.find(l => l.from_stop_id == stop.id);
+                                    departureDate = normalizeDate(outgoingLeg?.start_date);
+                                }
+                                if (!departureDate) {
+                                    const nextStop = workingState.stops[stopIndex + 1];
+                                    departureDate = normalizeDate(nextStop?.estimated_arrival_date);
+                                }
+                                if (departureDate && departureDate > arrivalDate) {
+                                    feeDate = departureDate;
+                                }
+                            }
+
+                            const feeWeekKey = getWeekKey(feeDate);
+                            if (!feeWeekKey) return;
+                            ensureBucket(feeWeekKey);
                             weeklyBuckets[feeWeekKey].warehousing += cost;
                         }
                     });
