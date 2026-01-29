@@ -1341,6 +1341,22 @@
             }
         }
 
+        function saveAndViewCosts() {
+            if (hasUnsavedChanges) {
+                sessionStorage.setItem('navigateToSection', 'timeline');
+                saveProjection();
+                return;
+            }
+
+            navigateToStep('timeline');
+            const timelineSection = document.querySelector('[data-section="timeline"]');
+            if (timelineSection) {
+                setTimeout(() => {
+                    timelineSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 100);
+            }
+        }
+
         // Check for stored navigation target on page load
         function checkStoredNavigation() {
             const targetSection = sessionStorage.getItem('navigateToSection');
@@ -6108,68 +6124,87 @@
                 }
             };
 
-            const getLegScheduleRange = (leg) => {
-                const startDateValue = leg.start_date || leg.end_date;
-                const startDate = normalizeDate(startDateValue);
-                if (!startDate) return null;
-                let endDate = normalizeDate(leg.end_date);
-                if (!endDate || endDate < startDate) {
-                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
-                    const rate = parseFloat(leg.delivery_rate);
-                    if (rate > 0) {
-                        const computedEnd = calculateEndDate(startDateValue, rate, leg.delivery_rate_unit, trucks);
-                        endDate = normalizeDate(computedEnd);
+            const getLegWeeklyTruckSchedule = (leg) => {
+                const schedule = {};
+                const startDate = normalizeDate(leg.start_date || leg.end_date);
+                if (!startDate) return schedule;
+
+                const totalTrucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                if (totalTrucks <= 0) return schedule;
+
+                const rate = parseFloat(leg.delivery_rate);
+                const rateUnit = leg.delivery_rate_unit || 'per_week';
+
+                const addToWeek = (dateValue, trucks) => {
+                    if (!trucks) return;
+                    const weekKey = getWeekKey(dateValue);
+                    if (!weekKey) return;
+                    schedule[weekKey] = (schedule[weekKey] || 0) + trucks;
+                };
+
+                if (!rate || rate <= 0) {
+                    addToWeek(startDate, totalTrucks);
+                    return schedule;
+                }
+
+                let remaining = totalTrucks;
+                let cursor = new Date(startDate.getTime());
+
+                if (rateUnit === 'per_day') {
+                    while (remaining > 0) {
+                        const deliveriesToday = Math.min(remaining, rate);
+                        addToWeek(cursor, deliveriesToday);
+                        remaining -= deliveriesToday;
+                        cursor.setDate(cursor.getDate() + 1);
                     }
+                    return schedule;
                 }
-                if (!endDate || endDate < startDate) {
-                    endDate = new Date(startDate.getTime());
-                }
-                return { startDate, endDate };
-            };
 
-            const distributeValueByWeek = (startDate, endDate, totalValue) => {
-                const buckets = {};
-                if (!totalValue) return buckets;
-                const start = normalizeDate(startDate);
-                let end = normalizeDate(endDate);
-                if (!start) return buckets;
-                if (!end || end < start) end = new Date(start.getTime());
-
-                let startMs = start.getTime();
-                let endMs = end.getTime();
-                if (endMs <= startMs) {
-                    endMs = startMs + dayMs;
-                }
-                const totalDays = Math.max(1, Math.round((endMs - startMs) / dayMs));
-                const valuePerDay = totalValue / totalDays;
-
-                const weekStart = getWeekStart(start);
-                for (let weekStartMs = weekStart.getTime(); weekStartMs < endMs; weekStartMs += 7 * dayMs) {
-                    const weekEndMs = weekStartMs + 7 * dayMs;
-                    const overlapDays = Math.max(0, Math.min(endMs, weekEndMs) - Math.max(startMs, weekStartMs)) / dayMs;
-                    if (overlapDays > 0) {
-                        const weekKey = new Date(weekStartMs).toISOString().split('T')[0];
-                        buckets[weekKey] = (buckets[weekKey] || 0) + valuePerDay * overlapDays;
+                if (rateUnit === 'per_month') {
+                    while (remaining > 0) {
+                        const deliveriesThisMonth = Math.min(remaining, rate);
+                        addToWeek(cursor, deliveriesThisMonth);
+                        remaining -= deliveriesThisMonth;
+                        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
                     }
+                    return schedule;
                 }
 
-                return buckets;
+                while (remaining > 0) {
+                    const deliveriesThisWeek = Math.min(remaining, rate);
+                    addToWeek(cursor, deliveriesThisWeek);
+                    remaining -= deliveriesThisWeek;
+                    cursor.setDate(cursor.getDate() + 7);
+                }
+
+                return schedule;
             };
 
-            const distributeLegValueByWeek = (leg, totalValue) => {
-                const range = getLegScheduleRange(leg);
-                if (!range) return {};
-                return distributeValueByWeek(range.startDate, range.endDate, totalValue);
+            const getLegCostPerTruck = (leg, trucks) => {
+                const freightCost = parseFloat(leg.freight_cost_per_truck) || 0;
+                const accessorialCost = parseFloat(leg.accessorial_cost_per_truck) || 0;
+                if (freightCost || accessorialCost) {
+                    return freightCost + accessorialCost;
+                }
+                const totalCost = parseFloat(leg.total_freight_cost) || 0;
+                if (trucks > 0) {
+                    return totalCost / trucks;
+                }
+                return 0;
             };
 
-            // Collect freight costs by week (spread across shipping cadence)
+            // Collect freight costs by week (based on truckloads per week)
             (workingState.legs || []).forEach(leg => {
-                const cost = parseFloat(leg.total_freight_cost) || 0;
-                if (cost <= 0) return;
-                const allocations = distributeLegValueByWeek(leg, cost);
-                Object.entries(allocations).forEach(([weekKey, value]) => {
+                const trucksRequired = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                if (!trucksRequired) return;
+                const perTruckCost = getLegCostPerTruck(leg, trucksRequired);
+                if (perTruckCost <= 0) return;
+
+                const weeklyTrucks = getLegWeeklyTruckSchedule(leg);
+                Object.entries(weeklyTrucks).forEach(([weekKey, trucks]) => {
+                    if (!trucks) return;
                     ensureBucket(weekKey);
-                    weeklyBuckets[weekKey].freight += value;
+                    weeklyBuckets[weekKey].freight += trucks * perTruckCost;
                 });
             });
 
@@ -6207,22 +6242,20 @@
                 let totalTrucks = 0;
 
                 milestoneLegs.forEach(leg => {
-                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
-                    if (!trucks) return;
-                    const distribution = distributeLegValueByWeek(leg, trucks);
-                    const distributedTotal = Object.values(distribution).reduce((sum, value) => sum + value, 0);
-                    if (distributedTotal <= 0) return;
-                    totalTrucks += distributedTotal;
-                    Object.entries(distribution).forEach(([weekKey, value]) => {
-                        weeklyTrucks[weekKey] = (weeklyTrucks[weekKey] || 0) + value;
+                    const schedule = getLegWeeklyTruckSchedule(leg);
+                    Object.entries(schedule).forEach(([weekKey, trucks]) => {
+                        if (!trucks) return;
+                        weeklyTrucks[weekKey] = (weeklyTrucks[weekKey] || 0) + trucks;
+                        totalTrucks += trucks;
                     });
                 });
 
                 if (totalTrucks <= 0) return;
 
-                Object.entries(weeklyTrucks).forEach(([weekKey, value]) => {
+                const amountPerTruck = amount / totalTrucks;
+                Object.entries(weeklyTrucks).forEach(([weekKey, trucks]) => {
                     ensureBucket(weekKey);
-                    weeklyBuckets[weekKey].milestones += amount * (value / totalTrucks);
+                    weeklyBuckets[weekKey].milestones += amountPerTruck * trucks;
                 });
             };
 

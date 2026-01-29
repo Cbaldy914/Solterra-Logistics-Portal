@@ -624,6 +624,16 @@ if (!empty($project['account_id'])) {
                                 </div>
                             </div>
                         </div>
+                        <?php if ($can_edit): ?>
+                        <div class="logistics-section-actions">
+                            <button type="button" class="btn btn-primary" onclick="saveAndViewCosts()">
+                                <span>Save &amp; View Costs</span>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="9 18 15 12 9 6"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <?php endif; ?>
                     </div>
                 </div>
 
