@@ -958,9 +958,12 @@ if (!empty($project['account_id'])) {
 
                 <!-- Schedule Section -->
                 <div class="leg-form-section">
-                    <div class="leg-section-title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                        Schedule
+                    <div class="leg-section-title" style="display:flex; align-items:center; justify-content:space-between;">
+                        <span style="display:flex; align-items:center; gap:8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            Schedule
+                        </span>
+                        <span id="legArrivalBadge" style="display:none; font-size:0.78em; font-weight:600; background:linear-gradient(135deg, #e8f4f8 0%, #d4eef4 100%); color:var(--primary); border:1px solid rgba(72,140,154,0.25); border-radius:8px; padding:4px 12px;"></span>
                     </div>
                     <div class="leg-form-row-3">
                         <div class="modal-form-group">

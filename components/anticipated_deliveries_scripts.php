@@ -298,7 +298,7 @@
 
             // Initialize new pickers
             document.querySelectorAll('.flatpickr-date').forEach(input => {
-                const fp = flatpickr(input, {
+                const opts = {
                     dateFormat: 'Y-m-d',
                     allowInput: true,
                     onChange: function(selectedDates, dateStr) {
@@ -307,7 +307,14 @@
                             autoCalcEndDate();
                         }
                     }
-                });
+                };
+
+                // Apply min date constraint from data attribute (set by openLegEditorModal)
+                if (input.dataset.minDate) {
+                    opts.minDate = input.dataset.minDate;
+                }
+
+                const fp = flatpickr(input, opts);
                 datePickerInstances.push(fp);
             });
         }
@@ -1684,6 +1691,30 @@
                 });
             }
 
+            // Show arrival date at source stop and constrain start date
+            const arrivalBadge = document.getElementById('legArrivalBadge');
+            const startDateInput = document.getElementById('legStartDate');
+            const sourceArrival = fromStop?.estimated_arrival_date || null;
+
+            if (arrivalBadge) {
+                if (sourceArrival) {
+                    const arrDate = new Date(sourceArrival);
+                    const formatted = arrDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    arrivalBadge.textContent = `Modules arrive ${formatted}`;
+                    arrivalBadge.style.display = 'inline-flex';
+                } else if (fromStop?.stop_type === 'origin') {
+                    arrivalBadge.textContent = 'Ships from origin';
+                    arrivalBadge.style.display = 'inline-flex';
+                } else {
+                    arrivalBadge.style.display = 'none';
+                }
+            }
+
+            // Store min date on the start date input for flatpickr
+            if (startDateInput) {
+                startDateInput.dataset.minDate = (sourceArrival && fromStop?.stop_type !== 'origin') ? sourceArrival : '';
+            }
+
             document.getElementById('legEditorModal').classList.add('active');
             initializeDatePickers();
         }
@@ -2482,26 +2513,60 @@
                 // Skip unconfigured legs — don't draw placeholder lines
                 if (!configured) return;
 
-                // Create curved path
+                // Check if any other stop node sits between from and to — if so offset the curve to avoid it
                 const midX = (fromX + toX) / 2;
+                let cpFromY = fromY;
+                let cpToY = toY;
+
+                const allNodes = layoutContainer.querySelectorAll('[data-stop-id]');
+                allNodes.forEach(otherNode => {
+                    const otherId = otherNode.dataset.stopId;
+                    if (otherId == leg.from_stop_id || otherId == leg.to_stop_id) return;
+                    const otherRect = otherNode.getBoundingClientRect();
+                    const otherCX = otherRect.left + otherRect.width / 2 - containerRect.left;
+                    const otherCY = otherRect.top + otherRect.height / 2 - containerRect.top;
+
+                    // Check if the other node is horizontally between from and to
+                    const minXBound = Math.min(fromX, toX) + 20;
+                    const maxXBound = Math.max(fromX, toX) - 20;
+                    if (otherCX < minXBound || otherCX > maxXBound) return;
+
+                    // Check if it's vertically close to the line between fromY and toY
+                    const t = (otherCX - fromX) / (toX - fromX);
+                    const lineYAtOther = fromY + t * (toY - fromY);
+                    const vertDist = Math.abs(otherCY - lineYAtOther);
+
+                    if (vertDist < otherRect.height) {
+                        // Offset the control points away from the blocking node
+                        const offsetAmount = otherRect.height + 40;
+                        // Offset downward if node is above the line, upward if below
+                        const direction = (otherCY < lineYAtOther) ? 1 : -1;
+                        cpFromY = fromY + direction * offsetAmount;
+                        cpToY = toY + direction * offsetAmount;
+                    }
+                });
+
+                // Create curved path
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                path.setAttribute('d', `M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}`);
+                path.setAttribute('d', `M${fromX},${fromY} C${midX},${cpFromY} ${midX},${cpToY} ${toX},${toY}`);
                 path.setAttribute('data-leg-id', leg.id);
 
                 path.setAttribute('class', 'journey-leg-line');
                 path.setAttribute('stroke', 'url(#legGradient)');
                 path.setAttribute('marker-end', 'url(#legArrow)');
+                // Compute the actual bezier midpoint at t=0.5 for badge/popover placement
+                const bezMidY = 0.125 * fromY + 0.375 * cpFromY + 0.375 * cpToY + 0.125 * toY;
                 path.style.cursor = 'pointer';
                 path.onclick = (e) => {
                     e.stopPropagation();
-                    showLegPopover(leg, (fromX + toX) / 2, (fromY + toY) / 2);
+                    showLegPopover(leg, midX, bezMidY);
                 };
 
                 svgContainer.appendChild(path);
 
-                // Add transport mode badge on the line midpoint
-                const badgeMidX = (fromX + toX) / 2;
-                const badgeMidY = (fromY + toY) / 2;
+                // Add transport mode badge on the bezier curve midpoint
+                const badgeMidX = midX;
+                const badgeMidY = bezMidY;
                 const modeIcons = {
                     truck: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>',
                     rail: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/></svg>',
