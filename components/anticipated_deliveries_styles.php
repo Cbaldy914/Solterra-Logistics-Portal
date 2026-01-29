@@ -3507,11 +3507,11 @@
         .stop-popover {
             position: absolute;
             background: white;
-            border-radius: 12px;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+            border-radius: 14px;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
             z-index: 200;
-            min-width: 240px;
-            max-width: 300px;
+            min-width: 320px;
+            max-width: 380px;
             overflow: hidden;
             animation: popoverIn 0.2s ease;
         }
@@ -3520,30 +3520,163 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 10px 14px;
+            padding: 14px 18px;
             background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
             color: white;
         }
 
         .stop-popover-title {
             font-weight: 700;
-            font-size: 0.85em;
+            font-size: 0.9em;
+            letter-spacing: 0.2px;
+        }
+
+        .stop-popover-subtitle {
+            font-size: 0.72em;
+            color: rgba(255,255,255,0.75);
+            font-weight: 400;
+            margin-top: 2px;
         }
 
         .stop-popover-close {
-            background: none;
+            background: rgba(255,255,255,0.15);
             border: none;
-            color: rgba(255,255,255,0.7);
+            color: rgba(255,255,255,0.8);
             cursor: pointer;
-            padding: 2px;
+            padding: 4px;
+            border-radius: 6px;
+            transition: all 0.15s ease;
         }
 
         .stop-popover-close:hover {
             color: white;
+            background: rgba(255,255,255,0.25);
         }
 
         .stop-popover-body {
-            padding: 12px 14px;
+            padding: 14px 18px;
+        }
+
+        .stop-popover-section-title {
+            font-size: 0.7em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--gray-400);
+            margin: 10px 0 6px 0;
+        }
+
+        .stop-popover-section-title:first-child {
+            margin-top: 0;
+        }
+
+        .stop-popover-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .stop-popover-stat {
+            text-align: center;
+            padding: 8px 4px;
+            background: var(--gray-50, #f8f9fa);
+            border-radius: 8px;
+        }
+
+        .stop-popover-stat-value {
+            font-size: 1.05em;
+            font-weight: 700;
+            color: var(--dark);
+        }
+
+        .stop-popover-stat-label {
+            font-size: 0.65em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--gray-500);
+            margin-top: 2px;
+        }
+
+        .stop-popover-dates {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .stop-popover-date-card {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--gray-200, #e9ecef);
+        }
+
+        .stop-popover-date-label {
+            font-size: 0.65em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--gray-400);
+            margin-bottom: 2px;
+        }
+
+        .stop-popover-date-value {
+            font-size: 0.82em;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .stop-popover-fee-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+        }
+
+        .stop-popover-fee-row:not(:last-child) {
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .stop-popover-fee-info {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .stop-popover-fee-name {
+            font-size: 0.8em;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .stop-popover-fee-detail {
+            font-size: 0.68em;
+            color: var(--gray-500);
+        }
+
+        .stop-popover-fee-amount {
+            font-size: 0.85em;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .stop-popover-fee-total {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            margin-top: 6px;
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.08) 0%, rgba(72, 140, 154, 0.04) 100%);
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.85em;
+        }
+
+        .stop-popover-fee-total .fee-total-label {
+            color: var(--gray-700);
+        }
+
+        .stop-popover-fee-total .fee-total-amount {
+            color: var(--primary);
         }
 
         .stop-popover-row {
@@ -3571,7 +3704,7 @@
         .stop-popover-actions {
             display: flex;
             gap: 8px;
-            padding: 10px 14px;
+            padding: 12px 18px;
             border-top: 1px solid var(--gray-100);
         }
 
@@ -4306,7 +4439,6 @@
             border-radius: 10px;
             border: none;
             background: var(--gray-100);
-            color: var(--gray-500);
             cursor: pointer;
             display: flex;
             align-items: center;

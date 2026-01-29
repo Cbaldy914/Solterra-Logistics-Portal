@@ -1646,7 +1646,7 @@
             document.getElementById('legEndDate').value = leg?.end_date || '';
             document.getElementById('legDeliveryRate').value = leg?.delivery_rate || '';
             document.getElementById('legRateUnit').value = leg?.delivery_rate_unit || 'per_week';
-            document.getElementById('legTrucksRequired').value = leg?.trucks_required || availableTrucks;
+            document.getElementById('legTrucksRequired').value = (leg && isLegConfigured(leg)) ? leg.trucks_required : availableTrucks;
             document.getElementById('legFreightCost').value = leg?.freight_cost_per_truck || '';
             document.getElementById('legAccessorialCost').value = leg?.accessorial_cost_per_truck || '';
             document.getElementById('legTriggersMilestone').value = leg?.triggers_milestone || '';
@@ -2557,8 +2557,10 @@
 
             const popover = document.createElement('div');
             popover.className = 'leg-popover';
-            popover.style.left = `${x}px`;
-            popover.style.top = `${y + 20}px`;
+            popover.style.visibility = 'hidden';
+            popover.style.position = 'absolute';
+            popover.style.left = '0px';
+            popover.style.top = '0px';
             popover.innerHTML = `
                 <div class="leg-popover-header">
                     <span class="leg-popover-title">${mode} Shipment</span>
@@ -2593,6 +2595,34 @@
             `;
 
             layoutContainer.appendChild(popover);
+
+            // Measure and smart-position
+            const containerRect = layoutContainer.getBoundingClientRect();
+            const popoverRect = popover.getBoundingClientRect();
+            const popoverHeight = popoverRect.height;
+            const popoverWidth = popoverRect.width;
+
+            // Default: below the midpoint
+            let posY = y + 20;
+
+            // Check if it would extend below viewport
+            const absY = containerRect.top + posY;
+            if (absY + popoverHeight > window.innerHeight) {
+                posY = y - popoverHeight - 8;
+            }
+
+            // Check horizontal bounds
+            const halfWidth = popoverWidth / 2;
+            let posX = x;
+            if (posX - halfWidth < 0) {
+                posX = halfWidth + 4;
+            } else if (posX + halfWidth > containerRect.width) {
+                posX = containerRect.width - halfWidth - 4;
+            }
+
+            popover.style.left = `${posX}px`;
+            popover.style.top = `${posY}px`;
+            popover.style.visibility = 'visible';
 
             // Close popover when clicking elsewhere
             const closeHandler = (e) => {
@@ -2643,8 +2673,110 @@
             const modules = stopNode.dataset.modules || 0;
             const pallets = stopNode.dataset.pallets || 0;
             const trucks = stopNode.dataset.trucks || 0;
-            const feesCount = parseInt(stopNode.dataset.feesCount) || 0;
-            const feesTotal = parseFloat(stopNode.dataset.feesTotal) || 0;
+
+            // Calculate fees properly using the full calculateFeeEstimate logic
+            const fees = stop.fees || [];
+            const feeTypeLabels = { receiving: 'On Entry', outbound: 'On Exit', storage: 'Monthly', one_time: 'One Time' };
+            const rateUnitLabels = { per_pallet: '/pallet', per_module: '/module', per_truck: '/truck', per_sqft: '/sqft', flat: 'flat' };
+            let feesHtml = '';
+            let calculatedFeesTotal = 0;
+
+            if (fees.length > 0) {
+                feesHtml += `<div class="stop-popover-section-title">Warehousing Fees</div>`;
+                fees.forEach(fee => {
+                    const estimatedCost = calculateFeeEstimate(fee, stop);
+                    calculatedFeesTotal += estimatedCost;
+                    const feeLabel = fee.description || feeTypeLabels[fee.fee_type] || fee.fee_type || 'Fee';
+                    const rate = parseFloat(fee.rate) || 0;
+                    const rateUnit = rateUnitLabels[fee.rate_unit] || fee.rate_unit || '';
+                    let detailParts = [];
+                    if (rate > 0) detailParts.push('$' + rate.toLocaleString(undefined, {minimumFractionDigits: 2}) + ' ' + rateUnit);
+                    detailParts.push(feeTypeLabels[fee.fee_type] || fee.fee_type || '');
+                    // For monthly fees, show months
+                    if (fee.fee_type === 'storage') {
+                        const stopIndex = workingState.stops.indexOf(stop);
+                        const nextStop = stopIndex >= 0 ? workingState.stops[stopIndex + 1] : null;
+                        if (stop.estimated_arrival_date && nextStop?.estimated_arrival_date) {
+                            const days = Math.ceil((new Date(nextStop.estimated_arrival_date) - new Date(stop.estimated_arrival_date)) / (1000*60*60*24));
+                            const months = Math.max(1, Math.ceil(days / 30));
+                            detailParts.push('x ' + months + ' mo');
+                        }
+                    }
+                    feesHtml += `
+                        <div class="stop-popover-fee-row">
+                            <div class="stop-popover-fee-info">
+                                <span class="stop-popover-fee-name">${escapeHtml(feeLabel)}</span>
+                                <span class="stop-popover-fee-detail">${escapeHtml(detailParts.join(' \u2022 '))}</span>
+                            </div>
+                            <span class="stop-popover-fee-amount">$${estimatedCost.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                        </div>`;
+                });
+                feesHtml += `
+                    <div class="stop-popover-fee-total">
+                        <span class="fee-total-label">Total Warehousing</span>
+                        <span class="fee-total-amount">$${calculatedFeesTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    </div>`;
+            }
+
+            // Determine arrival/departure dates
+            const formatPopoverDate = (dateStr) => {
+                if (!dateStr) return null;
+                const d = new Date(dateStr);
+                if (isNaN(d)) return null;
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            };
+
+            // Find incoming and outgoing legs
+            const incomingLegs = (workingState.legs || []).filter(l => l.to_stop_id == stopId && isLegConfigured(l));
+            const outgoingLegs = (workingState.legs || []).filter(l => l.from_stop_id == stopId && isLegConfigured(l));
+
+            const arrivalDate = stop.estimated_arrival_date ? formatPopoverDate(stop.estimated_arrival_date) : null;
+            const departureDate = stop.estimated_departure_date ? formatPopoverDate(stop.estimated_departure_date) : null;
+
+            // Also try to get departure from outgoing leg start_date
+            let effectiveDeparture = departureDate;
+            if (!effectiveDeparture && outgoingLegs.length > 0) {
+                const earliestOutgoing = outgoingLegs.find(l => l.start_date);
+                if (earliestOutgoing) effectiveDeparture = formatPopoverDate(earliestOutgoing.start_date);
+            }
+
+            let datesHtml = '';
+            if (arrivalDate || effectiveDeparture) {
+                datesHtml = `<div class="stop-popover-section-title">Schedule</div><div class="stop-popover-dates">`;
+                if (arrivalDate) {
+                    datesHtml += `<div class="stop-popover-date-card">
+                        <div class="stop-popover-date-label">Trucks Arrive</div>
+                        <div class="stop-popover-date-value">${arrivalDate}</div>
+                    </div>`;
+                }
+                if (effectiveDeparture) {
+                    datesHtml += `<div class="stop-popover-date-card">
+                        <div class="stop-popover-date-label">Trucks Depart</div>
+                        <div class="stop-popover-date-value">${effectiveDeparture}</div>
+                    </div>`;
+                }
+                datesHtml += `</div>`;
+            }
+
+            // Duration in storage
+            let durationHtml = '';
+            if (arrivalDate && effectiveDeparture && stop.estimated_arrival_date) {
+                const arrD = new Date(stop.estimated_arrival_date);
+                const depD = stop.estimated_departure_date ? new Date(stop.estimated_departure_date)
+                    : (outgoingLegs.find(l => l.start_date) ? new Date(outgoingLegs.find(l => l.start_date).start_date) : null);
+                if (depD && !isNaN(depD)) {
+                    const days = Math.ceil((depD - arrD) / (1000*60*60*24));
+                    if (days > 0) {
+                        const weeks = Math.floor(days / 7);
+                        const remDays = days % 7;
+                        const durationStr = weeks > 0 ? (remDays > 0 ? `${weeks}w ${remDays}d` : `${weeks}w`) : `${days}d`;
+                        durationHtml = `<div class="stop-popover-row" style="margin-top:2px;">
+                            <span class="stop-popover-label">Time in Storage</span>
+                            <span class="stop-popover-value" style="color: var(--primary);">${durationStr}</span>
+                        </div>`;
+                    }
+                }
+            }
 
             const nodeRect = stopNode.getBoundingClientRect();
             const containerRect = layoutContainer.getBoundingClientRect();
@@ -2653,24 +2785,39 @@
 
             const popover = document.createElement('div');
             popover.className = 'stop-popover';
-            // Temporarily render offscreen to measure height
             popover.style.visibility = 'hidden';
             popover.style.position = 'absolute';
             popover.style.left = '0px';
             popover.style.top = '0px';
             popover.innerHTML = `
                 <div class="stop-popover-header">
-                    <span class="stop-popover-title">${escapeHtml(stop.location_name || 'Stop Details')}</span>
+                    <div>
+                        <div class="stop-popover-title">${escapeHtml(stop.location_name || 'Stop Details')}</div>
+                        ${stop.location_address ? `<div class="stop-popover-subtitle">${escapeHtml(stop.location_address)}</div>` : ''}
+                    </div>
                     <button type="button" class="stop-popover-close" onclick="this.closest('.stop-popover').remove()">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
                 <div class="stop-popover-body">
-                    ${stop.location_address ? `<div class="stop-popover-row"><span class="stop-popover-label">Address</span><span class="stop-popover-value" style="font-size:0.75em; max-width:150px; text-align:right;">${escapeHtml(stop.location_address)}</span></div>` : ''}
-                    <div class="stop-popover-row"><span class="stop-popover-label">Modules</span><span class="stop-popover-value">${Number(modules).toLocaleString()}</span></div>
-                    <div class="stop-popover-row"><span class="stop-popover-label">Pallets</span><span class="stop-popover-value">${Number(pallets).toLocaleString()}</span></div>
-                    <div class="stop-popover-row"><span class="stop-popover-label">Trucks</span><span class="stop-popover-value">${trucks}</span></div>
-                    ${feesCount > 0 ? `<div class="stop-popover-row"><span class="stop-popover-label">Fees</span><span class="stop-popover-value" style="color: var(--primary);">${feesCount} fee${feesCount > 1 ? 's' : ''} &bull; $${feesTotal.toLocaleString()}</span></div>` : ''}
+                    <div class="stop-popover-section-title">Inventory</div>
+                    <div class="stop-popover-stats">
+                        <div class="stop-popover-stat">
+                            <div class="stop-popover-stat-value">${trucks}</div>
+                            <div class="stop-popover-stat-label">Trucks</div>
+                        </div>
+                        <div class="stop-popover-stat">
+                            <div class="stop-popover-stat-value">${Number(pallets).toLocaleString()}</div>
+                            <div class="stop-popover-stat-label">Pallets</div>
+                        </div>
+                        <div class="stop-popover-stat">
+                            <div class="stop-popover-stat-value">${Number(modules).toLocaleString()}</div>
+                            <div class="stop-popover-stat-label">Modules</div>
+                        </div>
+                    </div>
+                    ${datesHtml}
+                    ${durationHtml}
+                    ${feesHtml}
                 </div>
                 ${canEdit ? `
                 <div class="stop-popover-actions">
@@ -5983,9 +6130,13 @@
                               stop.stop_type === 'port' ? 'Port' :
                               stop.stop_type === 'customs' ? 'Customs Facility' : 'Warehouse';
 
-            // Calculate fees for this stop
-            const totalFees = (stop.fees || []).reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
-            const feeCount = (stop.fees || []).length;
+            // Calculate fees for this stop using the proper fee calculation
+            const stopFees = stop.fees || [];
+            const feeCount = stopFees.length;
+            let totalFees = 0;
+            stopFees.forEach(f => {
+                totalFees += (typeof calculateFeeEstimate === 'function') ? calculateFeeEstimate(f, stop) : (parseFloat(f.estimated_cost) || 0);
+            });
 
             // Calculate arrival date RANGE instead of single date
             let arrivalRangeHtml = '';
@@ -6061,8 +6212,8 @@
                             <div style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.5px;">Fees</div>
                         </div>
                         <div style="text-align: center; padding: 10px; background: ${config.bg}; border-radius: 8px;">
-                            <div style="font-size: 16px; font-weight: 700; color: #293E4C;">$${totalFees.toLocaleString()}</div>
-                            <div style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.5px;">Est. Cost</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #293E4C;">$${totalFees.toLocaleString(undefined, {minimumFractionDigits:2})}</div>
+                            <div style="font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.5px;">Warehousing</div>
                         </div>
                     </div>
                 `;
@@ -6164,11 +6315,13 @@
 
             if (placeholder) placeholder.style.display = 'none';
 
-            // Draw route polylines based on actual leg connections
+            // Draw route polylines based on actual configured leg connections
             if (validStops.length > 1) {
                 const legs = workingState.legs || [];
 
                 legs.forEach(leg => {
+                    if (!isLegConfigured(leg)) return; // Only draw configured legs
+
                     const fromStop = validStops.find(s => s.stop.id == leg.from_stop_id);
                     const toStop = validStops.find(s => s.stop.id == leg.to_stop_id);
                     if (!fromStop?.position || !toStop?.position) return;
@@ -6190,7 +6343,34 @@
                         strokeWeight = Math.max(3, Math.min(10, Math.round(ratio * 10)));
                     }
 
-                    const segmentPath = [fromStop.position, toStop.position];
+                    // Check if any other stop lies near the direct line — if so, curve around it
+                    let segmentPath = [fromStop.position, toStop.position];
+                    const otherStops = validStops.filter(s => s.stop.id != leg.from_stop_id && s.stop.id != leg.to_stop_id);
+                    const fromLat = fromStop.position.lat, fromLng = fromStop.position.lng;
+                    const toLat = toStop.position.lat, toLng = toStop.position.lng;
+
+                    for (const other of otherStops) {
+                        const oLat = other.position.lat, oLng = other.position.lng;
+                        // Project the other stop onto the line segment
+                        const dx = toLng - fromLng, dy = toLat - fromLat;
+                        const lenSq = dx * dx + dy * dy;
+                        if (lenSq === 0) continue;
+                        const t = Math.max(0, Math.min(1, ((oLng - fromLng) * dx + (oLat - fromLat) * dy) / lenSq));
+                        const projLng = fromLng + t * dx, projLat = fromLat + t * dy;
+                        const dist = Math.sqrt(Math.pow(oLat - projLat, 2) + Math.pow(oLng - projLng, 2));
+                        // If the stop is near the line (within ~0.3 degrees) and between endpoints (not at edges)
+                        if (dist < 0.3 && t > 0.1 && t < 0.9) {
+                            // Offset the midpoint perpendicular to the line
+                            const lineLen = Math.sqrt(lenSq);
+                            const perpX = -dy / lineLen, perpY = dx / lineLen;
+                            const offsetAmount = Math.max(0.4, dist + 0.3); // offset enough to clear
+                            const midLat = (fromLat + toLat) / 2 + perpX * offsetAmount;
+                            const midLng = (fromLng + toLng) / 2 + perpY * offsetAmount;
+                            // Build curved path with intermediate point
+                            segmentPath = [fromStop.position, {lat: midLat, lng: midLng}, toStop.position];
+                            break;
+                        }
+                    }
 
                     // Main route line
                     const routeSegment = new google.maps.Polyline({
@@ -6308,17 +6488,27 @@
             if (!overlay) return;
 
             const stops = workingState.stops || [];
-            const warehouseCount = stops.filter(s => !['origin', 'destination'].includes(s.stop_type)).length;
+            const warehouseStops = stops.filter(s => !['origin', 'destination'].includes(s.stop_type));
+            const warehouseCount = warehouseStops.length;
             const totalPallets = getTotalPallets();
             const legs = workingState.legs || [];
             const totalFreight = legs.reduce((sum, l) => sum + (parseFloat(l.total_freight_cost) || 0), 0);
+
+            // Calculate total warehousing cost across all stops
+            let totalWarehousing = 0;
+            stops.forEach(s => {
+                (s.fees || []).forEach(f => {
+                    totalWarehousing += (typeof calculateFeeEstimate === 'function') ? calculateFeeEstimate(f, s) : (parseFloat(f.estimated_cost) || 0);
+                });
+            });
 
             let chips = '';
             if (totalPallets > 0) {
                 chips += `<div class="map-stat-chip"><span class="chip-dot" style="background: #488C9A;"></span>${totalPallets.toLocaleString()} pallets</div>`;
             }
             if (warehouseCount > 0) {
-                chips += `<div class="map-stat-chip"><span class="chip-dot" style="background: #E07F3A;"></span>${warehouseCount} stop${warehouseCount > 1 ? 's' : ''}</div>`;
+                const whCostStr = totalWarehousing > 0 ? ` \u2022 $${totalWarehousing.toLocaleString()} warehousing` : '';
+                chips += `<div class="map-stat-chip"><span class="chip-dot" style="background: #E07F3A;"></span>${warehouseCount} stop${warehouseCount > 1 ? 's' : ''}${whCostStr}</div>`;
             }
             if (totalFreight > 0) {
                 chips += `<div class="map-stat-chip"><span class="chip-dot" style="background: #28a745;"></span>$${totalFreight.toLocaleString()} freight</div>`;
