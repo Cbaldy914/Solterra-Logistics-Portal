@@ -52,11 +52,23 @@
             window.addEventListener('resize', function() {
                 clearTimeout(resizeTimeout);
                 resizeTimeout = setTimeout(() => {
-                    if (typeof renderFlowConnections === 'function') {
-                        renderFlowConnections();
-                    }
+                    if (typeof renderFlowConnections === 'function') renderFlowConnections();
+                    if (typeof renderJourneyConnections === 'function') renderJourneyConnections();
                 }, 150);
             });
+
+            // Also observe container-only size changes (sidebar toggle, panel resize)
+            const journeyLayout = document.getElementById('journeyFlowLayout');
+            if (journeyLayout && typeof ResizeObserver !== 'undefined') {
+                let roTimeout;
+                const ro = new ResizeObserver(() => {
+                    clearTimeout(roTimeout);
+                    roTimeout = setTimeout(() => {
+                        if (typeof renderJourneyConnections === 'function') renderJourneyConnections();
+                    }, 150);
+                });
+                ro.observe(journeyLayout);
+            }
         });
 
         function openTimelineSectionFromLink() {
@@ -1634,7 +1646,7 @@
             document.getElementById('legEndDate').value = leg?.end_date || '';
             document.getElementById('legDeliveryRate').value = leg?.delivery_rate || '';
             document.getElementById('legRateUnit').value = leg?.delivery_rate_unit || 'per_week';
-            document.getElementById('legTrucksRequired').value = leg?.trucks_required || '';
+            document.getElementById('legTrucksRequired').value = leg?.trucks_required || availableTrucks;
             document.getElementById('legFreightCost').value = leg?.freight_cost_per_truck || '';
             document.getElementById('legAccessorialCost').value = leg?.accessorial_cost_per_truck || '';
             document.getElementById('legTriggersMilestone').value = leg?.triggers_milestone || '';
@@ -1710,7 +1722,8 @@
         }
 
         function calculateLegTotal() {
-            const trucks = parseInt(document.getElementById('legTrucksRequired').value) || getTotalTrucks();
+            const trucksInput = document.getElementById('legTrucksRequired');
+            const trucks = parseInt(trucksInput.value) || parseInt(trucksInput.dataset.availableTrucks) || getTotalTrucks();
             const freightCost = parseFloat(document.getElementById('legFreightCost').value) || 0;
             const accessorialCost = parseFloat(document.getElementById('legAccessorialCost').value) || 0;
             const total = trucks * (freightCost + accessorialCost);
@@ -2466,29 +2479,25 @@
 
                 const configured = isLegConfigured(leg);
 
+                // Skip unconfigured legs — don't draw placeholder lines
+                if (!configured) return;
+
                 // Create curved path
                 const midX = (fromX + toX) / 2;
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('d', `M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}`);
                 path.setAttribute('data-leg-id', leg.id);
 
-                if (configured) {
-                    path.setAttribute('class', 'journey-leg-line');
-                    path.setAttribute('stroke', 'url(#legGradient)');
-                    path.setAttribute('marker-end', 'url(#legArrow)');
-                    path.style.cursor = 'pointer';
-                    path.onclick = (e) => {
-                        e.stopPropagation();
-                        showLegPopover(leg, (fromX + toX) / 2, (fromY + toY) / 2);
-                    };
-                } else {
-                    path.setAttribute('class', 'journey-leg-line-placeholder');
-                }
+                path.setAttribute('class', 'journey-leg-line');
+                path.setAttribute('stroke', 'url(#legGradient)');
+                path.setAttribute('marker-end', 'url(#legArrow)');
+                path.style.cursor = 'pointer';
+                path.onclick = (e) => {
+                    e.stopPropagation();
+                    showLegPopover(leg, (fromX + toX) / 2, (fromY + toY) / 2);
+                };
 
                 svgContainer.appendChild(path);
-
-                // Only add badge for configured legs
-                if (!configured) return;
 
                 // Add transport mode badge on the line midpoint
                 const badgeMidX = (fromX + toX) / 2;
@@ -2639,14 +2648,16 @@
 
             const nodeRect = stopNode.getBoundingClientRect();
             const containerRect = layoutContainer.getBoundingClientRect();
-            const x = nodeRect.left + nodeRect.width / 2 - containerRect.left;
-            const y = nodeRect.bottom - containerRect.top + 8;
+            let x = nodeRect.left + nodeRect.width / 2 - containerRect.left;
+            let y = nodeRect.bottom - containerRect.top + 8;
 
             const popover = document.createElement('div');
             popover.className = 'stop-popover';
-            popover.style.left = `${x}px`;
-            popover.style.top = `${y}px`;
-            popover.style.transform = 'translateX(-50%)';
+            // Temporarily render offscreen to measure height
+            popover.style.visibility = 'hidden';
+            popover.style.position = 'absolute';
+            popover.style.left = '0px';
+            popover.style.top = '0px';
             popover.innerHTML = `
                 <div class="stop-popover-header">
                     <span class="stop-popover-title">${escapeHtml(stop.location_name || 'Stop Details')}</span>
@@ -2676,6 +2687,31 @@
             `;
 
             layoutContainer.appendChild(popover);
+
+            // Measure and reposition smartly
+            const popoverRect = popover.getBoundingClientRect();
+            const popoverHeight = popoverRect.height;
+            const popoverWidth = popoverRect.width;
+
+            // Check if popover would extend below the viewport
+            const spaceBelow = window.innerHeight - nodeRect.bottom - 8;
+            if (spaceBelow < popoverHeight) {
+                // Flip above the stop card
+                y = nodeRect.top - containerRect.top - popoverHeight - 8;
+            }
+
+            // Check horizontal bounds
+            const halfWidth = popoverWidth / 2;
+            if (x - halfWidth < 0) {
+                x = halfWidth + 4;
+            } else if (x + halfWidth > containerRect.width) {
+                x = containerRect.width - halfWidth - 4;
+            }
+
+            popover.style.left = `${x}px`;
+            popover.style.top = `${y}px`;
+            popover.style.transform = 'translateX(-50%)';
+            popover.style.visibility = 'visible';
 
             // Close popover when clicking elsewhere
             const closeHandler = (e) => {
@@ -6128,43 +6164,37 @@
 
             if (placeholder) placeholder.style.display = 'none';
 
-            // Draw segmented route polylines with volume-weighted thickness
-            if (pathCoordinates.length > 1) {
-                const totalPallets = getTotalPallets();
+            // Draw route polylines based on actual leg connections
+            if (validStops.length > 1) {
                 const legs = workingState.legs || [];
 
-                for (let i = 0; i < pathCoordinates.length - 1; i++) {
-                    const fromStop = validStops[i];
-                    const toStop = validStops[i + 1];
-
-                    // Find the leg for this segment
-                    let leg = null;
-                    if (fromStop && toStop) {
-                        leg = legs.find(l => l.from_stop_id == fromStop.stop.id && l.to_stop_id == toStop.stop.id);
-                    }
+                legs.forEach(leg => {
+                    const fromStop = validStops.find(s => s.stop.id == leg.from_stop_id);
+                    const toStop = validStops.find(s => s.stop.id == leg.to_stop_id);
+                    if (!fromStop?.position || !toStop?.position) return;
 
                     // Determine line color based on segment type
                     let strokeColor = '#488C9A';
-                    if (fromStop && fromStop.stop.stop_type === 'origin') {
+                    if (fromStop.stop.stop_type === 'origin') {
                         strokeColor = '#3498db'; // Blue: from manufacturer
-                    } else if (toStop && toStop.stop.stop_type === 'destination') {
+                    } else if (toStop.stop.stop_type === 'destination') {
                         strokeColor = '#27ae60'; // Green: to project
                     }
 
                     // Determine thickness based on truck count or default
                     let strokeWeight = 4;
-                    if (leg) {
-                        const trucks = parseInt(leg.trucks_required) || 0;
-                        const maxTrucks = getTotalTrucks();
-                        if (maxTrucks > 0) {
-                            const ratio = trucks / maxTrucks;
-                            strokeWeight = Math.max(3, Math.min(10, Math.round(ratio * 10)));
-                        }
+                    const trucks = parseInt(leg.trucks_required) || 0;
+                    const maxTrucks = getTotalTrucks();
+                    if (maxTrucks > 0 && trucks > 0) {
+                        const ratio = trucks / maxTrucks;
+                        strokeWeight = Math.max(3, Math.min(10, Math.round(ratio * 10)));
                     }
+
+                    const segmentPath = [fromStop.position, toStop.position];
 
                     // Main route line
                     const routeSegment = new google.maps.Polyline({
-                        path: [pathCoordinates[i], pathCoordinates[i + 1]],
+                        path: segmentPath,
                         geodesic: true,
                         strokeColor: strokeColor,
                         strokeOpacity: 0.85,
@@ -6175,7 +6205,7 @@
 
                     // Animated dashed overlay for visual interest
                     const dashOverlay = new google.maps.Polyline({
-                        path: [pathCoordinates[i], pathCoordinates[i + 1]],
+                        path: segmentPath,
                         geodesic: true,
                         strokeColor: '#ffffff',
                         strokeOpacity: 0.25,
@@ -6192,13 +6222,13 @@
                     // Click handler for route segments
                     const segmentInfoWindow = new google.maps.InfoWindow();
                     routeSegment.addListener('click', (event) => {
-                        const fromName = fromStop ? escapeHtml(fromStop.stop.location_name || 'Origin') : 'Unknown';
-                        const toName = toStop ? escapeHtml(toStop.stop.location_name || 'Destination') : 'Unknown';
-                        const transportMode = leg ? (leg.transport_mode || 'truck') : 'truck';
-                        const trucks = leg ? (parseInt(leg.trucks_required) || '—') : '—';
-                        const freightCost = leg ? (parseFloat(leg.total_freight_cost) || 0) : 0;
-                        const cadence = leg ? (parseInt(leg.delivery_rate) || 0) : 0;
-                        const cadenceUnit = leg ? (leg.delivery_rate_unit === 'per_day' ? '/day' : '/week') : '/week';
+                        const fromName = escapeHtml(fromStop.stop.location_name || 'Origin');
+                        const toName = escapeHtml(toStop.stop.location_name || 'Destination');
+                        const transportMode = leg.transport_mode || 'truck';
+                        const truckDisplay = parseInt(leg.trucks_required) || '—';
+                        const freightCost = parseFloat(leg.total_freight_cost) || 0;
+                        const cadence = parseInt(leg.delivery_rate) || 0;
+                        const cadenceUnit = leg.delivery_rate_unit === 'per_day' ? '/day' : '/week';
 
                         const routeGradient = strokeColor === '#3498db' ? 'linear-gradient(135deg, #3498db, #2980b9)' :
                                               strokeColor === '#27ae60' ? 'linear-gradient(135deg, #27ae60, #1e8449)' :
@@ -6235,7 +6265,7 @@
                                     </div>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: #f8f9fa; padding: 10px; border-radius: 8px;">
                                         <div style="text-align: center;">
-                                            <div style="font-size: 15px; font-weight: 700; color: #293E4C;">${trucks}</div>
+                                            <div style="font-size: 15px; font-weight: 700; color: #293E4C;">${truckDisplay}</div>
                                             <div style="font-size: 9px; color: #666; text-transform: uppercase;">Trucks</div>
                                         </div>
                                         <div style="text-align: center;">
@@ -6257,7 +6287,7 @@
 
                     mapPolylines.push(routeSegment);
                     mapPolylines.push(dashOverlay);
-                }
+                });
             }
 
             // Fit bounds
@@ -6478,6 +6508,40 @@
             const grandTotalDisplay = document.getElementById('grandTotalDisplay');
             if (grandTotalDisplay) {
                 grandTotalDisplay.textContent = '$' + grandTotal.toLocaleString();
+            }
+
+            // Update cost summary card values
+            const fmtOpts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+            const costFreightEl = document.getElementById('costSummaryFreight');
+            if (costFreightEl) costFreightEl.textContent = '$' + displayFreight.toLocaleString(undefined, fmtOpts);
+            const costWarehouseEl = document.getElementById('costSummaryWarehousing');
+            if (costWarehouseEl) costWarehouseEl.textContent = '$' + displayWarehousing.toLocaleString(undefined, fmtOpts);
+            const costLogisticsEl = document.getElementById('costSummaryLogistics');
+            if (costLogisticsEl) costLogisticsEl.textContent = '$' + (displayFreight + displayWarehousing).toLocaleString(undefined, fmtOpts);
+            const costGrandEl = document.getElementById('costSummaryGrandTotal');
+            if (costGrandEl) costGrandEl.textContent = '$' + grandTotal.toLocaleString(undefined, fmtOpts);
+
+            // Update cost distribution bar and legend
+            const moduleValue = parseFloat(costSummary.module_contract_value) || 0;
+            const costGrandForBar = moduleValue + displayFreight + displayWarehousing;
+            if (costGrandForBar > 0) {
+                const modulePct = (moduleValue / costGrandForBar) * 100;
+                const freightPct = (displayFreight / costGrandForBar) * 100;
+                const warehousePct = (displayWarehousing / costGrandForBar) * 100;
+
+                const barModule = document.getElementById('costBarModule');
+                if (barModule) { barModule.style.width = modulePct + '%'; barModule.title = 'Modules: ' + modulePct.toFixed(1) + '%'; }
+                const barFreight = document.getElementById('costBarFreight');
+                if (barFreight) { barFreight.style.width = freightPct + '%'; barFreight.title = 'Freight: ' + freightPct.toFixed(1) + '%'; }
+                const barWarehouse = document.getElementById('costBarWarehouse');
+                if (barWarehouse) { barWarehouse.style.width = warehousePct + '%'; barWarehouse.title = 'Warehousing: ' + warehousePct.toFixed(1) + '%'; }
+
+                const legModule = document.getElementById('costLegendModule');
+                if (legModule) legModule.textContent = 'Modules (' + modulePct.toFixed(1) + '%)';
+                const legFreight = document.getElementById('costLegendFreight');
+                if (legFreight) legFreight.textContent = 'Freight (' + freightPct.toFixed(1) + '%)';
+                const legWarehouse = document.getElementById('costLegendWarehouse');
+                if (legWarehouse) legWarehouse.textContent = 'Warehousing (' + warehousePct.toFixed(1) + '%)';
             }
 
             // Also update the badge in the collapsible header

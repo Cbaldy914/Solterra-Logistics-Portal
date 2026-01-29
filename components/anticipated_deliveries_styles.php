@@ -3352,6 +3352,7 @@
             border-radius: var(--radius-lg);
             padding: 24px;
             min-height: 400px;
+            overflow: visible;
         }
 
         .journey-flow-hint {
@@ -3381,6 +3382,7 @@
             gap: 20px;
             position: relative;
             min-height: 350px;
+            overflow: visible;
         }
 
         .journey-column {
@@ -3773,11 +3775,9 @@
             align-items: flex-start;
             justify-content: center;
             gap: 16px;
-            overflow-x: auto;
+            overflow: visible;
             padding: 8px 0;
             margin-top: 60px;
-            scrollbar-width: thin;
-            scrollbar-color: var(--gray-300) transparent;
         }
 
         .journey-stops-scroll::-webkit-scrollbar {
