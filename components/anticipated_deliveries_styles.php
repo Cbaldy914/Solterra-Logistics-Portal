@@ -3458,6 +3458,156 @@
             border-left: 4px solid var(--accent);
         }
 
+        /* Compact stop card */
+        .journey-flow-layout .journey-node.stop-compact {
+            padding: 12px 14px;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        .journey-flow-layout .journey-node.stop-compact .journey-node-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+        }
+
+        .journey-flow-layout .journey-node.stop-compact .journey-node-icon svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .journey-flow-layout .journey-node.stop-compact .journey-node-title {
+            font-size: 0.85em;
+        }
+
+        .journey-flow-layout .journey-node.stop-compact .journey-node-address {
+            font-size: 0.72em;
+            -webkit-line-clamp: 1;
+        }
+
+        .journey-node-inventory-compact {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75em;
+            color: var(--gray-600);
+            font-weight: 600;
+            background: var(--gray-50);
+            border-radius: var(--radius-sm);
+            padding: 6px 10px;
+        }
+
+        .journey-node-inventory-compact .inv-sep {
+            color: var(--gray-300);
+        }
+
+        /* Stop popover */
+        .stop-popover {
+            position: absolute;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+            z-index: 200;
+            min-width: 240px;
+            max-width: 300px;
+            overflow: hidden;
+            animation: popoverIn 0.2s ease;
+        }
+
+        .stop-popover-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+            color: white;
+        }
+
+        .stop-popover-title {
+            font-weight: 700;
+            font-size: 0.85em;
+        }
+
+        .stop-popover-close {
+            background: none;
+            border: none;
+            color: rgba(255,255,255,0.7);
+            cursor: pointer;
+            padding: 2px;
+        }
+
+        .stop-popover-close:hover {
+            color: white;
+        }
+
+        .stop-popover-body {
+            padding: 12px 14px;
+        }
+
+        .stop-popover-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+        }
+
+        .stop-popover-row:not(:last-child) {
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .stop-popover-label {
+            font-size: 0.8em;
+            color: var(--gray-500);
+        }
+
+        .stop-popover-value {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .stop-popover-actions {
+            display: flex;
+            gap: 8px;
+            padding: 10px 14px;
+            border-top: 1px solid var(--gray-100);
+        }
+
+        .stop-popover-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.8em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .stop-popover-btn.edit {
+            background: var(--gray-100);
+            color: var(--dark);
+        }
+
+        .stop-popover-btn.edit:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        .stop-popover-btn.delete {
+            background: var(--gray-100);
+            color: var(--gray-600);
+        }
+
+        .stop-popover-btn.delete:hover {
+            background: #dc2626;
+            color: white;
+        }
+
         .journey-flow-layout .journey-node-header {
             display: flex;
             align-items: flex-start;
@@ -3646,15 +3796,15 @@
         .journey-stop-group {
             display: flex;
             flex-direction: column;
-            gap: 16px;
-            min-width: 220px;
-            max-width: 240px;
+            gap: 10px;
+            min-width: 200px;
+            max-width: 220px;
             flex: 0 0 auto;
         }
 
         .journey-stop-card {
-            min-width: 200px;
-            max-width: 240px;
+            min-width: 180px;
+            max-width: 220px;
             flex-shrink: 0;
             width: 100%;
         }

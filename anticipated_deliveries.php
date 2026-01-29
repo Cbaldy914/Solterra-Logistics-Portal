@@ -948,7 +948,10 @@ if (!empty($project['account_id'])) {
                         </div>
                         <div class="modal-form-group">
                             <label class="modal-form-label">Trucks to Ship</label>
-                            <input type="number" class="modal-form-input" id="legTrucksRequired" placeholder="All available" min="1" oninput="calculateLegTotal(); autoCalcEndDate();">
+                            <input type="number" class="modal-form-input" id="legTrucksRequired" placeholder="All available" min="1" oninput="calculateLegTotal(); autoCalcEndDate(); validateTruckCount();">
+                            <div id="legTruckError" style="display:none; color:#dc2626; font-size:0.78em; font-weight:600; margin-top:4px; padding:4px 8px; background:#fef2f2; border-radius:6px;">
+                                Exceeds available inventory
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1063,8 +1066,8 @@ if (!empty($project['account_id'])) {
                             </svg>
                         </div>
                         <div class="add-stop-option-text">
-                            <strong>Warehouse from Manufacturer</strong>
-                            <span>Add a depth-1 stop connected from the origin</span>
+                            <strong>Manufacturer to Warehouse</strong>
+                            <span>Add a warehouse stop connected from the origin</span>
                         </div>
                         <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="9 18 15 12 9 6"/>
@@ -1081,25 +1084,6 @@ if (!empty($project['account_id'])) {
                         <div class="add-stop-option-text">
                             <strong>Transfer Stop</strong>
                             <span>Add after an existing stop (warehouse-to-warehouse chain)</span>
-                        </div>
-                        <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="9 18 15 12 9 6"/>
-                        </svg>
-                    </button>
-                    <button type="button" class="add-stop-option" onclick="addBranchSplit()">
-                        <div class="add-stop-option-icon branch">
-                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="5" r="3"/>
-                                <circle cx="6" cy="19" r="3"/>
-                                <circle cx="18" cy="19" r="3"/>
-                                <path d="M12 8v4"/>
-                                <path d="M12 12l-6 4"/>
-                                <path d="M12 12l6 4"/>
-                            </svg>
-                        </div>
-                        <div class="add-stop-option-text">
-                            <strong>Split Into Branches</strong>
-                            <span>Send cargo to multiple destinations</span>
                         </div>
                         <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="9 18 15 12 9 6"/>

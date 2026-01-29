@@ -1718,6 +1718,24 @@
             document.getElementById('legTotalDisplay').textContent = '$' + total.toLocaleString('en-US', { minimumFractionDigits: 2 });
         }
 
+        function validateTruckCount() {
+            const input = document.getElementById('legTrucksRequired');
+            const errorDiv = document.getElementById('legTruckError');
+            if (!input || !errorDiv) return;
+
+            const val = parseInt(input.value, 10);
+            const max = parseInt(input.dataset.availableTrucks, 10);
+
+            if (max > 0 && val > max) {
+                errorDiv.textContent = `Exceeds available inventory (max ${max} trucks)`;
+                errorDiv.style.display = 'block';
+                input.style.borderColor = '#dc2626';
+            } else {
+                errorDiv.style.display = 'none';
+                input.style.borderColor = '';
+            }
+        }
+
         // ==================== LEG DISTANCE CALCULATION ====================
         let legDirectionsService = null;
 
@@ -1952,7 +1970,10 @@
             ensureStops();
 
             const stops = workingState.stops || [];
+            const stopIds = new Set(stops.map(s => s.id));
             const legPairs = new Set();
+
+            // Create default legs between consecutive stops
             for (let i = 0; i < stops.length - 1; i++) {
                 const fromStop = stops[i];
                 const toStop = stops[i + 1];
@@ -1960,6 +1981,15 @@
                 legPairs.add(`${fromStop.id}__${toStop.id}`);
                 getLegForStops(fromStop.id, toStop.id);
             }
+
+            // Preserve any manually-created legs whose stops still exist
+            workingState.legs.forEach(leg => {
+                if (stopIds.has(String(leg.from_stop_id)) || stopIds.has(leg.from_stop_id)) {
+                    if (stopIds.has(String(leg.to_stop_id)) || stopIds.has(leg.to_stop_id)) {
+                        legPairs.add(`${leg.from_stop_id}__${leg.to_stop_id}`);
+                    }
+                }
+            });
 
             workingState.legs = workingState.legs.filter(leg => legPairs.has(`${leg.from_stop_id}__${leg.to_stop_id}`));
 
@@ -2306,34 +2336,43 @@
                     <rect x="14" y="13" width="4" height="8"/>
                 </svg>`;
 
-            // Fees display for stops
-            let feesHtml = '';
+            // Fees summary for stop popover (not rendered inline)
+            let feesCount = 0;
+            let feesTotal = 0;
             if (fees && fees.length > 0) {
-                const totalFees = fees.reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
-                feesHtml = `
-                    <div class="journey-node-fees">
-                        <span class="fee-badge">${fees.length} fee${fees.length > 1 ? 's' : ''} &bull; $${totalFees.toLocaleString()}</span>
-                    </div>
-                `;
+                feesCount = fees.length;
+                feesTotal = fees.reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
             }
 
-            // Actions
-            let actionsHtml = '';
-            if (canEdit && type === 'stop') {
-                actionsHtml = `
-                    <div class="journey-node-actions">
-                        <button type="button" class="journey-node-action-btn edit-btn" data-action="edit" data-stop-id="${id}">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                            </svg>
-                            Edit
-                        </button>
-                        ${showDelete ? `
-                            <button type="button" class="journey-node-action-btn delete-btn" data-action="delete" data-stop-id="${id}">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="3 6 5 6 21 6"/>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            // For stop nodes: compact card, clickable for popover with details
+            // For origin/destination: full card with inventory
+            const isStop = type === 'stop';
+
+            if (isStop) {
+                return `
+                    <div class="journey-node ${typeClass} stop-compact" data-stop-id="${id}" data-type="${type}"
+                         data-fees-count="${feesCount}" data-fees-total="${feesTotal}"
+                         data-modules="${modules || 0}" data-pallets="${pallets || 0}" data-trucks="${trucks || 0}">
+                        ${showReceive ? `<div class="journey-node-receive" data-stop-id="${id}" data-action="receive"></div>` : ''}
+                        <div class="journey-node-header">
+                            <div class="journey-node-icon">${icon}</div>
+                            <div class="journey-node-info">
+                                <div class="journey-node-title">${escapeHtml(title) || '<em>Unnamed stop</em>'}</div>
+                                ${address ? `<div class="journey-node-address">${escapeHtml(address)}</div>` : ''}
+                            </div>
+                        </div>
+                        <div class="journey-node-inventory-compact">
+                            <span>${(trucks || 0)} trk</span>
+                            <span class="inv-sep">&bull;</span>
+                            <span>${(pallets || 0)} plt</span>
+                            <span class="inv-sep">&bull;</span>
+                            <span>${(modules || 0).toLocaleString()} mod</span>
+                        </div>
+                        ${showConnect ? `
+                            <button type="button" class="journey-node-connect" data-stop-id="${id}" data-action="connect" title="Create route from here">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 12h14"/>
+                                    <path d="M12 5l7 7-7 7"/>
                                 </svg>
                             </button>
                         ` : ''}
@@ -2365,7 +2404,6 @@
                             <span class="inventory-stat-label">Trucks</span>
                         </div>
                     </div>
-                    ${feesHtml}
                     ${showConnect ? `
                         <button type="button" class="journey-node-connect" data-stop-id="${id}" data-action="connect" title="Create route from here">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2374,7 +2412,6 @@
                             </svg>
                         </button>
                     ` : ''}
-                    ${actionsHtml}
                 </div>
             `;
         }
@@ -2583,6 +2620,73 @@
             showToast('Shipping route deleted. Inventory returned to previous location.', 'info');
         }
 
+        function showStopPopover(stopNode) {
+            const layoutContainer = document.getElementById('journeyFlowLayout');
+            if (!layoutContainer) return;
+
+            // Remove any existing stop popover
+            layoutContainer.querySelectorAll('.stop-popover').forEach(el => el.remove());
+
+            const stopId = stopNode.dataset.stopId;
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop) return;
+
+            const modules = stopNode.dataset.modules || 0;
+            const pallets = stopNode.dataset.pallets || 0;
+            const trucks = stopNode.dataset.trucks || 0;
+            const feesCount = parseInt(stopNode.dataset.feesCount) || 0;
+            const feesTotal = parseFloat(stopNode.dataset.feesTotal) || 0;
+
+            const nodeRect = stopNode.getBoundingClientRect();
+            const containerRect = layoutContainer.getBoundingClientRect();
+            const x = nodeRect.left + nodeRect.width / 2 - containerRect.left;
+            const y = nodeRect.bottom - containerRect.top + 8;
+
+            const popover = document.createElement('div');
+            popover.className = 'stop-popover';
+            popover.style.left = `${x}px`;
+            popover.style.top = `${y}px`;
+            popover.style.transform = 'translateX(-50%)';
+            popover.innerHTML = `
+                <div class="stop-popover-header">
+                    <span class="stop-popover-title">${escapeHtml(stop.location_name || 'Stop Details')}</span>
+                    <button type="button" class="stop-popover-close" onclick="this.closest('.stop-popover').remove()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="stop-popover-body">
+                    ${stop.location_address ? `<div class="stop-popover-row"><span class="stop-popover-label">Address</span><span class="stop-popover-value" style="font-size:0.75em; max-width:150px; text-align:right;">${escapeHtml(stop.location_address)}</span></div>` : ''}
+                    <div class="stop-popover-row"><span class="stop-popover-label">Modules</span><span class="stop-popover-value">${Number(modules).toLocaleString()}</span></div>
+                    <div class="stop-popover-row"><span class="stop-popover-label">Pallets</span><span class="stop-popover-value">${Number(pallets).toLocaleString()}</span></div>
+                    <div class="stop-popover-row"><span class="stop-popover-label">Trucks</span><span class="stop-popover-value">${trucks}</span></div>
+                    ${feesCount > 0 ? `<div class="stop-popover-row"><span class="stop-popover-label">Fees</span><span class="stop-popover-value" style="color: var(--primary);">${feesCount} fee${feesCount > 1 ? 's' : ''} &bull; $${feesTotal.toLocaleString()}</span></div>` : ''}
+                </div>
+                ${canEdit ? `
+                <div class="stop-popover-actions">
+                    <button type="button" class="stop-popover-btn edit" onclick="this.closest('.stop-popover').remove(); openNodeEditor('${stopId}');">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        Edit
+                    </button>
+                    <button type="button" class="stop-popover-btn delete" onclick="this.closest('.stop-popover').remove(); deleteStop('${stopId}');">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Delete
+                    </button>
+                </div>
+                ` : ''}
+            `;
+
+            layoutContainer.appendChild(popover);
+
+            // Close popover when clicking elsewhere
+            const closeHandler = (e) => {
+                if (!popover.contains(e.target) && !stopNode.contains(e.target)) {
+                    popover.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+
         function bindJourneyFlowListeners() {
             const layoutContainer = document.getElementById('journeyFlowLayout');
             if (!layoutContainer) return;
@@ -2709,7 +2813,7 @@
                 }
             });
 
-            // Node action buttons
+            // Node action buttons (still used for non-compact nodes if any)
             layoutContainer.querySelectorAll('.journey-node-action-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -2721,6 +2825,16 @@
                     } else if (action === 'delete') {
                         deleteStop(stopId);
                     }
+                });
+            });
+
+            // Compact stop node click → show popover
+            layoutContainer.querySelectorAll('.journey-node.stop-compact').forEach(node => {
+                node.addEventListener('click', (e) => {
+                    // Don't trigger if clicking connect or receive buttons
+                    if (e.target.closest('.journey-node-connect') || e.target.closest('.journey-node-receive')) return;
+                    e.stopPropagation();
+                    showStopPopover(node);
                 });
             });
         }
@@ -3692,13 +3806,53 @@
 
         function addStopFromManufacturer() {
             closeAddStopModal();
-            // Add a stop connected from the origin (depth-1)
+            if (!canEdit) return;
+
+            ensureStops();
+
             const originStop = workingState.stops.find(s => s.stop_type === 'origin');
-            if (originStop) {
-                addJourneyStop(originStop.id, { openEditor: true });
-            } else {
+            if (!originStop) {
                 showToast('No origin stop found. Please configure modules first.', 'error');
+                return;
             }
+
+            const newStop = {
+                id: `warehouse_${Date.now()}`,
+                stop_type: 'warehouse',
+                location_name: '',
+                location_address: '',
+                latitude: null,
+                longitude: null,
+                fees: []
+            };
+
+            // Insert before destination so depth grouping keeps all origin-connected warehouses at depth 1
+            const destIndex = workingState.stops.findIndex(s => s.stop_type === 'destination');
+            if (destIndex >= 0) {
+                workingState.stops.splice(destIndex, 0, newStop);
+            } else {
+                workingState.stops.push(newStop);
+            }
+
+            // Create leg from origin to this new warehouse only
+            getLegForStops(originStop.id, newStop.id);
+            // Create leg from new warehouse to destination
+            const destStop = workingState.stops.find(s => s.stop_type === 'destination');
+            if (destStop) {
+                getLegForStops(newStop.id, destStop.id);
+            }
+
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+
+            requestAnimationFrame(() => {
+                centerJourneyStopInScroll(newStop.id);
+            });
+
+            // Open editor for the new stop
+            setTimeout(() => openNodeEditor(newStop.id), 100);
         }
 
         function addTransferStop() {
