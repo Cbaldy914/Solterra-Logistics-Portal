@@ -964,6 +964,8 @@
             gap: 4px;
             padding: 20px 24px 0;
             margin-bottom: -8px;
+            position: relative;
+            z-index: 10;
         }
 
         .view-toggle-btn {
