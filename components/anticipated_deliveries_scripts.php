@@ -571,6 +571,11 @@
                         option.textContent = newName + (workingState.isPrimary ? ' (Primary)' : '');
                     }
                 }
+                // Update subtitle projection name
+                const headerName = document.getElementById('headerProjectionName');
+                if (headerName) {
+                    headerName.textContent = newName;
+                }
                 showToast('Name updated. Remember to save!', 'info');
             }
         }
@@ -1108,6 +1113,12 @@
             const primaryBadge = document.getElementById('projectionPrimaryBadge');
             if (primaryBadge) {
                 primaryBadge.style.display = isPrimary ? 'inline-flex' : 'none';
+            }
+
+            // Update subtitle pills
+            const headerPrimaryPill = document.getElementById('headerPrimaryPill');
+            if (headerPrimaryPill) {
+                headerPrimaryPill.style.display = isPrimary ? 'inline-flex' : 'none';
             }
         }
 
