@@ -494,8 +494,7 @@ if (!empty($project['account_id'])) {
                                     <div class="journey-column journey-origin-column">
                                         <div class="column-header">
                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                                                <polyline points="9 22 9 12 15 12 15 22"/>
+                                                <path d="M2 20V8l5 4V8l5 4V8l5 4h5v8H2z"/>
                                             </svg>
                                             <span>Origin</span>
                                         </div>
@@ -892,6 +891,12 @@ if (!empty($project['account_id'])) {
                 <input type="hidden" id="legFromStopId" value="">
                 <input type="hidden" id="legToStopId" value="">
                 <input type="hidden" id="legTriggersMilestone" value="">
+                <input type="hidden" id="legEstimatedMilesValue" value="">
+
+                <!-- Estimated Miles Badge -->
+                <div id="legEstimatedMiles" style="display:none; align-items:center; gap:6px; background:linear-gradient(135deg, #e8f4f8 0%, #d4eef4 100%); border:1px solid rgba(72,140,154,0.3); border-radius:12px; padding:8px 16px; margin-bottom:16px; font-weight:700; font-size:1.05em; color:var(--primary);">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                </div>
 
                 <!-- Inventory Overview Card -->
                 <div class="leg-inventory-card" id="legInventoryCard">
@@ -1051,16 +1056,31 @@ if (!empty($project['account_id'])) {
             </div>
             <div class="flow-modal-body">
                 <div class="add-stop-options">
-                    <button type="button" class="add-stop-option" onclick="addSingleStop()">
+                    <button type="button" class="add-stop-option" onclick="addStopFromManufacturer()">
                         <div class="add-stop-option-icon warehouse">
                             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
-                                <polyline points="9 22 9 12 15 12 15 22"/>
+                                <path d="M2 20V8l5 4V8l5 4V8l5 4h5v8H2z"/>
                             </svg>
                         </div>
                         <div class="add-stop-option-text">
-                            <strong>Add Single Stop</strong>
-                            <span>Warehouse, port, or storage facility</span>
+                            <strong>Warehouse from Manufacturer</strong>
+                            <span>Add a depth-1 stop connected from the origin</span>
+                        </div>
+                        <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                    <button type="button" class="add-stop-option" onclick="addTransferStop()">
+                        <div class="add-stop-option-icon warehouse">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 21V7L12 2 2 7v14h20z"/>
+                                <rect x="6" y="13" width="4" height="8"/>
+                                <rect x="14" y="13" width="4" height="8"/>
+                            </svg>
+                        </div>
+                        <div class="add-stop-option-text">
+                            <strong>Transfer Stop</strong>
+                            <span>Add after an existing stop (warehouse-to-warehouse chain)</span>
                         </div>
                         <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="9 18 15 12 9 6"/>
@@ -1085,6 +1105,13 @@ if (!empty($project['account_id'])) {
                             <polyline points="9 18 15 12 9 6"/>
                         </svg>
                     </button>
+                </div>
+                <!-- Transfer stop source picker (hidden by default) -->
+                <div id="transferStopPicker" style="display:none; margin-top:16px;">
+                    <label class="modal-form-label" style="margin-bottom:8px; display:block;">Add stop after:</label>
+                    <select id="transferStopSource" class="modal-form-input" style="width:100%;">
+                    </select>
+                    <button type="button" class="btn btn-primary" style="margin-top:12px; width:100%;" onclick="confirmTransferStop()">Add Stop</button>
                 </div>
             </div>
         </div>
