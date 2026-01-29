@@ -307,8 +307,16 @@ if (!empty($project['account_id'])) {
                         <h1>Delivery & Cost Planning</h1>
                         <p class="header-subtitle">
                             <a href="view_project.php?id=<?php echo $project_id; ?>"><?php echo htmlspecialchars($project['project_name']); ?></a>
+                            <?php if ($current_projection): ?>
                             <span style="color: #dee2e6;">|</span>
-                            <?php echo htmlspecialchars($project['account_name']); ?>
+                            <span class="header-projection-name" id="headerProjectionName"><?php echo htmlspecialchars($current_projection['projection_name'] ?? 'New Projection'); ?></span>
+                            <?php if (($current_projection['status'] ?? '') === 'completed'): ?>
+                            <span class="header-status-pill completed">Completed</span>
+                            <?php endif; ?>
+                            <?php if ($current_projection['is_primary'] ?? false): ?>
+                            <span class="header-status-pill primary" id="headerPrimaryPill">Primary</span>
+                            <?php endif; ?>
+                            <?php endif; ?>
                         </p>
                     </div>
                 </div>
@@ -374,23 +382,7 @@ if (!empty($project['account_id'])) {
         </div>
         <?php else: ?>
 
-        <!-- Step Navigation -->
-        <div class="stepper-nav" id="stepperNav">
-            <div class="stepper-step active" data-step="modules-costs" onclick="navigateToStep('modules-costs')">
-                <span class="stepper-number">1</span>
-                <span class="stepper-label">Modules</span>
-            </div>
-            <div class="stepper-connector"></div>
-            <div class="stepper-step" data-step="logistics-plan" onclick="navigateToStep('logistics-plan')">
-                <span class="stepper-number">2</span>
-                <span class="stepper-label">Logistics & Map</span>
-            </div>
-            <div class="stepper-connector"></div>
-            <div class="stepper-step" data-step="timeline" onclick="navigateToStep('timeline')">
-                <span class="stepper-number">3</span>
-                <span class="stepper-label">Costs</span>
-            </div>
-        </div>
+        <!-- Step Navigation is now inside projection-header -->
 
         <!-- Main Content Layout -->
         <div class="planner-layout">

@@ -1,7 +1,7 @@
 <?php
 /**
  * Projection Header Component
- * Shows projection selector, status, and action buttons
+ * Shows projection selector, stepper nav, status, and action buttons
  *
  * Required variables:
  * - $project_id: Project ID
@@ -49,18 +49,29 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
         </div>
 
         <?php if ($current_id): ?>
-        <div class="projection-status-group">
-            <span class="status-badge status-<?php echo $current_status; ?>" id="projectionStatusBadge" data-status="<?php echo $current_status; ?>">
-                <?php echo ucfirst($current_status); ?>
-            </span>
-            <span class="primary-badge" id="projectionPrimaryBadge" <?php echo $primary_style; ?>>Primary</span>
+        <!-- Stepper Nav - integrated into projection header center -->
+        <div class="stepper-nav-inline" id="stepperNav">
+            <div class="stepper-step active" data-step="modules-costs" onclick="navigateToStep('modules-costs')">
+                <span class="stepper-number">1</span>
+                <span class="stepper-label">Modules</span>
+            </div>
+            <div class="stepper-connector"></div>
+            <div class="stepper-step" data-step="logistics-plan" onclick="navigateToStep('logistics-plan')">
+                <span class="stepper-number">2</span>
+                <span class="stepper-label">Logistics & Map</span>
+            </div>
+            <div class="stepper-connector"></div>
+            <div class="stepper-step" data-step="timeline" onclick="navigateToStep('timeline')">
+                <span class="stepper-number">3</span>
+                <span class="stepper-label">Costs</span>
+            </div>
         </div>
         <?php endif; ?>
 
         <?php if ($can_edit): ?>
         <div class="projection-actions">
             <?php if ($current_id): ?>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="saveProjection()">
+                <button type="button" class="btn-projection-save" onclick="saveProjection()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
                         <polyline points="17 21 17 13 7 13 7 21"/>
@@ -70,7 +81,7 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
                 </button>
 
                 <?php if (!$is_primary): ?>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="setAsPrimary()" title="Set as primary projection">
+                <button type="button" class="btn-projection-primary" onclick="setAsPrimary()" title="Set as primary projection" id="btnSetPrimary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
                     </svg>
@@ -78,7 +89,7 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
                 </button>
                 <?php endif; ?>
 
-                <button type="button" class="btn btn-sm btn-danger" onclick="deleteProjection()" title="Delete projection">
+                <button type="button" class="btn-projection-delete" onclick="deleteProjection()" title="Delete projection">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"/>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -100,7 +111,7 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
 .projection-header {
     background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
     border-radius: 16px;
-    padding: 20px 24px;
+    padding: 16px 24px;
     margin-bottom: 24px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
     border: 1px solid rgba(72, 140, 154, 0.1);
@@ -109,7 +120,7 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
 .projection-selector-row {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 16px;
     flex-wrap: wrap;
 }
 
@@ -166,6 +177,187 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
 .btn-edit-name:hover {
     background: #e9ecef;
     color: #488C9A;
+}
+
+/* Stepper nav inline - centered in projection header */
+.stepper-nav-inline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 0 auto;
+    padding: 6px 12px;
+    background: rgba(72, 140, 154, 0.04);
+    border-radius: 12px;
+    border: 1px solid rgba(72, 140, 154, 0.08);
+}
+
+.stepper-nav-inline .stepper-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.stepper-nav-inline .stepper-step:hover {
+    background: rgba(72, 140, 154, 0.08);
+}
+
+.stepper-nav-inline .stepper-step.active {
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.1), rgba(72, 140, 154, 0.15));
+}
+
+.stepper-nav-inline .stepper-step.active .stepper-number {
+    background: linear-gradient(135deg, #488C9A, #3A6E7F);
+    color: white;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
+}
+
+.stepper-nav-inline .stepper-step.active .stepper-label {
+    color: #2d5a66;
+}
+
+.stepper-nav-inline .stepper-step.completed .stepper-number {
+    background: #27ae60;
+    color: white;
+}
+
+.stepper-nav-inline .stepper-number {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.8em;
+    background: #dee2e6;
+    color: #6c757d;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.stepper-nav-inline .stepper-label {
+    font-weight: 600;
+    font-size: 0.85em;
+    color: #6c757d;
+    transition: color 0.2s ease;
+}
+
+.stepper-nav-inline .stepper-connector {
+    width: 24px;
+    height: 2px;
+    background: #dee2e6;
+    flex-shrink: 0;
+}
+
+.stepper-nav-inline .stepper-connector.completed {
+    background: #27ae60;
+}
+
+/* Projection status badges in page subtitle */
+.header-projection-name {
+    font-weight: 500;
+}
+
+.header-status-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+.header-status-pill.completed {
+    background: #d4edda;
+    color: #155724;
+}
+
+.header-status-pill.primary {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+}
+
+/* Improved Save and Set Primary buttons */
+.btn-projection-save {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 18px;
+    font-size: 0.88em;
+    font-weight: 600;
+    font-family: 'Poppins', sans-serif;
+    border: 2px solid #488C9A;
+    border-radius: 10px;
+    background: white;
+    color: #488C9A;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-projection-save:hover {
+    background: #488C9A;
+    color: white;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.25);
+    transform: translateY(-1px);
+}
+
+.btn-projection-save svg {
+    flex-shrink: 0;
+}
+
+.btn-projection-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 18px;
+    font-size: 0.88em;
+    font-weight: 600;
+    font-family: 'Poppins', sans-serif;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #f0c850 0%, #e6b422 100%);
+    color: #5a4500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-projection-primary:hover {
+    box-shadow: 0 4px 14px rgba(230, 180, 34, 0.4);
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+.btn-projection-primary svg {
+    flex-shrink: 0;
+    color: #7a6000;
+}
+
+.btn-projection-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    background: white;
+    color: #adb5bd;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-projection-delete:hover {
+    background: #fef2f2;
+    border-color: #fca5a5;
+    color: #dc2626;
 }
 
 .projection-status-group {
@@ -251,6 +443,15 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
     border-left: 3px solid #488C9A;
 }
 
+@media (max-width: 1100px) {
+    .stepper-nav-inline {
+        order: 10;
+        margin: 8px 0 0 0;
+        width: 100%;
+        justify-content: center;
+    }
+}
+
 @media (max-width: 768px) {
     .projection-selector-row {
         flex-direction: column;
@@ -264,6 +465,23 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
 
     .projection-dropdown {
         width: 100%;
+    }
+
+    .stepper-nav-inline {
+        margin: 8px 0 0 0;
+        justify-content: center;
+    }
+
+    .stepper-nav-inline .stepper-step {
+        padding: 6px 10px;
+    }
+
+    .stepper-nav-inline .stepper-label {
+        font-size: 0.78em;
+    }
+
+    .stepper-nav-inline .stepper-connector {
+        width: 16px;
     }
 }
 </style>
