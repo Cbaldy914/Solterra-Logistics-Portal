@@ -1014,6 +1014,18 @@
             display: block;
         }
 
+        .logistics-section-actions {
+            display: flex;
+            justify-content: flex-end;
+            padding: 12px 24px 24px;
+        }
+
+        .logistics-section-actions .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         /* ==================== MAP SECTION ==================== */
 
         .map-wrapper {
