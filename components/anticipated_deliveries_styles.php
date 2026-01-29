@@ -3645,10 +3645,20 @@
             border-radius: 3px;
         }
 
+        .journey-stop-group {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-width: 220px;
+            max-width: 240px;
+            flex: 0 0 auto;
+        }
+
         .journey-stop-card {
             min-width: 200px;
             max-width: 240px;
             flex-shrink: 0;
+            width: 100%;
         }
 
         .journey-stop-card .journey-node {
@@ -4375,7 +4385,6 @@
             padding: 0 16px 10px 16px;
             font-size: 0.7em;
             font-weight: 700;
-            color: var(--gray-500);
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }

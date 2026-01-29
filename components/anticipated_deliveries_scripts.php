@@ -2033,27 +2033,89 @@
                         </div>
                     `;
                 } else {
-                    intermediateStops.slice(0, 5).forEach((stop) => {
-                        const incomingPallets = inboundPallets[stop.id] || 0;
-                        const outgoingPallets = outboundPallets[stop.id] || 0;
-                        const remainingPallets = Math.max(incomingPallets - outgoingPallets, 0);
-                        const remainingModules = Math.max(Math.round(remainingPallets * avgModsPerPallet), 0);
-                        const remainingTrucks = remainingPallets ? Math.ceil(remainingPallets / avgPalletsPerTruck) : 0;
+                    const visibleStops = intermediateStops.slice(0, 5);
+                    const stopOrder = new Map(visibleStops.map((stop, index) => [stop.id, index]));
+                    const adjacency = new Map();
 
-                        stopsHtml += `<div class="journey-stop-card">`;
-                        stopsHtml += renderJourneyNode({
-                            id: stop.id,
-                            type: 'stop',
-                            stopType: stop.stop_type,
-                            title: stop.location_name || getStopTypeLabel(stop.stop_type),
-                            address: stop.location_address || '',
-                            modules: remainingModules,
-                            pallets: remainingPallets,
-                            trucks: remainingTrucks,
-                            fees: stop.fees || [],
-                            showConnect: canEdit && remainingPallets > 0,
-                            showReceive: canEdit,
-                            showDelete: canEdit
+                    legs.forEach(leg => {
+                        if (!adjacency.has(leg.from_stop_id)) {
+                            adjacency.set(leg.from_stop_id, []);
+                        }
+                        adjacency.get(leg.from_stop_id).push(leg.to_stop_id);
+                    });
+
+                    const depthByStop = {};
+                    if (originStop?.id) {
+                        const queue = [originStop.id];
+                        depthByStop[originStop.id] = 0;
+
+                        while (queue.length) {
+                            const currentId = queue.shift();
+                            const currentDepth = depthByStop[currentId] || 0;
+                            const nextStops = adjacency.get(currentId) || [];
+
+                            nextStops.forEach(nextId => {
+                                const proposedDepth = currentDepth + 1;
+                                if (depthByStop[nextId] === undefined || proposedDepth < depthByStop[nextId]) {
+                                    depthByStop[nextId] = proposedDepth;
+                                    queue.push(nextId);
+                                }
+                            });
+                        }
+                    }
+
+                    let maxDepth = 0;
+                    visibleStops.forEach(stop => {
+                        if (depthByStop[stop.id] !== undefined) {
+                            maxDepth = Math.max(maxDepth, depthByStop[stop.id]);
+                        }
+                    });
+
+                    let fallbackDepth = maxDepth + 1;
+                    const groupedStops = new Map();
+
+                    visibleStops.forEach(stop => {
+                        let depth = depthByStop[stop.id];
+                        if (depth === undefined) {
+                            depth = fallbackDepth;
+                            fallbackDepth += 1;
+                        }
+                        if (!groupedStops.has(depth)) {
+                            groupedStops.set(depth, []);
+                        }
+                        groupedStops.get(depth).push(stop);
+                    });
+
+                    const sortedDepths = Array.from(groupedStops.keys()).sort((a, b) => a - b);
+
+                    sortedDepths.forEach(depth => {
+                        const groupStops = groupedStops.get(depth) || [];
+                        groupStops.sort((a, b) => stopOrder.get(a.id) - stopOrder.get(b.id));
+
+                        stopsHtml += `<div class="journey-stop-group" data-depth="${depth}">`;
+                        groupStops.forEach(stop => {
+                            const incomingPallets = inboundPallets[stop.id] || 0;
+                            const outgoingPallets = outboundPallets[stop.id] || 0;
+                            const remainingPallets = Math.max(incomingPallets - outgoingPallets, 0);
+                            const remainingModules = Math.max(Math.round(remainingPallets * avgModsPerPallet), 0);
+                            const remainingTrucks = remainingPallets ? Math.ceil(remainingPallets / avgPalletsPerTruck) : 0;
+
+                            stopsHtml += `<div class="journey-stop-card">`;
+                            stopsHtml += renderJourneyNode({
+                                id: stop.id,
+                                type: 'stop',
+                                stopType: stop.stop_type,
+                                title: stop.location_name || getStopTypeLabel(stop.stop_type),
+                                address: stop.location_address || '',
+                                modules: remainingModules,
+                                pallets: remainingPallets,
+                                trucks: remainingTrucks,
+                                fees: stop.fees || [],
+                                showConnect: canEdit && remainingPallets > 0,
+                                showReceive: canEdit,
+                                showDelete: canEdit
+                            });
+                            stopsHtml += `</div>`;
                         });
                         stopsHtml += `</div>`;
                     });
@@ -4298,15 +4360,9 @@
             updateMapFromState();
             updateTimelineChart();
 
-            // Scroll the new stop into view
+            // Scroll the new stop into the center of the container
             requestAnimationFrame(() => {
-                const stopsScroll = document.getElementById('journeyStopsScroll');
-                if (stopsScroll) {
-                    const newStopEl = stopsScroll.querySelector(`[data-stop-id="${newStop.id}"]`);
-                    if (newStopEl) {
-                        newStopEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-                    }
-                }
+                centerJourneyStopInScroll(newStop.id);
             });
 
             if (options.openEditor) {
@@ -4314,6 +4370,25 @@
             }
 
             return newStop;
+        }
+
+        function centerJourneyStopInScroll(stopId) {
+            const stopsScroll = document.getElementById('journeyStopsScroll');
+            if (!stopsScroll) return;
+
+            const stopEl = stopsScroll.querySelector(`[data-stop-id="${stopId}"]`);
+            if (!stopEl) return;
+
+            const containerRect = stopsScroll.getBoundingClientRect();
+            const stopRect = stopEl.getBoundingClientRect();
+            const stopCenter = stopRect.left + stopRect.width / 2;
+            const containerCenter = containerRect.left + containerRect.width / 2;
+            const delta = stopCenter - containerCenter;
+
+            stopsScroll.scrollTo({
+                left: stopsScroll.scrollLeft + delta,
+                behavior: 'smooth'
+            });
         }
 
         function updateBadges() {
