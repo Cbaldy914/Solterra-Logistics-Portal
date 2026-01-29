@@ -3621,15 +3621,13 @@
         .journey-stops-scroll {
             display: flex;
             align-items: flex-start;
+            justify-content: center;
             gap: 16px;
             overflow-x: auto;
             padding: 8px 0;
+            margin-top: 60px;
             scrollbar-width: thin;
             scrollbar-color: var(--gray-300) transparent;
-        }
-
-        .journey-stops-scroll.is-empty {
-            justify-content: center;
         }
 
         .journey-stops-scroll::-webkit-scrollbar {
@@ -3919,7 +3917,7 @@
             background: var(--success);
         }
 
-        /* Empty State */
+        /* Empty State — scoped to .journey-flow-container (which must be position:relative) */
         .journey-empty-state {
             position: absolute;
             inset: 0;
@@ -3930,7 +3928,7 @@
             text-align: center;
             background: rgba(255, 255, 255, 0.9);
             border-radius: var(--radius-lg);
-            z-index: 50;
+            z-index: 6;
         }
 
         .journey-empty-icon {

@@ -1381,7 +1381,18 @@
 
         // ==================== STOP MANAGEMENT ====================
         function openAddStopModal(afterStopId = null) {
-            addJourneyStop(afterStopId, { openEditor: true });
+            currentAddStopParentId = afterStopId;
+            const modal = document.getElementById('addStopModal');
+            const subtitle = document.getElementById('addStopSubtitle');
+
+            if (afterStopId) {
+                const stop = workingState.stops.find(s => s.id == afterStopId);
+                subtitle.textContent = `Adding after ${stop?.location_name || 'this stop'}`;
+            } else {
+                subtitle.textContent = 'Choose how to add a stop to the journey';
+            }
+
+            modal.classList.add('active');
         }
 
         function openStopEditorModal(stopId) {
@@ -1545,19 +1556,74 @@
             document.getElementById('legModalTitle').textContent = `${fromName} \u2192 ${toName}`;
             document.getElementById('legModalSubtitle').textContent = 'Set transport details for this route';
 
-            // Populate inventory card
+            // Populate inventory card — show REMAINING inventory at source stop
             const totalModules = workingState.moduleAllocations.reduce((sum, a) => sum + (a.quantity || 0), 0);
             const avgModsPerPallet = workingState.moduleAllocations[0]?.modules_per_pallet || 30;
             const avgPalletsPerTruck = workingState.moduleAllocations[0]?.pallets_per_truck || 20;
             const totalPallets = Math.ceil(totalModules / avgModsPerPallet);
-            const totalTrucks = Math.ceil(totalPallets / avgPalletsPerTruck);
+
+            // Calculate remaining inventory at the source stop
+            const currentLegId = leg?.id;
+            const allLegs = workingState.legs || [];
+            const originStop = workingState.stops.find(s => s.stop_type === 'origin');
+            const isFromOrigin = effectiveFromId && originStop && effectiveFromId == originStop.id;
+
+            // Sum outbound pallets from this source stop (excluding the current leg being edited)
+            const defaultTrucksForCalc = getTotalTrucks();
+            let outboundFromSource = 0;
+            allLegs.forEach(l => {
+                if (l.from_stop_id != effectiveFromId) return;
+                if (currentLegId && l.id == currentLegId) return; // exclude current leg
+                const lTrucks = parseInt(l.trucks_required, 10) || 0;
+                const lConfigured = l.is_configured || parseFloat(l.freight_cost_per_truck) > 0
+                    || parseFloat(l.accessorial_cost_per_truck) > 0
+                    || parseFloat(l.total_freight_cost) > 0
+                    || l.start_date || l.end_date || parseFloat(l.delivery_rate) > 0
+                    || (l.transport_mode && l.transport_mode !== 'truck')
+                    || (lTrucks > 0 && lTrucks !== defaultTrucksForCalc);
+                if (lConfigured) {
+                    outboundFromSource += lTrucks * avgPalletsPerTruck;
+                }
+            });
+
+            let availablePallets;
+            if (isFromOrigin) {
+                availablePallets = Math.max(totalPallets - outboundFromSource, 0);
+            } else {
+                // For intermediate stops: inbound - outbound
+                let inboundToSource = 0;
+                allLegs.forEach(l => {
+                    if (l.to_stop_id != effectiveFromId) return;
+                    const lTrucks = parseInt(l.trucks_required, 10) || 0;
+                    const lConfigured = l.is_configured || parseFloat(l.freight_cost_per_truck) > 0
+                        || parseFloat(l.accessorial_cost_per_truck) > 0
+                        || parseFloat(l.total_freight_cost) > 0
+                        || l.start_date || l.end_date || parseFloat(l.delivery_rate) > 0
+                        || (l.transport_mode && l.transport_mode !== 'truck')
+                        || (lTrucks > 0 && lTrucks !== defaultTrucksForCalc);
+                    if (lConfigured) {
+                        inboundToSource += lTrucks * avgPalletsPerTruck;
+                    }
+                });
+                availablePallets = Math.max(inboundToSource - outboundFromSource, 0);
+            }
+
+            const availableModules = Math.round(availablePallets * avgModsPerPallet);
+            const availableTrucks = availablePallets ? Math.ceil(availablePallets / avgPalletsPerTruck) : 0;
 
             const avTrucks = document.getElementById('legAvailableTrucks');
             const avPallets = document.getElementById('legAvailablePallets');
             const avModules = document.getElementById('legAvailableModules');
-            if (avTrucks) avTrucks.textContent = totalTrucks;
-            if (avPallets) avPallets.textContent = totalPallets;
-            if (avModules) avModules.textContent = totalModules;
+            if (avTrucks) avTrucks.textContent = availableTrucks;
+            if (avPallets) avPallets.textContent = availablePallets;
+            if (avModules) avModules.textContent = availableModules;
+
+            // Set max on trucks input for validation
+            const trucksInput = document.getElementById('legTrucksRequired');
+            if (trucksInput) {
+                trucksInput.max = availableTrucks;
+                trucksInput.dataset.availableTrucks = availableTrucks;
+            }
 
             // Populate form
             document.getElementById('editLegId').value = leg?.id || '';
@@ -1578,6 +1644,33 @@
             selectLegTransportMode(leg?.transport_mode || 'truck');
 
             calculateLegTotal();
+
+            // Show existing estimated miles or calculate via API
+            const milesDisplay = document.getElementById('legEstimatedMiles');
+            if (milesDisplay) {
+                if (leg?.estimated_miles) {
+                    milesDisplay.textContent = `~${leg.estimated_miles} mi`;
+                    milesDisplay.style.display = 'inline-flex';
+                } else {
+                    milesDisplay.textContent = '';
+                    milesDisplay.style.display = 'none';
+                }
+            }
+
+            // Auto-calculate distance if both stops have addresses
+            const fromAddr = fromStop?.location_address;
+            const toAddr = toStop?.location_address;
+            if (fromAddr && toAddr) {
+                calculateLegDistance(fromAddr, toAddr, function(miles) {
+                    if (miles && milesDisplay) {
+                        milesDisplay.textContent = `~${miles} mi`;
+                        milesDisplay.style.display = 'inline-flex';
+                        // Store on the hidden field for save
+                        const milesInput = document.getElementById('legEstimatedMilesValue');
+                        if (milesInput) milesInput.value = miles;
+                    }
+                });
+            }
 
             document.getElementById('legEditorModal').classList.add('active');
             initializeDatePickers();
@@ -1623,6 +1716,36 @@
             const total = trucks * (freightCost + accessorialCost);
 
             document.getElementById('legTotalDisplay').textContent = '$' + total.toLocaleString('en-US', { minimumFractionDigits: 2 });
+        }
+
+        // ==================== LEG DISTANCE CALCULATION ====================
+        let legDirectionsService = null;
+
+        function calculateLegDistance(fromAddress, toAddress, callback) {
+            if (!fromAddress || !toAddress) {
+                if (callback) callback(null);
+                return;
+            }
+            if (typeof google === 'undefined' || !google.maps) {
+                if (callback) callback(null);
+                return;
+            }
+            if (!legDirectionsService) {
+                legDirectionsService = new google.maps.DirectionsService();
+            }
+            legDirectionsService.route({
+                origin: fromAddress,
+                destination: toAddress,
+                travelMode: 'DRIVING'
+            }, function(result, status) {
+                if (status === 'OK' && result.routes[0]?.legs[0]) {
+                    const meters = result.routes[0].legs[0].distance.value;
+                    const miles = Math.round(meters / 1609.34);
+                    if (callback) callback(miles);
+                } else {
+                    if (callback) callback(null);
+                }
+            });
         }
 
         // Alias for saveLegEditor (used by some code paths)
@@ -2162,8 +2285,7 @@
 
             const icon = type === 'origin' ?
                 `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                    <polyline points="9 22 9 12 15 12 15 22"/>
+                    <path d="M2 20V8l5 4V8l5 4V8l5 4h5v8H2z"/>
                 </svg>` :
                 type === 'destination' ?
                 `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2172,14 +2294,16 @@
                 </svg>` :
                 stopType === 'port' ?
                 `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
-                    <circle cx="12" cy="7" r="4"/>
+                    <path d="M12 2v10m0 0l-4 2m4-2l4 2"/>
+                    <path d="M8 14v4"/>
+                    <path d="M16 14v4"/>
+                    <path d="M4 18h16"/>
+                    <path d="M2 22h20"/>
                 </svg>` :
                 `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="1" y="3" width="15" height="13"/>
-                    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
-                    <circle cx="5.5" cy="18.5" r="2.5"/>
-                    <circle cx="18.5" cy="18.5" r="2.5"/>
+                    <path d="M22 21V7L12 2 2 7v14h20z"/>
+                    <rect x="6" y="13" width="4" height="8"/>
+                    <rect x="14" y="13" width="4" height="8"/>
                 </svg>`;
 
             // Fees display for stops
@@ -2195,7 +2319,7 @@
 
             // Actions
             let actionsHtml = '';
-            if (canEdit && (type === 'stop' || type !== 'destination')) {
+            if (canEdit && type === 'stop') {
                 actionsHtml = `
                     <div class="journey-node-actions">
                         <button type="button" class="journey-node-action-btn edit-btn" data-action="edit" data-stop-id="${id}">
@@ -2345,8 +2469,9 @@
                 badge.style.left = `${badgeMidX}px`;
                 badge.style.top = `${badgeMidY}px`;
                 badge.style.transform = 'translate(-50%, -50%)';
-                badge.innerHTML = modeIcons[leg.transport_mode] || modeIcons.truck;
-                badge.title = `${(leg.transport_mode || 'truck').charAt(0).toUpperCase() + (leg.transport_mode || 'truck').slice(1)} - Click for details`;
+                const milesText = leg.estimated_miles ? `<span style="font-size:0.85em; opacity:0.8;">${leg.estimated_miles} mi</span>` : '';
+                badge.innerHTML = (modeIcons[leg.transport_mode] || modeIcons.truck) + milesText;
+                badge.title = `${(leg.transport_mode || 'truck').charAt(0).toUpperCase() + (leg.transport_mode || 'truck').slice(1)}${leg.estimated_miles ? ' - ' + leg.estimated_miles + ' miles' : ''} - Click for details`;
                 badge.onclick = (e) => {
                     e.stopPropagation();
                     showLegPopover(leg, badgeMidX, badgeMidY);
@@ -3471,12 +3596,25 @@
             }
 
             if (!leg) {
-                closeLegEditor();
-                return;
+                // If no leg exists but we have from/to stop IDs, create a new one
+                if (fromStopId && toStopId) {
+                    leg = {
+                        id: `leg_${Date.now()}`,
+                        from_stop_id: fromStopId,
+                        to_stop_id: toStopId,
+                        transport_mode: 'truck',
+                        is_configured: false
+                    };
+                    workingState.legs.push(leg);
+                } else {
+                    closeLegEditor();
+                    return;
+                }
             }
 
             // Get values from form
-            const trucks = parseInt(document.getElementById('legTrucksRequired')?.value, 10) || getTotalTrucks();
+            const trucksInput = document.getElementById('legTrucksRequired');
+            const trucks = parseInt(trucksInput?.value, 10) || getTotalTrucks();
             const startDate = document.getElementById('legStartDate')?.value || '';
             const endDate = document.getElementById('legEndDate')?.value || '';
             const deliveryRate = parseFloat(document.getElementById('legDeliveryRate')?.value) || 0;
@@ -3486,6 +3624,15 @@
             const transportMode = document.getElementById('legTransportMode')?.value || 'truck';
             const triggersMilestone = document.getElementById('legTriggersMilestone')?.value || '';
             const notes = document.getElementById('legNotes')?.value || '';
+            const estimatedMiles = parseInt(document.getElementById('legEstimatedMilesValue')?.value, 10) || null;
+
+            // Validate truck count against available
+            const maxTrucks = parseInt(trucksInput?.dataset?.availableTrucks, 10);
+            if (maxTrucks > 0 && trucks > maxTrucks) {
+                showToast(`Cannot assign ${trucks} trucks — only ${maxTrucks} available at source`, 'error');
+                trucksInput?.focus();
+                return;
+            }
 
             // Update leg properties
             leg.trucks_required = trucks;
@@ -3499,6 +3646,7 @@
             leg.triggers_milestone = triggersMilestone;
             leg.notes = notes;
             leg.total_freight_cost = trucks * (freightCost + accessorialCost);
+            leg.estimated_miles = estimatedMiles;
             leg.is_configured = true;
 
             markAsUnsaved();
@@ -3528,6 +3676,9 @@
             const modal = document.getElementById('addStopModal');
             modal.classList.remove('active');
             currentAddStopParentId = null;
+            // Hide transfer stop picker
+            const picker = document.getElementById('transferStopPicker');
+            if (picker) picker.style.display = 'none';
         }
 
         function addSingleStop() {
@@ -3537,6 +3688,46 @@
 
             // Use existing addJourneyStop function
             addJourneyStop(currentAddStopParentId);
+        }
+
+        function addStopFromManufacturer() {
+            closeAddStopModal();
+            // Add a stop connected from the origin (depth-1)
+            const originStop = workingState.stops.find(s => s.stop_type === 'origin');
+            if (originStop) {
+                addJourneyStop(originStop.id, { openEditor: true });
+            } else {
+                showToast('No origin stop found. Please configure modules first.', 'error');
+            }
+        }
+
+        function addTransferStop() {
+            // Show the source picker with all intermediate stops
+            const picker = document.getElementById('transferStopPicker');
+            const select = document.getElementById('transferStopSource');
+            if (!picker || !select) return;
+
+            const intermediateStops = workingState.stops.filter(s => !['origin', 'destination'].includes(s.stop_type));
+
+            if (intermediateStops.length === 0) {
+                showToast('No intermediate stops exist yet. Add a warehouse from manufacturer first.', 'info');
+                return;
+            }
+
+            select.innerHTML = intermediateStops.map(s =>
+                `<option value="${s.id}">${escapeHtml(s.location_name || s.stop_type)}</option>`
+            ).join('');
+
+            picker.style.display = 'block';
+        }
+
+        function confirmTransferStop() {
+            const select = document.getElementById('transferStopSource');
+            const sourceStopId = select?.value;
+            if (!sourceStopId) return;
+
+            closeAddStopModal();
+            addJourneyStop(sourceStopId, { openEditor: true });
         }
 
         function addBranchSplit() {
