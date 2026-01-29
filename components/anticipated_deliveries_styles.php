@@ -536,7 +536,7 @@
             border-top: none;
             border-radius: 0 0 var(--radius-lg) var(--radius-lg);
             box-shadow: var(--shadow-sm);
-            overflow: hidden;
+            overflow: visible;
             max-height: 8000px;
             transition: max-height 0.5s ease, opacity 0.3s ease;
             opacity: 1;
@@ -546,6 +546,7 @@
             max-height: 0;
             opacity: 0;
             border: none;
+            overflow: hidden;
         }
 
         .collapsible-inner {
@@ -3510,8 +3511,8 @@
             border-radius: 14px;
             box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
             z-index: 200;
-            min-width: 320px;
-            max-width: 380px;
+            min-width: 340px;
+            max-width: 420px;
             overflow: hidden;
             animation: popoverIn 0.2s ease;
         }
