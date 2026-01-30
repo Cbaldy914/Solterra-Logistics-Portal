@@ -161,6 +161,14 @@ try {
         $clear_stmt->execute();
         $clear_stmt->close();
 
+        // Clean up old projection-only modules for this projection
+        $clean_proj_mods = $conn->prepare("DELETE FROM projection_modules WHERE projection_id = ?");
+        if ($clean_proj_mods) {
+            $clean_proj_mods->bind_param("i", $projection_id);
+            $clean_proj_mods->execute();
+            $clean_proj_mods->close();
+        }
+
         // Get account_id for manual entries
         $account_id = 0;
         if ($is_general) {
@@ -196,51 +204,55 @@ try {
                 }
             }
 
-            // Check if this is a manual entry (module_id starts with 'manual_' or is not numeric)
+            // Check if this is a projection-only module (new manual entry or existing projection module)
             $module_id_str = strval($module_id);
-            if (!is_numeric($module_id) || strpos($module_id_str, 'manual_') === 0) {
-                // Create a lightweight module record for this manual entry
+            $is_projection_module = !empty($alloc['is_projection_module']);
+            $is_new_manual = !is_numeric($module_id) || strpos($module_id_str, 'manual_') === 0;
+            if ($is_new_manual || $is_projection_module) {
+                // Create a projection-only module record (separate from real modules)
                 $vendor_name = $alloc['vendor_name'] ?? 'Manual Entry';
                 $location = $alloc['manufacturer_address'] ?? '';
                 $mods_per_pallet = intval($alloc['modules_per_pallet'] ?? 30);
                 $pallets_per_truck = intval($alloc['pallets_per_truck'] ?? 20);
                 $cost_per_watt = floatval($alloc['cost_per_watt'] ?? 0);
 
-                $manual_project_id = $is_general ? null : $project_id;
                 $insert_stmt = $conn->prepare("
-                    INSERT INTO modules (account_id, vendor_name, initial_location, project_id,
+                    INSERT INTO projection_modules (account_id, projection_id, vendor_name, initial_location,
                                         modules_per_pallet, pallets_per_truck, cost_per_watt, module_notes)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'Created via projection manual entry')
                 ");
                 if (!$insert_stmt) {
-                    throw new Exception('Failed to prepare manual module insert: ' . $conn->error);
+                    throw new Exception('Failed to prepare projection module insert: ' . $conn->error);
                 }
-                $insert_stmt->bind_param("issiiid", $account_id, $vendor_name, $location, $manual_project_id,
+                $insert_stmt->bind_param("iissiid", $account_id, $projection_id, $vendor_name, $location,
                                          $mods_per_pallet, $pallets_per_truck, $cost_per_watt);
                 $insert_stmt->execute();
                 $module_id = $conn->insert_id;
                 $insert_stmt->close();
 
-                // Create the unassigned_module_items entry
+                // Create the projection_module_items entry
                 $wattage = intval($alloc['wattage']);
                 $quantity = intval($alloc['quantity']);
                 $items_stmt = $conn->prepare("
-                    INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
+                    INSERT INTO projection_module_items (projection_module_id, wattage, quantity)
                     VALUES (?, ?, ?)
                 ");
                 if (!$items_stmt) {
-                    throw new Exception('Failed to prepare manual module items insert: ' . $conn->error);
+                    throw new Exception('Failed to prepare projection module items insert: ' . $conn->error);
                 }
                 $items_stmt->bind_param("iii", $module_id, $wattage, $quantity);
                 $items_stmt->execute();
                 $items_stmt->close();
 
+                // Save milestones to projection-specific table
                 if (!empty($alloc['milestones']) && is_array($alloc['milestones'])) {
-                    $saved = save_module_milestones($module_id, $alloc['milestones'], $conn, $user_id);
+                    $saved = save_projection_module_milestones($module_id, $alloc['milestones'], $conn);
                     if (!$saved) {
-                        throw new Exception('Failed to save manual milestones');
+                        throw new Exception('Failed to save projection milestones');
                     }
                 }
+
+                $is_projection_module = true;
             }
 
             $allocation_result = add_module_allocation(
@@ -249,7 +261,8 @@ try {
                 intval($module_id),
                 intval($alloc['wattage']),
                 intval($alloc['quantity']),
-                isset($alloc['pallets']) ? intval($alloc['pallets']) : null
+                isset($alloc['pallets']) ? intval($alloc['pallets']) : null,
+                $is_projection_module
             );
 
             if (!$allocation_result['success']) {

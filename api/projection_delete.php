@@ -62,17 +62,34 @@ try {
     }
 
     // Verify user access
-    $access_check = $conn->prepare("
-        SELECT p.id FROM projects p
-        JOIN customer_account_users cau ON p.account_id = cau.account_id
-        WHERE p.id = ? AND cau.user_id = ?
-    ");
-    $access_check->bind_param("ii", $projection['project_id'], $user_id);
-    $access_check->execute();
-    if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
-        throw new Exception('Access denied');
+    if (empty($projection['project_id'])) {
+        // General projection: verify user is in the same account as the creator or is admin
+        $access_check = $conn->prepare("
+            SELECT 1 FROM delivery_projections dp
+            LEFT JOIN customer_account_users cau1 ON cau1.user_id = dp.created_by
+            LEFT JOIN customer_account_users cau2 ON cau2.account_id = cau1.account_id AND cau2.user_id = ?
+            WHERE dp.id = ? AND (cau2.user_id IS NOT NULL OR dp.created_by = ?)
+        ");
+        $access_check->bind_param("iii", $user_id, $projection_id, $user_id);
+        $access_check->execute();
+        if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
+            throw new Exception('Access denied');
+        }
+        $access_check->close();
+    } else {
+        // Project projection: verify user has access to the project
+        $access_check = $conn->prepare("
+            SELECT p.id FROM projects p
+            JOIN customer_account_users cau ON p.account_id = cau.account_id
+            WHERE p.id = ? AND cau.user_id = ?
+        ");
+        $access_check->bind_param("ii", $projection['project_id'], $user_id);
+        $access_check->execute();
+        if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
+            throw new Exception('Access denied');
+        }
+        $access_check->close();
     }
-    $access_check->close();
 
     // Warn if deleting primary projection
     $was_primary = $projection['is_primary'];

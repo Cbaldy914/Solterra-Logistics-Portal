@@ -250,13 +250,53 @@ CREATE TABLE delivery_projections (
 CREATE TABLE projection_module_allocations (
   id int(11) PRIMARY KEY AUTO_INCREMENT,
   projection_id int(11) NOT NULL,     -- FK to delivery_projections.id
-  module_id int(11) NOT NULL,         -- FK to modules.id
+  module_id int(11) NOT NULL,         -- FK to modules.id or projection_modules.id
   wattage int(11) NOT NULL,
   quantity int(11) NOT NULL,
   pallets int(11),
+  is_projection_module tinyint(1) NOT NULL DEFAULT 0,  -- 1 = module_id refers to projection_modules
   created_at timestamp DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (projection_id) REFERENCES delivery_projections(id),
-  FOREIGN KEY (module_id) REFERENCES modules(id)
+  FOREIGN KEY (projection_id) REFERENCES delivery_projections(id)
+);
+
+-- Projection-only modules (manual entries that don't pollute the real modules table)
+CREATE TABLE projection_modules (
+  id int(11) PRIMARY KEY AUTO_INCREMENT,
+  account_id int(11) NOT NULL,
+  projection_id int(11),               -- FK to delivery_projections.id
+  vendor_name varchar(255) NOT NULL,
+  initial_location varchar(255) NOT NULL,
+  cost_per_watt decimal(10,6),
+  modules_per_pallet int(11),
+  pallets_per_truck int(11),
+  modules_per_truck int(11),
+  module_notes text,
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  last_updated_at timestamp ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (projection_id) REFERENCES delivery_projections(id) ON DELETE CASCADE
+);
+
+-- Projection-only module items
+CREATE TABLE projection_module_items (
+  id int(11) PRIMARY KEY AUTO_INCREMENT,
+  projection_module_id int(11) NOT NULL,
+  wattage int(11) NOT NULL,
+  quantity int(11) NOT NULL,
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (projection_module_id) REFERENCES projection_modules(id) ON DELETE CASCADE
+);
+
+-- Projection-only module milestones
+CREATE TABLE projection_module_milestones (
+  id int(11) PRIMARY KEY AUTO_INCREMENT,
+  projection_module_id int(11) NOT NULL,
+  milestone_name varchar(100) NOT NULL,
+  trigger_event enum('po_execution','shipping','customs_cleared','project_delivery') NOT NULL,
+  percentage decimal(5,2) NOT NULL DEFAULT 0.00,
+  display_order int(11) DEFAULT 0,
+  is_active tinyint(1) DEFAULT 1,
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (projection_module_id) REFERENCES projection_modules(id) ON DELETE CASCADE
 );
 
 -- Stops in a delivery journey (origin, warehouses, destination)
@@ -635,7 +675,10 @@ LEFT JOIN delivery_projections dp ON dp.project_id = p.id AND dp.is_primary = 1;
 -- projects -> deliveries -> delivery_pallets -> inventory_pallets
 -- projects -> delivery_projections -> projection_stops -> projection_stop_fees
 -- projects -> delivery_projections -> projection_legs
--- projects -> delivery_projections -> projection_module_allocations -> modules
+-- projects -> delivery_projections -> projection_module_allocations -> modules (real)
+-- projects -> delivery_projections -> projection_module_allocations -> projection_modules (projection-only)
+-- delivery_projections -> projection_modules -> projection_module_items
+-- delivery_projections -> projection_modules -> projection_module_milestones
 -- warehouses -> inventory_pallets
 -- warehouses -> warehouse_cost_items
 -- manufacturers -> manufacturer_locations
