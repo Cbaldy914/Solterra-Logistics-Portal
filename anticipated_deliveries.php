@@ -205,56 +205,15 @@ foreach ($allocated_modules as $alloc) {
 require_once 'anticipated_schedule_helpers.php';
 $project_summary = getProjectSizeSummary($conn, $project_id);
 
-// Manufacturer suggestions for manual entry
-$manufacturer_names = [];
-$manufacturer_locations = [];
-$manufacturer_location_map = [];
-if (!empty($project['account_id'])) {
-    $stmt = $conn->prepare("
-        SELECT vendor_name, initial_location
-        FROM modules
-        WHERE account_id = ?
-          AND vendor_name IS NOT NULL
-          AND vendor_name <> ''
-    ");
-    if ($stmt) {
-        $stmt->bind_param("i", $project['account_id']);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $name_set = [];
-        $location_set = [];
-        $location_map = [];
-        while ($row = $result->fetch_assoc()) {
-            $vendor = trim($row['vendor_name'] ?? '');
-            $location = trim($row['initial_location'] ?? '');
-            if ($vendor !== '') {
-                $name_set[$vendor] = true;
-            }
-            if ($location !== '') {
-                $location_set[$location] = true;
-                if ($vendor !== '') {
-                    if (!isset($location_map[$vendor])) {
-                        $location_map[$vendor] = [];
-                    }
-                    $location_map[$vendor][$location] = true;
-                }
-            }
-        }
-        $stmt->close();
-
-        $manufacturer_names = array_keys($name_set);
-        sort($manufacturer_names, SORT_NATURAL | SORT_FLAG_CASE);
-
-        $manufacturer_locations = array_keys($location_set);
-        sort($manufacturer_locations, SORT_NATURAL | SORT_FLAG_CASE);
-
-        foreach ($location_map as $vendor => $locations) {
-            $locations_list = array_keys($locations);
-            sort($locations_list, SORT_NATURAL | SORT_FLAG_CASE);
-            $manufacturer_location_map[$vendor] = $locations_list;
-        }
-    }
+// Fetch manufacturers for dropdown (same as add_module_batch.php)
+$manufacturers_for_manual = [];
+$stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+$stmtManufacturers->execute();
+$manufacturersResult = $stmtManufacturers->get_result();
+while ($manufacturer = $manufacturersResult->fetch_assoc()) {
+    $manufacturers_for_manual[] = $manufacturer;
 }
+$stmtManufacturers->close();
 
 // Note: Don't close connection here - components may need it
 ?>
