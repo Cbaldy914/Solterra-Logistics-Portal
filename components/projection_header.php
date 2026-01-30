@@ -112,9 +112,9 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
     background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
     border-radius: 16px;
     padding: 16px 24px;
-    margin-bottom: 24px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
-    border: 1px solid rgba(72, 140, 154, 0.1);
+    margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+    border: 1px solid var(--gray-200, #e9ecef);
 }
 
 .projection-selector-row {

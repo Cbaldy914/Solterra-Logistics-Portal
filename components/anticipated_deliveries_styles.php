@@ -34,21 +34,18 @@
 
         /* ==================== BASE ==================== */
         body {
-            background: linear-gradient(160deg, #f0f4f5 0%, #e4ecef 40%, #f5f0eb 100%);
             font-family: 'Poppins', sans-serif;
             min-height: 100vh;
         }
 
         /* ==================== PAGE HEADER ==================== */
         .page-header {
-            background: var(--glass);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            background: white;
             border-radius: var(--radius-xl);
             padding: 28px 36px;
-            margin-bottom: 32px;
-            box-shadow: var(--shadow-md);
-            border: 1px solid var(--glass-border);
+            margin-bottom: 24px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+            border: 1px solid var(--gray-200);
             position: relative;
             overflow: hidden;
         }
@@ -290,13 +287,13 @@
         .planner-layout {
             display: flex;
             flex-direction: column;
-            gap: 28px;
+            gap: 16px;
         }
 
         .planner-main {
             display: flex;
             flex-direction: column;
-            gap: 24px;
+            gap: 16px;
         }
 
         /* ==================== CARD STYLES ==================== */
@@ -365,13 +362,13 @@
         }
 
         .timeline-section {
-            margin-top: 24px;
+            margin-top: 16px;
         }
 
         .collapsible-header {
             background: white;
             border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-sm);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
             border: 1px solid var(--gray-200);
             padding: 20px 24px;
             display: flex;
@@ -384,8 +381,7 @@
 
         .collapsible-header:hover {
             border-color: rgba(72, 140, 154, 0.25);
-            box-shadow: var(--shadow-md);
-            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
         }
 
         .collapsible-header.collapsed {
@@ -2286,7 +2282,7 @@
 
             .monthly-chart-wrapper { height: 220px; }
 
-            .planner-layout { gap: 20px; }
+            .planner-layout { gap: 12px; }
 
             /* Collapsed summary responsive */
             .collapsed-summary {
