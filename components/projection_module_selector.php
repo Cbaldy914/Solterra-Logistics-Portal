@@ -139,7 +139,8 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 
                         <!-- Two Column Layout for PO Date and Milestones -->
                         <div class="module-expanded-columns">
-                            <!-- PO Execution Date -->
+                            <?php if (!empty($milestones)): ?>
+                            <!-- PO Execution Date (only shown when milestones are configured) -->
                             <div class="po-execution-section">
                                 <div class="section-header">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2">
@@ -159,9 +160,10 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                            <?php echo $po_required_attr; ?>>
                                 </div>
                             </div>
+                            <?php endif; ?>
 
                             <!-- Milestones Section -->
-                            <div class="milestones-section">
+                            <div class="milestones-section" <?php echo empty($milestones) ? 'style="grid-column: 1 / -1;"' : ''; ?>>
                                 <div class="section-header">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
                                         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
@@ -201,9 +203,18 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                         <?php endforeach; ?>
                                     </div>
                                 <?php else: ?>
-                                    <div class="milestones-empty">
-                                        <p>No milestones configured for this batch.</p>
-                                        <small>Milestones are configured in the module batch settings.</small>
+                                    <div class="milestones-default-note">
+                                        <div class="milestone-row">
+                                            <div class="milestone-info">
+                                                <span class="milestone-name">Project Delivery</span>
+                                                <span class="milestone-default-tag">Default</span>
+                                            </div>
+                                            <div class="milestone-amount">100.0%</div>
+                                        </div>
+                                        <div class="milestones-default-info">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                                            <span>No milestones configured — defaults to 100% upon project delivery.</span>
+                                        </div>
                                     </div>
                                 <?php endif; ?>
                             </div>
@@ -1410,6 +1421,48 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 
 .milestones-empty small {
     color: #adb5bd;
+}
+
+.milestones-default-note {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.milestones-default-note .milestone-row {
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.06) 0%, rgba(72, 140, 154, 0.02) 100%);
+    border-left-color: #6c757d;
+    border-left-style: dashed;
+}
+
+.milestone-default-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 600;
+    background: rgba(108, 117, 125, 0.1);
+    color: #6c757d;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.milestones-default-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82em;
+    color: #6c757d;
+    padding: 8px 12px;
+    background: rgba(108, 117, 125, 0.06);
+    border-radius: 8px;
+}
+
+.milestones-default-info svg {
+    flex-shrink: 0;
+    color: #6c757d;
 }
 
 /* Module Item Actions */

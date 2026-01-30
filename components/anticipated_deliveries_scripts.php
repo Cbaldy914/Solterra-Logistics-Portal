@@ -7188,7 +7188,21 @@
 
             workingState.moduleAllocations.forEach(alloc => {
                 const contractValue = parseFloat(alloc.contract_value) || 0;
-                if (!contractValue || !Array.isArray(alloc.milestones)) {
+                if (!contractValue) {
+                    return;
+                }
+
+                const hasMilestones = Array.isArray(alloc.milestones) && alloc.milestones.some(m => m.trigger_event && parseFloat(m.percentage) > 0);
+
+                if (!hasMilestones) {
+                    // Default: 100% upon project delivery when no milestones configured
+                    events.push({
+                        trigger: 'project_delivery',
+                        amount: contractValue,
+                        label: 'Project Delivery',
+                        date: '',
+                        isDefault: true
+                    });
                     return;
                 }
 

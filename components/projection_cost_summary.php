@@ -24,9 +24,10 @@ $total_milestone_amount = 0;
 
 if (!empty($allocated_modules)) {
     foreach ($allocated_modules as $alloc) {
+        $contract_val = $alloc['contract_value'] ?? 0;
         if (!empty($alloc['milestones'])) {
             foreach ($alloc['milestones'] as $ms) {
-                $amount = ($alloc['contract_value'] ?? 0) * ($ms['percentage'] / 100);
+                $amount = $contract_val * ($ms['percentage'] / 100);
                 $trigger = $ms['trigger_event'];
 
                 if (!isset($milestone_payments[$trigger])) {
@@ -40,6 +41,20 @@ if (!empty($allocated_modules)) {
                 $milestone_payments[$trigger]['amount'] += $amount;
                 $total_milestone_amount += $amount;
             }
+        } elseif ($contract_val > 0) {
+            // Default: 100% upon project delivery when no milestones configured
+            $trigger = 'project_delivery';
+            if (!isset($milestone_payments[$trigger])) {
+                $milestone_payments[$trigger] = [
+                    'name' => 'Project Delivery',
+                    'trigger' => $trigger,
+                    'amount' => 0,
+                    'percentage' => 100,
+                    'is_default' => true
+                ];
+            }
+            $milestone_payments[$trigger]['amount'] += $contract_val;
+            $total_milestone_amount += $contract_val;
         }
     }
 }
@@ -145,6 +160,9 @@ $milestone_order = ['po_execution', 'shipping', 'customs_cleared', 'project_deli
                                     <span class="milestone-dot milestone-<?php echo $trigger; ?>"></span>
                                     <?php echo htmlspecialchars($ms['name']); ?>
                                     <span class="milestone-pct">(<?php echo $ms['percentage']; ?>%)</span>
+                                    <?php if (!empty($ms['is_default'])): ?>
+                                    <span style="font-size:0.75em;font-weight:600;background:rgba(108,117,125,0.1);color:#6c757d;padding:1px 8px;border-radius:10px;margin-left:6px;">Default</span>
+                                    <?php endif; ?>
                                 </span>
                                 <span class="cost-value">$<?php echo number_format($ms['amount'], 2); ?></span>
                             </div>

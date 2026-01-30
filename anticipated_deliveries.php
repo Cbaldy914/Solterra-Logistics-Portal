@@ -115,7 +115,8 @@ if (isset($_GET['projection_id']) && !empty($_GET['projection_id']) &&
     }
 
     require_once 'anticipated_schedule_helpers.php';
-    $project_summary = ['modules_per_pallet' => 30, 'pallets_per_truck' => 20, 'trucks' => 0];
+    $general_mw = floatval($current_projection['general_estimated_mw'] ?? 0);
+    $project_summary = ['modules_per_pallet' => 30, 'pallets_per_truck' => 20, 'trucks' => 0, 'mw' => $general_mw];
 
     // Fetch manufacturers for dropdown
     $manufacturers_for_manual = [];
@@ -347,9 +348,15 @@ endif; // end if (!$is_general_mode)
                             <?php else: ?>
                             <a href="view_project.php?id=<?php echo $project_id; ?>"><?php echo htmlspecialchars($project['project_name']); ?></a>
                             <?php endif; ?>
-                            <?php if ($current_projection): ?>
+                            <?php
+                            // For general projections, skip showing the projection name if it matches the project name
+                            $show_projection_name = $current_projection && !($is_general_mode && ($current_projection['projection_name'] ?? '') === ($project['project_name'] ?? ''));
+                            ?>
+                            <?php if ($show_projection_name): ?>
                             <span style="color: #dee2e6;">|</span>
                             <span class="header-projection-name" id="headerProjectionName"><?php echo htmlspecialchars($current_projection['projection_name'] ?? 'New Projection'); ?></span>
+                            <?php endif; ?>
+                            <?php if ($current_projection): ?>
                             <?php if (($current_projection['status'] ?? '') === 'completed'): ?>
                             <span class="header-status-pill completed">Completed</span>
                             <?php endif; ?>
