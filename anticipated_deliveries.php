@@ -69,8 +69,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 }
 
+// ========== GENERAL PROJECTION MODE ==========
+$is_general_mode = false;
+if (isset($_GET['projection_id']) && !empty($_GET['projection_id']) &&
+    isset($_GET['is_general']) && $_GET['is_general'] == '1' &&
+    (!isset($_GET['project_id']) || empty($_GET['project_id']))) {
+
+    if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
+        header("Location: dashboard");
+        exit();
+    }
+
+    $is_general_mode = true;
+    $requested_projection_id = intval($_GET['projection_id']);
+    $current_projection = get_projection($conn, $requested_projection_id);
+
+    if (!$current_projection || empty($current_projection['is_general'])) {
+        die("Invalid general projection.");
+    }
+
+    // Set up variables the editor template expects
+    $project_id = 0;
+    $project = [
+        'id' => 0,
+        'project_name' => $current_projection['general_project_name'] ?? $current_projection['projection_name'],
+        'project_address' => $current_projection['general_project_address'] ?? '',
+        'account_name' => 'General Projection'
+    ];
+    $can_edit = true;
+    $projections = [$current_projection];
+    $available_batches = [];
+
+    // Prepare data for initial load
+    $allocated_modules = $current_projection['module_allocations'] ?? [];
+    $stops = $current_projection['stops'] ?? [];
+    $legs = $current_projection['legs'] ?? [];
+    $cost_summary = $current_projection['cost_summary'] ?? [];
+    $total_pallets = 0;
+    $total_modules = 0;
+    $total_contract_value = 0;
+    foreach ($allocated_modules as $alloc) {
+        $total_pallets += $alloc['pallets'] ?? 0;
+        $total_modules += $alloc['quantity'] ?? 0;
+        $total_contract_value += $alloc['contract_value'] ?? 0;
+    }
+
+    require_once 'anticipated_schedule_helpers.php';
+    $project_summary = ['modules_per_pallet' => 30, 'pallets_per_truck' => 20, 'trucks' => 0];
+
+    // Fetch manufacturers for dropdown
+    $manufacturers_for_manual = [];
+    $stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+    if ($stmtManufacturers) {
+        $stmtManufacturers->execute();
+        $manufacturersResult = $stmtManufacturers->get_result();
+        while ($manufacturer = $manufacturersResult->fetch_assoc()) {
+            $manufacturers_for_manual[] = $manufacturer;
+        }
+        $stmtManufacturers->close();
+    }
+    // Fall through to the HTML rendering below (skip portfolio and project loading)
+}
+
 // ========== PORTFOLIO MODE (No project_id) ==========
-if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
+if (!$is_general_mode && (!isset($_GET['project_id']) || empty($_GET['project_id']))) {
     // Only admin, global_admin, customer_admin can access portfolio view
     if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
         header("Location: dashboard");
@@ -125,6 +187,8 @@ if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
     include 'components/anticipated_deliveries_portfolio.php';
     exit();
 }
+
+if (!$is_general_mode):
 
 $project_id = intval($_GET['project_id']);
 
@@ -216,13 +280,15 @@ while ($manufacturer = $manufacturersResult->fetch_assoc()) {
 $stmtManufacturers->close();
 
 // Note: Don't close connection here - components may need it
+
+endif; // end if (!$is_general_mode)
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delivery & Cost Planning - <?php echo htmlspecialchars($project['project_name']); ?></title>
+    <title>Delivery & Cost Planning - <?php echo htmlspecialchars($project['project_name'] ?? 'General Projection'); ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -244,10 +310,19 @@ $stmtManufacturers->close();
     <main>
         <?php
             require_once 'components/breadcrumbs.php';
-            echo slp_render_breadcrumbs([
-                'current_label' => 'Delivery & Cost Planning',
-                'project_id' => $project_id
-            ]);
+            if ($is_general_mode) {
+                echo slp_render_breadcrumbs([
+                    'current_label' => 'General Projection',
+                    'extra' => [
+                        ['label' => 'Project Planning', 'url' => 'project_planning']
+                    ]
+                ]);
+            } else {
+                echo slp_render_breadcrumbs([
+                    'current_label' => 'Delivery & Cost Planning',
+                    'project_id' => $project_id
+                ]);
+            }
         ?>
 
         <!-- Page Header -->
@@ -265,7 +340,13 @@ $stmtManufacturers->close();
                     <div class="header-info">
                         <h1>Delivery & Cost Planning</h1>
                         <p class="header-subtitle">
+                            <?php if ($is_general_mode): ?>
+                            <span style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#e8f4f6,#d4eef2);color:#488C9A;padding:3px 12px;border-radius:20px;font-size:0.85em;font-weight:600;">General Projection</span>
+                            <span style="color: #dee2e6;">|</span>
+                            <span><?php echo htmlspecialchars($project['project_name']); ?></span>
+                            <?php else: ?>
                             <a href="view_project.php?id=<?php echo $project_id; ?>"><?php echo htmlspecialchars($project['project_name']); ?></a>
+                            <?php endif; ?>
                             <?php if ($current_projection): ?>
                             <span style="color: #dee2e6;">|</span>
                             <span class="header-projection-name" id="headerProjectionName"><?php echo htmlspecialchars($current_projection['projection_name'] ?? 'New Projection'); ?></span>
@@ -278,6 +359,17 @@ $stmtManufacturers->close();
                             <?php endif; ?>
                         </p>
                     </div>
+                    <?php if ($is_general_mode): ?>
+                    <div style="margin-left:auto;">
+                        <button type="button" class="btn btn-primary" onclick="openLinkToProjectModal()" style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;font-size:0.9em;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                            </svg>
+                            Link to Project
+                        </button>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -1165,6 +1257,51 @@ $stmtManufacturers->close();
             </div>
         </div>
     </div>
+
+    <?php if ($is_general_mode): ?>
+    <!-- Link to Project Modal -->
+    <div class="flow-modal-overlay" id="linkToProjectModal">
+        <div class="flow-modal" style="max-width: 600px;">
+            <div class="flow-modal-header">
+                <div class="flow-modal-header-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                    </svg>
+                </div>
+                <div class="flow-modal-header-text">
+                    <h3>Link to Project</h3>
+                    <p>Associate this general projection with a real project</p>
+                </div>
+                <button type="button" class="flow-modal-close" onclick="closeLinkToProjectModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flow-modal-body" style="padding: 24px;">
+                <div class="modal-form-group" style="margin-bottom: 16px;">
+                    <label class="modal-form-label">Select Project</label>
+                    <select class="modal-form-input" id="linkProjectSelect" style="width: 100%;">
+                        <option value="">-- Choose a project --</option>
+                    </select>
+                </div>
+                <p style="font-size: 0.85em; color: #6c757d; margin: 0;">
+                    Once linked, this projection will become part of the selected project and the destination will be updated to the project's address.
+                </p>
+            </div>
+            <div class="flow-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeLinkToProjectModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmLinkToProject()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Link Project
+                </button>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <?php include 'components/anticipated_deliveries_scripts.php'; ?>
 </body>

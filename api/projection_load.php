@@ -42,20 +42,40 @@ try {
         }
 
         // Verify access
-        $access_check = $conn->prepare("
-            SELECT p.id FROM projects p
-            JOIN customer_account_users cau ON p.account_id = cau.account_id
-            WHERE p.id = ? AND cau.user_id = ?
-        ");
-        $access_check->bind_param("ii", $projection['project_id'], $user_id);
-        $access_check->execute();
-        if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
-            throw new Exception('Access denied');
-        }
-        $access_check->close();
+        if (!empty($projection['is_general']) && empty($projection['project_id'])) {
+            // General projection: verify user created it or is global_admin
+            if ($role !== 'global_admin' && intval($projection['created_by']) !== $user_id) {
+                // Also allow users in the same account
+                $access_check = $conn->prepare("
+                    SELECT 1 FROM customer_account_users cau1
+                    JOIN customer_account_users cau2 ON cau2.account_id = cau1.account_id
+                    WHERE cau1.user_id = ? AND cau2.user_id = ?
+                    LIMIT 1
+                ");
+                $access_check->bind_param("ii", $user_id, $projection['created_by']);
+                $access_check->execute();
+                if ($access_check->get_result()->num_rows === 0) {
+                    throw new Exception('Access denied');
+                }
+                $access_check->close();
+            }
+            $available_batches = [];
+        } else {
+            $access_check = $conn->prepare("
+                SELECT p.id FROM projects p
+                JOIN customer_account_users cau ON p.account_id = cau.account_id
+                WHERE p.id = ? AND cau.user_id = ?
+            ");
+            $access_check->bind_param("ii", $projection['project_id'], $user_id);
+            $access_check->execute();
+            if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
+                throw new Exception('Access denied');
+            }
+            $access_check->close();
 
-        // Get available module batches for this project
-        $available_batches = get_available_module_batches($conn, $projection['project_id']);
+            // Get available module batches for this project
+            $available_batches = get_available_module_batches($conn, $projection['project_id']);
+        }
 
         echo json_encode([
             'success' => true,

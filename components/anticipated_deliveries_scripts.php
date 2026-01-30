@@ -1,5 +1,7 @@
 <script>
         // ==================== GLOBAL STATE ====================
+        const isGeneralMode = <?= json_encode($is_general_mode ?? false) ?>;
+        const generalProjectionId = <?= json_encode($requested_projection_id ?? 0) ?>;
         const projectId = <?php echo $project_id; ?>;
         const canEdit = <?php echo $can_edit ? 'true' : 'false'; ?>;
         const projectInfo = {
@@ -361,7 +363,11 @@
                         };
                         availableBatches = data.available_batches || [];
                         // Reload page to update components
-                        window.location.href = `anticipated_deliveries.php?project_id=${projectId}&projection_id=${projectionId}`;
+                        if (isGeneralMode) {
+                            window.location.href = `anticipated_deliveries.php?projection_id=${projectionId}&is_general=1`;
+                        } else {
+                            window.location.href = `anticipated_deliveries.php?project_id=${projectId}&projection_id=${projectionId}`;
+                        }
                     } else {
                         showToast('Failed to load projection: ' + data.error, 'error');
                     }
@@ -384,21 +390,35 @@
 
             showLoading('Creating projection...');
 
+            const createPayload = {
+                projection_name: name,
+                is_primary: projections.length === 0
+            };
+
+            if (isGeneralMode) {
+                createPayload.is_general = true;
+                createPayload.project_id = 0;
+                createPayload.general_project_name = projectInfo.name;
+                createPayload.general_project_address = projectInfo.address;
+            } else {
+                createPayload.project_id = projectId;
+            }
+
             fetch('api/projection_save.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    project_id: projectId,
-                    projection_name: name,
-                    is_primary: projections.length === 0
-                })
+                body: JSON.stringify(createPayload)
             })
             .then(response => response.json())
             .then(data => {
                 hideLoading();
                 if (data.success) {
                     showToast('Projection created successfully', 'success');
-                    window.location.href = `anticipated_deliveries.php?project_id=${projectId}&projection_id=${data.projection_id}`;
+                    if (isGeneralMode) {
+                        window.location.href = `anticipated_deliveries.php?projection_id=${data.projection_id}&is_general=1`;
+                    } else {
+                        window.location.href = `anticipated_deliveries.php?project_id=${projectId}&projection_id=${data.projection_id}`;
+                    }
                 } else {
                     showToast('Failed to create projection: ' + data.error, 'error');
                 }
@@ -429,12 +449,13 @@
             showLoading('Saving projection...');
 
             const payload = {
-                project_id: projectId,
+                project_id: isGeneralMode ? 0 : projectId,
                 projection_id: workingState.projectionId,
                 projection_name: workingState.projectionName,
                 status: workingState.status,
                 notes: workingState.notes,
                 is_primary: workingState.isPrimary,
+                is_general: isGeneralMode,
                 po_execution_date: workingState.poExecutionDate || null,
                 module_allocations: workingState.moduleAllocations.map(a => ({
                     module_id: a.module_id,
@@ -7374,5 +7395,84 @@
         // Re-initialize map when Google Maps loads
         if (typeof google === 'undefined') {
             window.initMap = initializeMap;
+        }
+
+        // ==================== LINK TO PROJECT (General Mode) ====================
+        function openLinkToProjectModal() {
+            const modal = document.getElementById('linkToProjectModal');
+            if (!modal) return;
+            modal.classList.add('active');
+
+            const select = document.getElementById('linkProjectSelect');
+            select.innerHTML = '<option value="">Loading projects...</option>';
+
+            fetch('api/link_projection_to_project.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'list_projects' })
+            })
+            .then(r => r.json())
+            .then(data => {
+                select.innerHTML = '<option value="">-- Choose a project --</option>';
+                if (data.projects) {
+                    data.projects.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p.id;
+                        opt.textContent = `${p.project_name} - ${p.project_address || 'No address'}`;
+                        select.appendChild(opt);
+                    });
+                }
+            })
+            .catch(() => {
+                select.innerHTML = '<option value="">Failed to load projects</option>';
+            });
+        }
+
+        function closeLinkToProjectModal() {
+            const modal = document.getElementById('linkToProjectModal');
+            if (modal) modal.classList.remove('active');
+        }
+
+        function confirmLinkToProject() {
+            const select = document.getElementById('linkProjectSelect');
+            const projectIdToLink = parseInt(select.value);
+
+            if (!projectIdToLink) {
+                showToast('Please select a project', 'error');
+                return;
+            }
+
+            if (!confirm('Are you sure you want to link this general projection to the selected project? This will update the destination address.')) {
+                return;
+            }
+
+            showLoading('Linking to project...');
+
+            fetch('api/link_projection_to_project.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    projection_id: generalProjectionId,
+                    project_id: projectIdToLink
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    showToast('Projection linked to project successfully!', 'success');
+                    closeLinkToProjectModal();
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url || `anticipated_deliveries.php?project_id=${projectIdToLink}&projection_id=${generalProjectionId}`;
+                    }, 1000);
+                } else {
+                    showToast('Failed to link: ' + (data.error || 'Unknown error'), 'error');
+                }
+            })
+            .catch(err => {
+                hideLoading();
+                showToast('Error linking to project', 'error');
+                console.error(err);
+            });
         }
     </script>
