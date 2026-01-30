@@ -298,9 +298,10 @@ function get_projection_module_allocations($conn, $projection_id) {
         return [];
     }
 
+    // Load allocations from real modules
     $stmt = $conn->prepare("
         SELECT pma.id, pma.projection_id, pma.module_id, pma.wattage, pma.quantity, pma.pallets,
-               pma.po_execution_date,
+               pma.po_execution_date, pma.is_projection_module,
                m.vendor_name,
                m.vendor_name AS manufacturer_name,
                m.initial_location AS manufacturer_address,
@@ -309,7 +310,7 @@ function get_projection_module_allocations($conn, $projection_id) {
                m.pallets_per_truck
         FROM projection_module_allocations pma
         JOIN modules m ON m.id = pma.module_id
-        WHERE pma.projection_id = ?
+        WHERE pma.projection_id = ? AND pma.is_projection_module = 0
     ");
 
     if (!$stmt) {
@@ -321,6 +322,29 @@ function get_projection_module_allocations($conn, $projection_id) {
     $allocations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 
+    // Load allocations from projection-only modules
+    $proj_stmt = $conn->prepare("
+        SELECT pma.id, pma.projection_id, pma.module_id, pma.wattage, pma.quantity, pma.pallets,
+               pma.po_execution_date, pma.is_projection_module,
+               pm.vendor_name,
+               pm.vendor_name AS manufacturer_name,
+               pm.initial_location AS manufacturer_address,
+               pm.cost_per_watt,
+               pm.modules_per_pallet,
+               pm.pallets_per_truck
+        FROM projection_module_allocations pma
+        JOIN projection_modules pm ON pm.id = pma.module_id
+        WHERE pma.projection_id = ? AND pma.is_projection_module = 1
+    ");
+
+    if ($proj_stmt) {
+        $proj_stmt->bind_param("i", $projection_id);
+        $proj_stmt->execute();
+        $proj_allocations = $proj_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $proj_stmt->close();
+        $allocations = array_merge($allocations, $proj_allocations);
+    }
+
     // Calculate contract value and milestone info for each allocation
     foreach ($allocations as &$alloc) {
         $total_watts = $alloc['wattage'] * $alloc['quantity'];
@@ -328,8 +352,12 @@ function get_projection_module_allocations($conn, $projection_id) {
             ? round($alloc['cost_per_watt'] * $total_watts, 2)
             : 0;
 
-        // Get milestone configuration
-        $alloc['milestones'] = get_module_milestones($alloc['module_id'], $conn);
+        // Get milestone configuration from the appropriate table
+        if (!empty($alloc['is_projection_module'])) {
+            $alloc['milestones'] = get_projection_module_milestones($alloc['module_id'], $conn);
+        } else {
+            $alloc['milestones'] = get_module_milestones($alloc['module_id'], $conn);
+        }
         $alloc['has_milestones'] = !empty($alloc['milestones']);
 
         // Calculate pallets if not set
@@ -346,13 +374,14 @@ function get_projection_module_allocations($conn, $projection_id) {
  *
  * @param mysqli $conn Database connection
  * @param int $projection_id Projection ID
- * @param int $module_id Module batch ID
+ * @param int $module_id Module batch ID (from modules or projection_modules table)
  * @param int $wattage Wattage
  * @param int $quantity Quantity
  * @param int|null $pallets Override pallet count
+ * @param bool $is_projection_module Whether module_id refers to projection_modules table
  * @return array ['success' => bool, 'allocation_id' => int|null, 'error' => string|null]
  */
-function add_module_allocation($conn, $projection_id, $module_id, $wattage, $quantity, $pallets = null) {
+function add_module_allocation($conn, $projection_id, $module_id, $wattage, $quantity, $pallets = null, $is_projection_module = false) {
     $result = ['success' => false, 'allocation_id' => null, 'error' => null];
 
     if (!$conn || !$projection_id || !$module_id || !$wattage || !$quantity) {
@@ -360,9 +389,10 @@ function add_module_allocation($conn, $projection_id, $module_id, $wattage, $qua
         return $result;
     }
 
+    $is_proj = $is_projection_module ? 1 : 0;
     $stmt = $conn->prepare("
-        INSERT INTO projection_module_allocations (projection_id, module_id, wattage, quantity, pallets)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO projection_module_allocations (projection_id, module_id, wattage, quantity, pallets, is_projection_module)
+        VALUES (?, ?, ?, ?, ?, ?)
     ");
 
     if (!$stmt) {
@@ -370,7 +400,7 @@ function add_module_allocation($conn, $projection_id, $module_id, $wattage, $qua
         return $result;
     }
 
-    $stmt->bind_param("iiiii", $projection_id, $module_id, $wattage, $quantity, $pallets);
+    $stmt->bind_param("iiiiii", $projection_id, $module_id, $wattage, $quantity, $pallets, $is_proj);
 
     if ($stmt->execute()) {
         $result['success'] = true;
@@ -1263,6 +1293,7 @@ function get_available_module_batches($conn, $project_id) {
         FROM modules m
         JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
         WHERE m.project_id = ?
+          AND (m.module_notes IS NULL OR m.module_notes != 'Created via projection manual entry')
         GROUP BY m.id
         ORDER BY m.vendor_name
     ");

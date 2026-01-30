@@ -470,7 +470,8 @@
                     modules_per_pallet: a.modules_per_pallet,
                     pallets_per_truck: a.pallets_per_truck,
                     cost_per_watt: a.cost_per_watt,
-                    is_manual: a.is_manual || false
+                    is_manual: a.is_manual || false,
+                    is_projection_module: a.is_projection_module || false
                 })),
                 stops: workingState.stops.map((s, i) => ({
                     id: s.id,
@@ -2103,7 +2104,9 @@
                 const milestone = getMilestoneForStop(toStop);
                 leg.triggers_milestone = milestone.value;
 
-                const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                // Only use explicit trucks_required — don't auto-fill with getTotalTrucks()
+                // to avoid phantom shipments on unconfigured legs
+                const trucks = parseInt(leg.trucks_required, 10) || 0;
                 leg.trucks_required = trucks;
 
                 const endDate = calculateEndDate(leg.start_date, leg.delivery_rate, leg.delivery_rate_unit, trucks);
@@ -3442,14 +3445,17 @@
                     badge.className = 'flow-connection-badge';
                     badge.dataset.legId = leg.id;
 
-                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                    const trucks = parseInt(leg.trucks_required, 10) || 0;
                     const totalFreight = parseFloat(leg.total_freight_cost) || 0;
                     const transportMode = leg.transport_mode || 'truck';
 
-                    badge.innerHTML = `
+                    badge.innerHTML = trucks > 0 ? `
                         ${getTransportIconSmall(transportMode)}
                         <span>${trucks} truck${trucks !== 1 ? 's' : ''}</span>
                         ${totalFreight > 0 ? `<span class="badge-cost">$${formatCompactNumber(totalFreight)}</span>` : '<span style="color: var(--gray-400);">Click to configure</span>'}
+                    ` : `
+                        ${getTransportIconSmall(transportMode)}
+                        <span style="color: var(--gray-400);">Click to configure</span>
                     `;
 
                     badge.style.left = midX + 'px';
@@ -5227,7 +5233,7 @@
                 const leg = getLegForStops(fromStop.id, toStop.id);
                 const milestone = getMilestoneForStop(toStop);
                 const isDestination = toStop.stop_type === 'destination';
-                const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                const trucks = parseInt(leg.trucks_required, 10) || 0;
                 const totalFreight = leg.total_freight_cost || 0;
                 const endDate = leg.end_date || '';
                 const feeRows = (toStop.fees || []).map((fee, feeIndex) => {
@@ -6161,7 +6167,7 @@
                 const startDate = normalizeDate(leg.start_date || leg.end_date);
                 if (!startDate) return schedule;
 
-                const totalTrucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                const totalTrucks = parseInt(leg.trucks_required, 10) || 0;
                 if (totalTrucks <= 0) return schedule;
 
                 const rate = parseFloat(leg.delivery_rate);
@@ -6227,7 +6233,7 @@
 
             // Collect freight costs by week (based on truckloads per week)
             (workingState.legs || []).forEach(leg => {
-                const trucksRequired = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                const trucksRequired = parseInt(leg.trucks_required, 10) || 0;
                 if (!trucksRequired) return;
                 const perTruckCost = getLegCostPerTruck(leg, trucksRequired);
                 if (perTruckCost <= 0) return;

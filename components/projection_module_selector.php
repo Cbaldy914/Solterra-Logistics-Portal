@@ -141,8 +141,18 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                         <div class="module-expanded-columns">
                             <?php if (!empty($milestones)): ?>
                             <!-- PO Execution Date (only shown when milestones are configured) -->
-                            <div class="po-execution-section">
+                            <?php
+                                $po_is_filled = !empty($po_execution_date);
+                                $po_section_class = 'po-execution-section';
+                                if ($requires_po_execution) {
+                                    $po_section_class .= $po_is_filled ? ' po-filled' : ' po-required';
+                                } else {
+                                    $po_section_class .= $po_is_filled ? ' po-filled' : ' po-optional';
+                                }
+                            ?>
+                            <div class="<?php echo $po_section_class; ?>">
                                 <div class="section-header">
+                                    <?php if ($requires_po_execution && !$po_is_filled): ?>
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2">
                                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                                         <line x1="16" y1="2" x2="16" y2="6"/>
@@ -150,14 +160,32 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                         <line x1="3" y1="10" x2="21" y2="10"/>
                                     </svg>
                                     <span style="color: #dc3545;">PO Execution Date <span style="color: #dc3545;">*</span></span>
+                                    <?php elseif ($po_is_filled): ?>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                        <line x1="16" y1="2" x2="16" y2="6"/>
+                                        <line x1="8" y1="2" x2="8" y2="6"/>
+                                        <line x1="3" y1="10" x2="21" y2="10"/>
+                                    </svg>
+                                    <span style="color: #28a745;">PO Execution Date</span>
+                                    <?php else: ?>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6c757d" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                        <line x1="16" y1="2" x2="16" y2="6"/>
+                                        <line x1="8" y1="2" x2="8" y2="6"/>
+                                        <line x1="3" y1="10" x2="21" y2="10"/>
+                                    </svg>
+                                    <span style="color: #6c757d;">PO Execution Date</span>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="po-execution-input">
                                     <input type="text" class="form-input flatpickr-date po-date-input"
                                            data-allocation-id="<?php echo $alloc['id']; ?>"
+                                           data-po-required="<?php echo $requires_po_execution ? 'true' : 'false'; ?>"
                                            value="<?php echo htmlspecialchars($po_execution_date); ?>"
-                                           placeholder="Select date when PO was executed"
+                                           placeholder="<?php echo $requires_po_execution ? 'Required — select PO execution date' : 'Optional — select date'; ?>"
                                            <?php echo $can_edit ? '' : 'disabled'; ?>
-                                           <?php echo $po_required_attr; ?>>
+                                           <?php echo $requires_po_execution ? 'required' : ''; ?>>
                                 </div>
                             </div>
                             <?php endif; ?>
@@ -1347,11 +1375,26 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 
 /* PO Execution Section */
 .po-execution-section {
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.po-execution-section.po-required {
     background: linear-gradient(135deg, rgba(220, 53, 69, 0.03) 0%, rgba(220, 53, 69, 0.06) 100%);
     border: 1px solid rgba(220, 53, 69, 0.25);
     border-left: 3px solid #dc3545;
-    border-radius: 12px;
-    padding: 20px;
+}
+
+.po-execution-section.po-filled {
+    background: linear-gradient(135deg, rgba(40, 167, 69, 0.03) 0%, rgba(40, 167, 69, 0.06) 100%);
+    border: 1px solid rgba(40, 167, 69, 0.25);
+    border-left: 3px solid #28a745;
+}
+
+.po-execution-section.po-optional {
+    background: linear-gradient(135deg, rgba(108, 117, 125, 0.03) 0%, rgba(108, 117, 125, 0.06) 100%);
+    border: 1px solid rgba(108, 117, 125, 0.2);
+    border-left: 3px solid #adb5bd;
 }
 
 .po-execution-input .form-input {
@@ -2404,10 +2447,59 @@ function initializePoDatePickers() {
                             updateModuleAllocationPoDate(allocationId, dateStr);
                         }
                         updateModuleHeaderBadge(allocationId, dateStr);
+                        updatePoSectionStyling(input, dateStr);
                     }
                 });
             }
         });
+    }
+}
+
+function updatePoSectionStyling(input, dateStr) {
+    const section = input.closest('.po-execution-section');
+    if (!section) return;
+    const isRequired = input.dataset.poRequired === 'true';
+    const isFilled = !!dateStr;
+
+    section.classList.remove('po-required', 'po-filled', 'po-optional');
+    if (isFilled) {
+        section.classList.add('po-filled');
+    } else if (isRequired) {
+        section.classList.add('po-required');
+    } else {
+        section.classList.add('po-optional');
+    }
+
+    // Update the header icon and text
+    const header = section.querySelector('.section-header');
+    if (!header) return;
+    if (isFilled) {
+        header.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span style="color: #28a745;">PO Execution Date</span>`;
+    } else if (isRequired) {
+        header.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc3545" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span style="color: #dc3545;">PO Execution Date <span style="color: #dc3545;">*</span></span>`;
+    } else {
+        header.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6c757d" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span style="color: #6c757d;">PO Execution Date</span>`;
     }
 }
 </script>

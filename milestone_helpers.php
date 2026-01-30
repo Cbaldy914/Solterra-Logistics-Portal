@@ -1220,4 +1220,90 @@ function backfill_delivery_milestones_for_batch($module_batch_id, $conn, $user_i
     $result['success'] = true;
     return $result;
 }
+
+/**
+ * Get milestones for a projection-only module.
+ * Uses the projection_module_milestones table instead of module_batch_milestones.
+ */
+function get_projection_module_milestones($projection_module_id, $conn) {
+    if (!$projection_module_id || !$conn) {
+        return [];
+    }
+
+    $stmt = $conn->prepare("
+        SELECT id, milestone_name, trigger_event, percentage, display_order, is_active
+        FROM projection_module_milestones
+        WHERE projection_module_id = ? AND is_active = 1
+        ORDER BY display_order, id
+    ");
+
+    if (!$stmt) {
+        return [];
+    }
+
+    $stmt->bind_param("i", $projection_module_id);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    return $result;
+}
+
+/**
+ * Save milestones for a projection-only module.
+ * Uses the projection_module_milestones table.
+ */
+function save_projection_module_milestones($projection_module_id, $milestones, $conn) {
+    if (!$projection_module_id || !$conn) {
+        return false;
+    }
+
+    // Delete existing milestones
+    $stmt = $conn->prepare("DELETE FROM projection_module_milestones WHERE projection_module_id = ?");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param("i", $projection_module_id);
+    $stmt->execute();
+    $stmt->close();
+
+    if (empty($milestones)) {
+        return true;
+    }
+
+    $stmt = $conn->prepare("
+        INSERT INTO projection_module_milestones (projection_module_id, milestone_name, trigger_event, percentage, display_order)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+
+    if (!$stmt) {
+        return false;
+    }
+
+    $trigger_names = [
+        'po_execution' => 'PO Execution',
+        'shipping' => 'Shipping',
+        'customs_cleared' => 'Customs Clearance',
+        'project_delivery' => 'Project Delivery'
+    ];
+
+    $order = 1;
+    foreach ($milestones as $milestone) {
+        $trigger = $milestone['trigger_event'] ?? '';
+        $percentage = floatval($milestone['percentage'] ?? 0);
+
+        if (empty($trigger) || $percentage <= 0) {
+            continue;
+        }
+
+        $name = $milestone['milestone_name'] ?? ($trigger_names[$trigger] ?? $trigger);
+
+        $stmt->bind_param("issdi", $projection_module_id, $name, $trigger, $percentage, $order);
+        $stmt->execute();
+        $order++;
+    }
+
+    $stmt->close();
+    return true;
+}
 ?>
