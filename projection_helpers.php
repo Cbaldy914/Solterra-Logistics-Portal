@@ -82,10 +82,11 @@ function get_projection($conn, $projection_id) {
 
     $stmt = $conn->prepare("
         SELECT dp.*,
-               p.project_name, p.project_address,
+               COALESCE(p.project_name, dp.general_project_name) AS project_name,
+               COALESCE(p.project_address, dp.general_project_address) AS project_address,
                u.username AS created_by_name
         FROM delivery_projections dp
-        JOIN projects p ON p.id = dp.project_id
+        LEFT JOIN projects p ON p.id = dp.project_id
         LEFT JOIN users u ON u.id = dp.created_by
         WHERE dp.id = ?
     ");
@@ -1391,4 +1392,185 @@ function calculate_fee_cost($rate, $rate_unit, $quantity, $duration_days = null)
         default:
             return $rate * $quantity;
     }
+}
+
+/**
+ * =====================================================
+ * GENERAL PROJECTION FUNCTIONS
+ * =====================================================
+ */
+
+/**
+ * Create a new general projection (not tied to a project).
+ *
+ * @param mysqli $conn Database connection
+ * @param string $projection_name Name for the projection
+ * @param int $user_id User creating the projection
+ * @param array $general_data General projection data (general_project_name, general_project_address, general_estimated_mw)
+ * @return array ['success' => bool, 'projection_id' => int|null, 'error' => string|null]
+ */
+function create_general_projection($conn, $projection_name, $user_id, $general_data) {
+    $result = ['success' => false, 'projection_id' => null, 'error' => null];
+
+    if (!$conn || !$user_id) {
+        $result['error'] = 'Invalid parameters';
+        return $result;
+    }
+
+    $general_project_name = $general_data['general_project_name'] ?? $projection_name;
+    $general_project_address = $general_data['general_project_address'] ?? '';
+    $general_estimated_mw = isset($general_data['general_estimated_mw']) ? floatval($general_data['general_estimated_mw']) : null;
+
+    $stmt = $conn->prepare("
+        INSERT INTO delivery_projections
+        (project_id, projection_name, is_primary, is_general, general_project_name, general_project_address, general_estimated_mw, created_by)
+        VALUES (NULL, ?, 0, 1, ?, ?, ?, ?)
+    ");
+
+    if (!$stmt) {
+        $result['error'] = 'Database error: ' . $conn->error;
+        return $result;
+    }
+
+    $stmt->bind_param("sssdi", $projection_name, $general_project_name, $general_project_address, $general_estimated_mw, $user_id);
+
+    if ($stmt->execute()) {
+        $result['success'] = true;
+        $result['projection_id'] = $conn->insert_id;
+    } else {
+        $result['error'] = 'Failed to create general projection: ' . $stmt->error;
+    }
+
+    $stmt->close();
+    return $result;
+}
+
+/**
+ * Get all general projections accessible by a user.
+ *
+ * @param mysqli $conn Database connection
+ * @param int $user_id User ID
+ * @param string $role User role
+ * @return array List of general projections
+ */
+function get_general_projections($conn, $user_id, $role) {
+    if (!$conn) {
+        return [];
+    }
+
+    if ($role === 'global_admin') {
+        $stmt = $conn->prepare("
+            SELECT dp.*,
+                   u.username AS created_by_name,
+                   pcs.grand_total
+            FROM delivery_projections dp
+            LEFT JOIN users u ON u.id = dp.created_by
+            LEFT JOIN projection_cost_summary pcs ON pcs.projection_id = dp.id
+            WHERE dp.is_general = 1 AND dp.is_template = 0
+            ORDER BY dp.created_at DESC
+        ");
+        if (!$stmt) return [];
+        $stmt->execute();
+    } else {
+        // Get projections created by users in the same accounts
+        $stmt = $conn->prepare("
+            SELECT dp.*,
+                   u.username AS created_by_name,
+                   pcs.grand_total
+            FROM delivery_projections dp
+            LEFT JOIN users u ON u.id = dp.created_by
+            LEFT JOIN projection_cost_summary pcs ON pcs.projection_id = dp.id
+            WHERE dp.is_general = 1 AND dp.is_template = 0
+              AND dp.created_by IN (
+                  SELECT cau2.user_id FROM customer_account_users cau
+                  JOIN customer_account_users cau2 ON cau2.account_id = cau.account_id
+                  WHERE cau.user_id = ?
+              )
+            ORDER BY dp.created_at DESC
+        ");
+        if (!$stmt) return [];
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+    }
+
+    $projections = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    return $projections;
+}
+
+/**
+ * Link a general projection to a real project.
+ *
+ * @param mysqli $conn Database connection
+ * @param int $projection_id Projection ID
+ * @param int $project_id Project ID to link to
+ * @return array ['success' => bool, 'error' => string|null]
+ */
+function link_general_to_project($conn, $projection_id, $project_id) {
+    $result = ['success' => false, 'error' => null];
+
+    if (!$conn || !$projection_id || !$project_id) {
+        $result['error'] = 'Invalid parameters';
+        return $result;
+    }
+
+    // Verify projection exists and is general
+    $check = $conn->prepare("SELECT id FROM delivery_projections WHERE id = ? AND is_general = 1");
+    if (!$check) {
+        $result['error'] = 'Database error';
+        return $result;
+    }
+    $check->bind_param("i", $projection_id);
+    $check->execute();
+    if ($check->get_result()->num_rows === 0) {
+        $check->close();
+        $result['error'] = 'Projection not found or is not a general projection';
+        return $result;
+    }
+    $check->close();
+
+    // Update the projection to link it
+    $stmt = $conn->prepare("
+        UPDATE delivery_projections
+        SET linked_project_id = ?, project_id = ?
+        WHERE id = ? AND is_general = 1
+    ");
+    if (!$stmt) {
+        $result['error'] = 'Database error: ' . $conn->error;
+        return $result;
+    }
+
+    $stmt->bind_param("iii", $project_id, $project_id, $projection_id);
+    if (!$stmt->execute()) {
+        $result['error'] = 'Failed to link projection: ' . $stmt->error;
+        $stmt->close();
+        return $result;
+    }
+    $stmt->close();
+
+    // Update destination stop to use real project address
+    $proj_stmt = $conn->prepare("SELECT project_name, project_address FROM projects WHERE id = ?");
+    if ($proj_stmt) {
+        $proj_stmt->bind_param("i", $project_id);
+        $proj_stmt->execute();
+        $project = $proj_stmt->get_result()->fetch_assoc();
+        $proj_stmt->close();
+
+        if ($project) {
+            $update_stop = $conn->prepare("
+                UPDATE projection_stops
+                SET location_name = ?, location_address = ?
+                WHERE projection_id = ? AND stop_type = 'destination'
+            ");
+            if ($update_stop) {
+                $update_stop->bind_param("ssi", $project['project_name'], $project['project_address'], $projection_id);
+                $update_stop->execute();
+                $update_stop->close();
+            }
+        }
+    }
+
+    $result['success'] = true;
+    return $result;
 }

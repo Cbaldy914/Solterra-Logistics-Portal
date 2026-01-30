@@ -51,23 +51,26 @@ try {
 
     $project_id = intval($input['project_id'] ?? 0);
     $projection_id = intval($input['projection_id'] ?? 0);
+    $is_general = !empty($input['is_general']);
 
-    if (!$project_id) {
+    if (!$project_id && !$is_general) {
         throw new Exception('Project ID is required');
     }
 
-    // Verify user has access to project
-    $access_check = $conn->prepare("
-        SELECT p.id FROM projects p
-        JOIN customer_account_users cau ON p.account_id = cau.account_id
-        WHERE p.id = ? AND cau.user_id = ?
-    ");
-    $access_check->bind_param("ii", $project_id, $user_id);
-    $access_check->execute();
-    if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
-        throw new Exception('Access denied to this project');
+    // Verify user has access to project (skip for general projections)
+    if ($project_id && !$is_general) {
+        $access_check = $conn->prepare("
+            SELECT p.id FROM projects p
+            JOIN customer_account_users cau ON p.account_id = cau.account_id
+            WHERE p.id = ? AND cau.user_id = ?
+        ");
+        $access_check->bind_param("ii", $project_id, $user_id);
+        $access_check->execute();
+        if ($access_check->get_result()->num_rows === 0 && $role !== 'global_admin') {
+            throw new Exception('Access denied to this project');
+        }
+        $access_check->close();
     }
-    $access_check->close();
 
     // Create or update projection
     if ($projection_id) {
@@ -84,13 +87,26 @@ try {
         }
     } else {
         // Create new
-        $result = create_projection(
-            $conn,
-            $project_id,
-            $input['projection_name'] ?? 'Default Projection',
-            $user_id,
-            $input['is_primary'] ?? true // First projection is primary by default
-        );
+        if ($is_general) {
+            $result = create_general_projection(
+                $conn,
+                $input['projection_name'] ?? 'General Projection',
+                $user_id,
+                [
+                    'general_project_name' => $input['general_project_name'] ?? ($input['projection_name'] ?? 'General Projection'),
+                    'general_project_address' => $input['general_project_address'] ?? '',
+                    'general_estimated_mw' => $input['general_estimated_mw'] ?? null
+                ]
+            );
+        } else {
+            $result = create_projection(
+                $conn,
+                $project_id,
+                $input['projection_name'] ?? 'Default Projection',
+                $user_id,
+                $input['is_primary'] ?? true // First projection is primary by default
+            );
+        }
 
         if (!$result['success']) {
             throw new Exception($result['error'] ?? 'Failed to create projection');
@@ -98,31 +114,42 @@ try {
 
         $projection_id = $result['projection_id'];
 
-        // Initialize with origin and destination if module data provided
-        if (!empty($input['module_allocations'])) {
-            $first_alloc = $input['module_allocations'][0];
-            // Get manufacturer info
-            $mfr_stmt = $conn->prepare("
-                SELECT m.id, m.vendor_name AS manufacturer_name, m.initial_location AS manufacturer_address
-                FROM modules m
-                WHERE m.id = ?
-            ");
-            $mfr_stmt->bind_param("i", $first_alloc['module_id']);
-            $mfr_stmt->execute();
-            $mfr_data = $mfr_stmt->get_result()->fetch_assoc();
-            $mfr_stmt->close();
-            // Set defaults for missing fields
-            if ($mfr_data) {
-                $mfr_data['manufacturer_city'] = '';
-                $mfr_data['manufacturer_country'] = '';
-            }
-
-            if ($mfr_data) {
-                initialize_projection_stops($conn, $projection_id, $project_id, $mfr_data);
-            }
+        if ($is_general) {
+            // Create destination from general fields
+            $general_name = $input['general_project_name'] ?? ($input['projection_name'] ?? 'General Projection');
+            $general_address = $input['general_project_address'] ?? '';
+            add_projection_stop($conn, $projection_id, [
+                'stop_type' => 'destination',
+                'location_name' => $general_name,
+                'location_address' => $general_address
+            ]);
         } else {
-            // Just create destination from project
-            create_destination_from_project($conn, $projection_id, $project_id);
+            // Initialize with origin and destination if module data provided
+            if (!empty($input['module_allocations'])) {
+                $first_alloc = $input['module_allocations'][0];
+                // Get manufacturer info
+                $mfr_stmt = $conn->prepare("
+                    SELECT m.id, m.vendor_name AS manufacturer_name, m.initial_location AS manufacturer_address
+                    FROM modules m
+                    WHERE m.id = ?
+                ");
+                $mfr_stmt->bind_param("i", $first_alloc['module_id']);
+                $mfr_stmt->execute();
+                $mfr_data = $mfr_stmt->get_result()->fetch_assoc();
+                $mfr_stmt->close();
+                // Set defaults for missing fields
+                if ($mfr_data) {
+                    $mfr_data['manufacturer_city'] = '';
+                    $mfr_data['manufacturer_country'] = '';
+                }
+
+                if ($mfr_data) {
+                    initialize_projection_stops($conn, $projection_id, $project_id, $mfr_data);
+                }
+            } else {
+                // Just create destination from project
+                create_destination_from_project($conn, $projection_id, $project_id);
+            }
         }
     }
 
@@ -134,16 +161,28 @@ try {
         $clear_stmt->execute();
         $clear_stmt->close();
 
-        // Get project's account_id for manual entries
+        // Get account_id for manual entries
         $account_id = 0;
-        $acc_stmt = $conn->prepare("SELECT account_id FROM projects WHERE id = ?");
-        $acc_stmt->bind_param("i", $project_id);
-        $acc_stmt->execute();
-        $acc_result = $acc_stmt->get_result()->fetch_assoc();
-        if ($acc_result) {
-            $account_id = $acc_result['account_id'];
+        if ($is_general) {
+            // For general projections, use the user's account association
+            $acc_stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
+            $acc_stmt->bind_param("i", $user_id);
+            $acc_stmt->execute();
+            $acc_result = $acc_stmt->get_result()->fetch_assoc();
+            if ($acc_result) {
+                $account_id = $acc_result['account_id'];
+            }
+            $acc_stmt->close();
+        } else {
+            $acc_stmt = $conn->prepare("SELECT account_id FROM projects WHERE id = ?");
+            $acc_stmt->bind_param("i", $project_id);
+            $acc_stmt->execute();
+            $acc_result = $acc_stmt->get_result()->fetch_assoc();
+            if ($acc_result) {
+                $account_id = $acc_result['account_id'];
+            }
+            $acc_stmt->close();
         }
-        $acc_stmt->close();
 
         // Add new allocations
         foreach ($input['module_allocations'] as $alloc) {
@@ -167,6 +206,7 @@ try {
                 $pallets_per_truck = intval($alloc['pallets_per_truck'] ?? 20);
                 $cost_per_watt = floatval($alloc['cost_per_watt'] ?? 0);
 
+                $manual_project_id = $is_general ? null : $project_id;
                 $insert_stmt = $conn->prepare("
                     INSERT INTO modules (account_id, vendor_name, initial_location, project_id,
                                         modules_per_pallet, pallets_per_truck, cost_per_watt, module_notes)
@@ -175,7 +215,7 @@ try {
                 if (!$insert_stmt) {
                     throw new Exception('Failed to prepare manual module insert: ' . $conn->error);
                 }
-                $insert_stmt->bind_param("issiiid", $account_id, $vendor_name, $location, $project_id,
+                $insert_stmt->bind_param("issiiid", $account_id, $vendor_name, $location, $manual_project_id,
                                          $mods_per_pallet, $pallets_per_truck, $cost_per_watt);
                 $insert_stmt->execute();
                 $module_id = $conn->insert_id;

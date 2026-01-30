@@ -230,7 +230,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="add_project" role="menuitem">Add Project</a>
               <a href="manage_projects" role="menuitem">Manage Projects</a>
               <a href="module_cost_analysis" role="menuitem">Module Cost Analysis</a>
-              <a href="anticipated_deliveries" role="menuitem">Project Planning</a>
+              <a href="project_planning" role="menuitem">Project Planning</a>
               <a href="admin_project_forecast" role="menuitem">Forecast Costs</a>
               <a href="project_site" role="menuitem">Link Project to Site</a>
             </div>
@@ -316,7 +316,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="add_project" role="menuitem">Add Project</a>
               <a href="manage_projects" role="menuitem">Manage Projects</a>
               <a href="module_cost_analysis" role="menuitem">Cost Analysis</a>
-              <a href="anticipated_deliveries" role="menuitem">Project Planning</a>
+              <a href="project_planning" role="menuitem">Project Planning</a>
               <a href="sustainability_overview" role="menuitem">Sustainability</a>
             </div>
           </li>
@@ -398,7 +398,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="add_project" role="menuitem">Add Project</a>
               <a href="manage_projects" role="menuitem">Manage Projects</a>
               <a href="module_cost_analysis" role="menuitem">Cost Analysis</a>
-              <a href="anticipated_deliveries" role="menuitem">Project Planning</a>
+              <a href="project_planning" role="menuitem">Project Planning</a>
               <a href="sustainability_overview" role="menuitem">Sustainability</a>
             </div>
           </li>
