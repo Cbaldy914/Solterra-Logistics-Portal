@@ -361,27 +361,22 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                 <div class="manual-form-grid">
                     <div class="form-group">
                         <label class="form-label">Manufacturer/Vendor <span class="required">*</span></label>
-                        <input type="text" id="manualVendorName" class="form-input" list="manufacturerOptions" placeholder="e.g., JA Solar, Longi, etc.">
-                        <datalist id="manufacturerOptions">
-                            <?php foreach ($manufacturer_names ?? [] as $name): ?>
-                                <option value="<?php echo htmlspecialchars($name); ?>"></option>
+                        <select id="manualManufacturerId" class="form-input" onchange="handleManualManufacturerChange(this)">
+                            <option value="">Select Manufacturer</option>
+                            <?php foreach ($manufacturers_for_manual ?? [] as $m): ?>
+                                <option value="<?php echo (int)$m['id']; ?>">
+                                    <?php echo htmlspecialchars($m['name']); ?>
+                                </option>
                             <?php endforeach; ?>
-                        </datalist>
+                            <option value="add_new" style="background-color: #f0f8ff; font-style: italic;">+ Add New Manufacturer</option>
+                        </select>
                     </div>
 
                     <div class="form-group">
                         <label class="form-label">Location/Origin</label>
-                        <div class="address-input-wrapper" id="manualLocationWrapper">
-                        <input type="text" id="manualLocation" class="form-input" list="manufacturerLocationOptions" placeholder="Start typing to search for address...">
-                            <div class="address-loading"></div>
-                            <svg class="address-verified" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                            <div class="address-error">Please select a valid address from the suggestions</div>
-                        </div>
-                        <datalist id="manufacturerLocationOptions">
-                            <?php foreach ($manufacturer_locations ?? [] as $location): ?>
-                                <option value="<?php echo htmlspecialchars($location); ?>"></option>
-                            <?php endforeach; ?>
-                        </datalist>
+                        <select id="manualLocationId" class="form-input" disabled>
+                            <option value="">Select a manufacturer first</option>
+                        </select>
                     </div>
                 </div>
 
@@ -1763,52 +1758,49 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 </style>
 
 <script>
-const manufacturerLocationMap = <?php echo json_encode($manufacturer_location_map); ?>;
-const manufacturerLocationOptions = <?php echo json_encode($manufacturer_locations); ?>;
+function handleManualManufacturerChange(select) {
+    const locationSelect = document.getElementById('manualLocationId');
 
-function updateManualLocationOptions(vendorName) {
-    const datalist = document.getElementById('manufacturerLocationOptions');
-    if (!datalist) return;
-
-    const locations = manufacturerLocationMap[vendorName] || manufacturerLocationOptions;
-    datalist.innerHTML = '';
-    locations.forEach(location => {
-        const option = document.createElement('option');
-        option.value = location;
-        datalist.appendChild(option);
-    });
-}
-
-function initializeManualLocationAutocomplete() {
-    const input = document.getElementById('manualLocation');
-    if (!input || typeof initializeAddressAutocomplete !== 'function') {
+    if (select.value === 'add_new') {
+        window.open('add_manufacturer.php', '_blank');
+        select.value = '';
+        locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+        locationSelect.disabled = true;
         return;
     }
-    if (input.dataset.autocompleteInitialized) {
+    if (!select.value) {
+        locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+        locationSelect.disabled = true;
         return;
     }
-
-    const autocomplete = initializeAddressAutocomplete(input, (placeData) => {
-        if (placeData?.address) {
-            input.value = placeData.address;
-        }
-    });
-
-    input.dataset.autocompleteInitialized = 'true';
-    if (autocomplete && Array.isArray(window.autocompleteInstances)) {
-        window.autocompleteInstances.push(autocomplete);
-    }
-}
-
-function bindManualManufacturerEvents() {
-    const vendorInput = document.getElementById('manualVendorName');
-    if (!vendorInput) return;
-
-    vendorInput.addEventListener('input', () => {
-        updateManualLocationOptions(vendorInput.value.trim());
-    });
-
-    updateManualLocationOptions(vendorInput.value.trim());
+    locationSelect.disabled = true;
+    locationSelect.innerHTML = '<option>Loading locations...</option>';
+    fetch('get_manufacturer_locations.php?manufacturer_id=' + encodeURIComponent(select.value))
+        .then(r => r.json())
+        .then(data => {
+            locationSelect.innerHTML = '';
+            if (data && Array.isArray(data.locations) && data.locations.length > 0) {
+                const def = document.createElement('option');
+                def.value = ''; def.textContent = 'Select a location';
+                locationSelect.appendChild(def);
+                data.locations.forEach(loc => {
+                    const opt = document.createElement('option');
+                    opt.value = loc.id;
+                    opt.textContent = (loc.location_name ? (loc.location_name + ' — ') : '') + loc.formatted_address;
+                    opt.dataset.address = loc.formatted_address || '';
+                    locationSelect.appendChild(opt);
+                });
+            } else {
+                const opt = document.createElement('option');
+                opt.value = ''; opt.textContent = 'No active locations';
+                locationSelect.appendChild(opt);
+            }
+            locationSelect.disabled = false;
+        })
+        .catch(() => {
+            locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+            locationSelect.disabled = false;
+        });
 }
 
 function switchModuleMode(mode) {
@@ -1827,7 +1819,6 @@ function openAddModulesModal() {
     const modal = document.getElementById('addModulesModal');
     if (modal) {
         modal.style.display = 'flex';
-        initializeManualLocationAutocomplete();
         updateAvailableBatchStates();
     }
 }
@@ -1887,7 +1878,6 @@ function toggleModuleSelectorPanel() {
     }
 
     if (isOpen) {
-        initializeManualLocationAutocomplete();
         updateAvailableBatchStates();
     }
 }
@@ -2028,16 +2018,13 @@ function updateMilestoneRemoveButtons() {
 }
 
 function resetManualEntryForm() {
-    document.getElementById('manualVendorName').value = '';
-    document.getElementById('manualLocation').value = '';
+    document.getElementById('manualManufacturerId').value = '';
+    const locationSelect = document.getElementById('manualLocationId');
+    locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+    locationSelect.disabled = true;
     document.getElementById('manualModsPerPallet').value = '30';
     document.getElementById('manualPalletsPerTruck').value = '20';
     document.getElementById('manualCostPerWatt').value = '';
-
-    const manualLocationWrapper = document.getElementById('manualLocationWrapper');
-    if (manualLocationWrapper) {
-        manualLocationWrapper.classList.remove('verified', 'error', 'loading');
-    }
 
     // Reset wattage entries to single row
     document.getElementById('manualWattageEntries').innerHTML = `
@@ -2082,19 +2069,21 @@ function resetManualEntryForm() {
 
     updateRemoveButtons();
     updateMilestoneRemoveButtons();
-    updateManualLocationOptions('');
 }
 
 function addManualModuleEntry() {
-    const vendorName = document.getElementById('manualVendorName').value.trim();
-    const location = document.getElementById('manualLocation').value.trim();
+    const manufacturerSelect = document.getElementById('manualManufacturerId');
+    const vendorName = manufacturerSelect.options[manufacturerSelect.selectedIndex]?.text?.trim() || '';
+    const locationSelect = document.getElementById('manualLocationId');
+    const selectedLocationOpt = locationSelect.options[locationSelect.selectedIndex];
+    const location = (selectedLocationOpt && selectedLocationOpt.value) ? (selectedLocationOpt.dataset?.address || selectedLocationOpt.text?.trim() || '') : '';
     const modsPerPallet = parseInt(document.getElementById('manualModsPerPallet').value) || 30;
     const palletsPerTruck = parseInt(document.getElementById('manualPalletsPerTruck').value) || 20;
     const costPerWatt = parseFloat(document.getElementById('manualCostPerWatt').value) || 0;
 
-    // Validate vendor name
-    if (!vendorName) {
-        alert('Please enter a manufacturer/vendor name.');
+    // Validate manufacturer selection
+    if (!manufacturerSelect.value || manufacturerSelect.value === 'add_new') {
+        alert('Please select a manufacturer/vendor.');
         return;
     }
 
@@ -2341,8 +2330,6 @@ function showModuleSaveSuccess(moduleItem) {
 // Initialize flatpickr for PO date inputs when document loads
 document.addEventListener('DOMContentLoaded', function() {
     initializePoDatePickers();
-    initializeManualLocationAutocomplete();
-    bindManualManufacturerEvents();
     updateRemoveButtons();
     updateMilestoneRemoveButtons();
     updateAvailableBatchStates();
