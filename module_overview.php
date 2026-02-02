@@ -22,6 +22,7 @@ $role     = $_SESSION['role'];
 $user_id  = $_SESSION['user_id'];
 $batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
+$isAdmin = in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
 
 // Determine view mode: single batch or project view
 if ($project_id > 0) {
@@ -577,8 +578,8 @@ try {
     }
 
     // Access Control for Admin role
-    if ($role === 'admin' && !empty($module_batches)) {
-        $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
+    if (in_array($role, ['admin', 'customer_admin'], true) && !empty($module_batches)) {
+        $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
         $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
         if ($stmtAdminAcc) {
             $stmtAdminAcc->bind_param("i", $user_id);
@@ -1626,7 +1627,7 @@ $conn->close();
                     <div style="margin-top: 16px; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center;">
                         <div style="font-size: 16px; color: #293E4C; font-weight: 600;">No modules found for this project</div>
                         <div style="font-size: 13px; color: #6b7280; margin-top: 6px;">Once you add a module batch, you can palletize and track them here.</div>
-                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin']) && !empty($project_id)): ?>
+                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']) && !empty($project_id)): ?>
                             <div style="margin-top: 16px;">
                                 <a href="add_module_batch.php?project_id=<?php echo (int)$project_id; ?>" style="display:inline-block; padding:10px 16px; background:#488C9A; color:#fff; border-radius:8px; text-decoration:none;">+ Add Module Batch</a>
                             </div>
@@ -1643,7 +1644,7 @@ $conn->close();
                                 <span style="color: #666;">(ID: <?php echo $batch['id']; ?>)</span><br>
                                 <strong>Initial Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
                                 <strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch['created_at'])); ?>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                     <br><a href="edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
                                 <?php endif; ?>
                             </div>
@@ -1654,7 +1655,7 @@ $conn->close();
                     <p><strong>Account:</strong> <?php echo htmlspecialchars($module_batches[0]['account_name']); ?></p>
                     <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></p>
                     <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($module_batches[0]['created_at'])); ?></p>
-                    <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                    <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                     <button class="edit-button" onclick="window.location.href='edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$module_batches[0]['id']; ?>'">Edit Batch Details</button>
                     <?php endif; ?>
                 <?php endif; ?>
@@ -1674,7 +1675,7 @@ $conn->close();
                 </p>
                 <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
                 <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
-                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                 <button class="edit-button" onclick="window.location.href='<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>'">Edit Batch Details</button>
                 <?php endif; ?>
             <?php endif; ?>
@@ -1707,7 +1708,7 @@ $conn->close();
                                         <?php endif; ?>
                                         <?php if ($data['remaining_quantity'] < 0): ?>
                                             <p><strong>Over-palletized:</strong> <span style="color:#d32f2f;">&nbsp;<?php echo number_format(abs($data['remaining_quantity'])); ?> excess modules</span></p>
-                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])): ?>
                                                 <form method="POST" style="margin-top: 10px;">
                                                     <input type="hidden" name="action" value="undo_palletization">
                                                     <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
@@ -1718,7 +1719,7 @@ $conn->close();
                                             <?php endif; ?>
                                         <?php elseif ($data['remaining_quantity'] > 0): ?>
                                             <p><strong>Remaining:</strong> <span style="color:#2e7d32;">&nbsp;<?php echo number_format($data['remaining_quantity']); ?></span></p>
-                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])): ?>
                                                 <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
                                                     <input type="hidden" name="action" value="generate_pallets">
                                                     <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
@@ -1736,7 +1737,7 @@ $conn->close();
                                             <?php endif; ?>
                                         <?php else: ?>
                                             <p><strong>Remaining:</strong> <span style="color:green;">0 (Perfect match)</span></p>
-                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])): ?>
                                                 <form method="POST" style="margin-top: 10px;">
                                                     <input type="hidden" name="action" value="undo_palletization">
                                                     <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
@@ -1783,7 +1784,7 @@ $conn->close();
                             <?php endif; ?>
                             <?php if ($data['remaining_quantity'] < 0): ?>
                                 <p><strong>Over-palletized:</strong> <span style="color: #d32f2f;"><?php echo number_format(abs($data['remaining_quantity'])); ?> excess modules</span></p>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                     <p style="color: #d32f2f; font-size: 0.9em; margin-top: 10px;">
                                         ⚠️ You have <?php echo number_format(abs($data['remaining_quantity'])); ?> more modules on pallets than ordered. 
                                         Consider removing excess pallets via the pallet list below.
@@ -1800,7 +1801,7 @@ $conn->close();
                                 <?php endif; ?>
                             <?php elseif ($data['remaining_quantity'] > 0): ?>
                                 <p><strong>Remaining:</strong> <span style="color: #2e7d32;"><?php echo number_format($data['remaining_quantity']); ?></span></p>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                     <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
                                         <input type="hidden" name="action" value="generate_pallets">
                                         <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
@@ -1827,7 +1828,7 @@ $conn->close();
                                 <?php endif; ?>
                             <?php else: ?>
                                 <p><strong>Remaining:</strong> <span style="color: green;">0 (Perfect match)</span></p>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                     <p style="color: green; margin-top: 15px;">✅ All modules perfectly palletized.</p>
                                     <?php if ($data['palletized_quantity'] > 0): ?>
                                         <form method="POST" style="margin-top: 10px;">
@@ -1905,7 +1906,7 @@ $conn->close();
                         }
                     }
                     // Choose destination page based on role
-                    $pallets_target_base = (in_array($role, ['admin','global_admin'])) ? 'create_shipment.php' : 'manage_pallets.php';
+                    $pallets_target_base = (in_array($role, ['admin','global_admin','customer_admin'])) ? 'create_shipment.php' : 'manage_pallets.php';
                     $pallets_url_parts = [];
                     if (!empty($batch_data['project_id'])) { $pallets_url_parts[] = 'project_id=' . urlencode($batch_data['project_id']); }
                     if (!empty($pallet_ids_query)) { $pallets_url_parts[] = $pallet_ids_query; }
@@ -1932,7 +1933,7 @@ $conn->close();
 
     <?php endif; ?>
     <?php if (empty($errorMessage) && empty($batch_data)): ?>
-        <?php if (in_array($role, ['admin', 'global_admin'])): ?>
+        <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
             <div style="text-align: center; padding: 60px 20px; background: #f8f9fa; border-radius: 12px; margin: 20px 0;">
                 <div style="font-size: 3em; margin-bottom: 20px; color: #6c757d;">📦</div>
                 <h2 style="color: #293E4C; margin-bottom: 16px;">No Modules Found</h2>
