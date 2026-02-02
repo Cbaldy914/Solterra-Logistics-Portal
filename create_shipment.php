@@ -267,14 +267,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             
             // Try to find the manufacturer location ID
             // First, get manufacturer ID
-            $account_clause = $is_global_admin ? '' : ' AND account_id = ?';
-            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE (name = ? OR short_name = ?) $account_clause LIMIT 1");
+            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE (name = ? OR short_name = ?) LIMIT 1");
             if ($stmt_mfg) {
-                if ($is_global_admin) {
-                    $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
-                } else {
-                    $stmt_mfg->bind_param("ssi", $manufacturer_name, $manufacturer_name, $account_id_for_admin);
-                }
+                $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
                 $stmt_mfg->execute();
                 $stmt_mfg->bind_result($manufacturer_id);
                 if ($stmt_mfg->fetch()) {
@@ -283,15 +278,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     // If vendor name contains location info (like "Meyer Burger - Raleigh Plant"), find specific location
                     if (strpos($current_batch_vendor_name, ' - ') !== false) {
                         $location_part = trim(explode(' - ', $current_batch_vendor_name)[1]);
-                        $account_clause = $is_global_admin ? '' : ' AND m.account_id = ?';
-                        $stmt_loc = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.location_name LIKE ? AND ml.is_active = 1 $account_clause LIMIT 1");
+                        $stmt_loc = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.location_name LIKE ? AND ml.is_active = 1 LIMIT 1");
                         if ($stmt_loc) {
                             $location_search = "%{$location_part}%";
-                            if ($is_global_admin) {
-                                $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
-                            } else {
-                                $stmt_loc->bind_param("isi", $manufacturer_id, $location_search, $account_id_for_admin);
-                            }
+                            $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
                             $stmt_loc->execute();
                             $stmt_loc->bind_result($found_location_id);
                             if ($stmt_loc->fetch()) {
@@ -303,14 +293,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     
                     // If no specific location found, use primary location
                     if (!$originId) {
-                        $account_clause = $is_global_admin ? '' : ' AND m.account_id = ?';
-                        $stmt_primary = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.is_primary = 1 AND ml.is_active = 1 $account_clause LIMIT 1");
+                        $stmt_primary = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.is_primary = 1 AND ml.is_active = 1 LIMIT 1");
                         if ($stmt_primary) {
-                            if ($is_global_admin) {
-                                $stmt_primary->bind_param("i", $manufacturer_id);
-                            } else {
-                                $stmt_primary->bind_param("ii", $manufacturer_id, $account_id_for_admin);
-                            }
+                            $stmt_primary->bind_param("i", $manufacturer_id);
                             $stmt_primary->execute();
                             $stmt_primary->bind_result($primary_location_id);
                             if ($stmt_primary->fetch()) {
@@ -947,7 +932,6 @@ try {
                 COALESCE(ml.city, '') AS origin_vendor_city,
                 COALESCE(ml.state, '') AS origin_vendor_state,
                 COALESCE(ml.country, 'USA') AS origin_vendor_country,
-                m.account_id AS pallet_account_id,
                 w.name AS current_warehouse_name,
                 w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
                 p_current.project_name AS current_project_name,
@@ -982,7 +966,7 @@ try {
     $status_placeholders = str_repeat('?,', count($allowed_statuses) - 1) . '?';
     
     if ($role === 'admin' && $account_id_for_admin) {
-        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN ($status_placeholders)";
+        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ?) AND ip.status IN ($status_placeholders)";
         if ($project_filter_sql) {
             $sql .= $project_filter_sql;
         }
@@ -999,7 +983,7 @@ try {
         }
     }
     
-    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.pallets_per_truck, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
+    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.pallets_per_truck, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
               ORDER BY ip.id ASC LIMIT 1000";
     
     // Also compute accurate global counts for header/pagination
@@ -1008,8 +992,8 @@ try {
 
     if ($role === 'admin' && $account_id_for_admin) {
         $stmt = $conn->prepare($sql);
-        $params = array_merge([$account_id_for_admin, $account_id_for_admin, $account_id_for_admin], $allowed_statuses);
-        $types = 'iii' . str_repeat('s', count($allowed_statuses));
+        $params = array_merge([$account_id_for_admin, $account_id_for_admin], $allowed_statuses);
+        $types = 'ii' . str_repeat('s', count($allowed_statuses));
         
         // Add project filter params if present
         if ($project_filter_param) {
@@ -1043,9 +1027,9 @@ try {
             LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
             LEFT JOIN deliveries d ON dp.delivery_id = d.id";
 
-        $count_where = " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN (" . $status_placeholders . ")";
-        $count_params = [$account_id_for_admin, $account_id_for_admin, $account_id_for_admin];
-        $count_types = 'iii' . str_repeat('s', count($allowed_statuses));
+        $count_where = " WHERE (p_current.account_id = ? OR p_assigned.account_id = ?) AND ip.status IN (" . $status_placeholders . ")";
+        $count_params = [$account_id_for_admin, $account_id_for_admin];
+        $count_types = 'ii' . str_repeat('s', count($allowed_statuses));
         $count_params = array_merge($count_params, $allowed_statuses);
 
         // Add project filter if present
@@ -1278,7 +1262,6 @@ try {
 
     // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers = [];
-    $account_clause = $is_global_admin ? '' : ' AND m.account_id = ?';
     $stmtM = $conn->prepare("
         SELECT 
             m.id, 
@@ -1290,12 +1273,9 @@ try {
             ml.country
         FROM manufacturers m
         LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-        WHERE m.is_active = 1$account_clause
+        WHERE m.is_active = 1
         ORDER BY m.name ASC");
     if ($stmtM) {
-        if (!$is_global_admin) {
-            $stmtM->bind_param("i", $account_id_for_admin);
-        }
         $stmtM->execute();
         $resultM = $stmtM->get_result();
         while ($mfg = $resultM->fetch_assoc()) {
