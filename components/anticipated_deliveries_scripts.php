@@ -300,6 +300,9 @@
 
             // Initialize new pickers
             document.querySelectorAll('.flatpickr-date').forEach(input => {
+                if (input.classList.contains('po-date-input')) {
+                    return;
+                }
                 const opts = {
                     dateFormat: 'Y-m-d',
                     allowInput: true,
@@ -319,6 +322,10 @@
                 const fp = flatpickr(input, opts);
                 datePickerInstances.push(fp);
             });
+
+            if (typeof initializePoDatePickers === 'function') {
+                initializePoDatePickers();
+            }
         }
 
         function updateUIFromState() {
