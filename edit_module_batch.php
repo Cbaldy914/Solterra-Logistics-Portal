@@ -17,6 +17,18 @@ $isAjax = strtolower($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'xmlhttpreques
 
 $user_id = (int)$_SESSION['user_id'];
 $role = $_SESSION['role'];
+$account_id = null;
+
+if ($role !== 'global_admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param('i', $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+}
 
 $batch_id = isset($_GET['batch_id']) ? (int)$_GET['batch_id'] : 0;
 if ($batch_id <= 0 && isset($_POST['batch_id'])) {
@@ -43,8 +55,8 @@ $this_batch_mw = 0;
 $remaining_mw = 0;
 
 // Load module batch and access control
-if ($role === 'admin') {
-    $stmt = $conn->prepare("SELECT m.*, p.project_name FROM modules m LEFT JOIN projects p ON m.project_id = p.id JOIN customer_account_users cau ON m.account_id = cau.account_id AND cau.role='admin' WHERE m.id=? AND cau.user_id=?");
+if (in_array($role, ['admin', 'customer_admin'], true)) {
+    $stmt = $conn->prepare("SELECT m.*, p.project_name FROM modules m LEFT JOIN projects p ON m.project_id = p.id JOIN customer_account_users cau ON m.account_id = cau.account_id AND cau.role IN ('admin', 'customer_admin') WHERE m.id=? AND cau.user_id=?");
     $stmt->bind_param('ii', $batch_id, $user_id);
 } else {
     $stmt = $conn->prepare("SELECT m.*, p.project_name FROM modules m LEFT JOIN projects p ON m.project_id = p.id WHERE m.id=?");
@@ -98,7 +110,7 @@ if ($project_id > 0) {
 
 // Load manufacturers
 $manufacturers = [];
-if ($stmtMfgs = $conn->prepare('SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC')) {
+if ($stmtMfgs = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC")) {
     $stmtMfgs->execute();
     $r = $stmtMfgs->get_result();
     while ($row = $r->fetch_assoc()) { $manufacturers[] = $row; }
@@ -270,14 +282,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $vendor_name = $module['vendor_name'] ?: 'Unknown Manufacturer';
     $initial_location = $module['initial_location'] ?: '';
     if ($manufacturer_id) {
-        if ($stmtV = $conn->prepare('SELECT name FROM manufacturers WHERE id = ?')) {
+        if ($stmtV = $conn->prepare("SELECT name FROM manufacturers WHERE id = ?")) {
             $stmtV->bind_param('i', $manufacturer_id);
             $stmtV->execute();
             $stmtV->bind_result($v);
             if ($stmtV->fetch()) { $vendor_name = $v; }
             $stmtV->close();
         }
-        if ($location_id && ($stmtL = $conn->prepare('SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?'))) {
+        if ($location_id && ($stmtL = $conn->prepare("SELECT ml.street_address, ml.city, ml.state, ml.zip_code FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.id = ?"))) {
             $stmtL->bind_param('i', $location_id);
             $stmtL->execute();
             $stmtL->bind_result($st, $ci, $stt, $zp);
@@ -497,7 +509,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isAjax) {
 $prefManufacturerId = null; $prefLocationId = null; $existingWattages = [];
 // Manufacturer by matching name
 if (!empty($module['vendor_name'])) {
-    if ($stmtPM = $conn->prepare('SELECT id FROM manufacturers WHERE name = ? LIMIT 1')) {
+    if ($stmtPM = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? LIMIT 1")) {
         $stmtPM->bind_param('s', $module['vendor_name']);
         $stmtPM->execute();
         $stmtPM->bind_result($pmid);
@@ -507,7 +519,7 @@ if (!empty($module['vendor_name'])) {
 }
 // Location by matching formatted address for that manufacturer
 if ($prefManufacturerId) {
-    if ($stmtL = $conn->prepare('SELECT id, street_address, city, state, zip_code FROM manufacturer_locations WHERE manufacturer_id = ?')) {
+    if ($stmtL = $conn->prepare("SELECT ml.id, ml.street_address, ml.city, ml.state, ml.zip_code FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ?")) {
         $stmtL->bind_param('i', $prefManufacturerId);
         $stmtL->execute();
         $resL = $stmtL->get_result();

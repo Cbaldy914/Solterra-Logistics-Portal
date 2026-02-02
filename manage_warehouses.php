@@ -11,6 +11,24 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 require_once '../config.php';
 $conn = getDBConnection();
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+$account_id = null;
+
+if ($role !== 'global_admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if (!$account_id) {
+        die("No valid account found for this user.");
+    }
+}
+
 $warehouses = [];
 $errorMessage = '';
 $successMessage = '';
@@ -23,12 +41,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
         // Check if warehouse is being used anywhere (optional - you can add checks later)
         // For now, we'll allow deletion
 
-        $stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ?");
+        if ($role === 'global_admin') {
+            $stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ?");
+            $stmt->bind_param("i", $warehouse_id);
+        } else {
+            $stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ? AND account_id = ?");
+            $stmt->bind_param("ii", $warehouse_id, $account_id);
+        }
         if (!$stmt) {
             throw new Exception("Error preparing delete statement: " . $conn->error);
         }
-
-        $stmt->bind_param("i", $warehouse_id);
         if ($stmt->execute()) {
             $successMessage = "Warehouse deleted successfully.";
         } else {
@@ -44,6 +66,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 try {
     // Fetch warehouses along with a count of pallets currently stored and in transit
     // Using subqueries to avoid cartesian products from multiple JOINs
+    $where_sql = $role === 'global_admin' ? '' : 'WHERE w.account_id = ?';
     $sql = "SELECT
                 w.id,
                 w.name,
@@ -59,9 +82,19 @@ try {
                  JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
                  WHERE d.warehouse_id = w.id AND ip.status = 'In Transit to Warehouse') AS in_transit_pallet_count
             FROM warehouses w
+            $where_sql
             ORDER BY w.name ASC";
 
-    $result = $conn->query($sql);
+    $stmt = $conn->prepare($sql);
+    if ($stmt) {
+        if ($role !== 'global_admin') {
+            $stmt->bind_param("i", $account_id);
+        }
+        $stmt->execute();
+        $result = $stmt->get_result();
+    } else {
+        $result = false;
+    }
 
     if ($result) {
         while ($row = $result->fetch_assoc()) {
@@ -83,6 +116,9 @@ try {
                 $stmtCosts->close();
             }
             $warehouses[] = $row;
+        }
+        if (isset($stmt) && $stmt) {
+            $stmt->close();
         }
     } else {
         throw new Exception("Error fetching warehouses: " . $conn->error);

@@ -42,9 +42,10 @@ if (!empty($_GET['pallet_ids'])) {
 // --- Account Access Control ---
 $account_id_for_admin = null;
 $is_global_admin = ($role === 'global_admin');
+$is_customer_admin = ($role === 'customer_admin');
 
-if ($role === 'admin') {
-    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
+if (in_array($role, ['admin', 'customer_admin'], true)) {
+    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
     $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
     if ($stmtAdminAcc) {
         $stmtAdminAcc->bind_param("i", $user_id);
@@ -266,9 +267,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             
             // Try to find the manufacturer location ID
             // First, get manufacturer ID
-            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? OR short_name = ? LIMIT 1");
+            $account_clause = $is_global_admin ? '' : ' AND account_id = ?';
+            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE (name = ? OR short_name = ?) $account_clause LIMIT 1");
             if ($stmt_mfg) {
-                $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                if ($is_global_admin) {
+                    $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                } else {
+                    $stmt_mfg->bind_param("ssi", $manufacturer_name, $manufacturer_name, $account_id_for_admin);
+                }
                 $stmt_mfg->execute();
                 $stmt_mfg->bind_result($manufacturer_id);
                 if ($stmt_mfg->fetch()) {
@@ -277,10 +283,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     // If vendor name contains location info (like "Meyer Burger - Raleigh Plant"), find specific location
                     if (strpos($current_batch_vendor_name, ' - ') !== false) {
                         $location_part = trim(explode(' - ', $current_batch_vendor_name)[1]);
-                        $stmt_loc = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND location_name LIKE ? AND is_active = 1 LIMIT 1");
+                        $account_clause = $is_global_admin ? '' : ' AND m.account_id = ?';
+                        $stmt_loc = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.location_name LIKE ? AND ml.is_active = 1 $account_clause LIMIT 1");
                         if ($stmt_loc) {
                             $location_search = "%{$location_part}%";
-                            $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
+                            if ($is_global_admin) {
+                                $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
+                            } else {
+                                $stmt_loc->bind_param("isi", $manufacturer_id, $location_search, $account_id_for_admin);
+                            }
                             $stmt_loc->execute();
                             $stmt_loc->bind_result($found_location_id);
                             if ($stmt_loc->fetch()) {
@@ -292,9 +303,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     
                     // If no specific location found, use primary location
                     if (!$originId) {
-                        $stmt_primary = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = 1 AND is_active = 1 LIMIT 1");
+                        $account_clause = $is_global_admin ? '' : ' AND m.account_id = ?';
+                        $stmt_primary = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.is_primary = 1 AND ml.is_active = 1 $account_clause LIMIT 1");
                         if ($stmt_primary) {
-                            $stmt_primary->bind_param("i", $manufacturer_id);
+                            if ($is_global_admin) {
+                                $stmt_primary->bind_param("i", $manufacturer_id);
+                            } else {
+                                $stmt_primary->bind_param("ii", $manufacturer_id, $account_id_for_admin);
+                            }
                             $stmt_primary->execute();
                             $stmt_primary->bind_result($primary_location_id);
                             if ($stmt_primary->fetch()) {
@@ -401,9 +417,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 throw new Exception('Port of entry is required for overseas shipments.');
             }
             // Verify the selected port is actually marked as a port
-            $stmt_port_check = $conn->prepare("SELECT is_port FROM warehouses WHERE id = ? AND is_port = 1 LIMIT 1");
+            $account_clause = $is_global_admin ? '' : ' AND account_id = ?';
+            $stmt_port_check = $conn->prepare("SELECT is_port FROM warehouses WHERE id = ? AND is_port = 1$account_clause LIMIT 1");
             if ($stmt_port_check) {
-                $stmt_port_check->bind_param("i", $port_of_entry_id);
+                if ($is_global_admin) {
+                    $stmt_port_check->bind_param("i", $port_of_entry_id);
+                } else {
+                    $stmt_port_check->bind_param("ii", $port_of_entry_id, $account_id_for_admin);
+                }
                 $stmt_port_check->execute();
                 if (!$stmt_port_check->get_result()->num_rows) {
                     throw new Exception('Selected port of entry is not valid.');
@@ -424,7 +445,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         // Cost and logistics fields
         $freightCost = isset($_POST['freight_cost']) && $_POST['freight_cost'] !== '' ? (float)$_POST['freight_cost'] : 0.0;
         $accessorialCost = isset($_POST['accessorial_cost']) && $_POST['accessorial_cost'] !== '' ? (float)$_POST['accessorial_cost'] : 0.0;
-        $customerCost = isset($_POST['customer_cost']) && $_POST['customer_cost'] !== '' ? (float)$_POST['customer_cost'] : 0.0;
+        $customerCost = null;
+        if (isset($_POST['customer_cost']) && $_POST['customer_cost'] !== '') {
+            $customerCost = (float)$_POST['customer_cost'];
+        }
+        if ($customerCost === null) {
+            $customerCost = $freightCost;
+        }
+        if ($freightCost <= 0 && $customerCost > 0) {
+            $freightCost = $customerCost;
+        }
         $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? (float)$_POST['miles'] : null;
         
         if ($destinationId <= 0) {
@@ -1230,8 +1260,12 @@ try {
 
     // Fetch Warehouses (with addresses) - exclude ports for domestic use
     $all_warehouses = [];
-    $stmtW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses WHERE is_port = 0 OR is_port IS NULL ORDER BY name ASC");
+    $account_clause = $is_global_admin ? '' : ' AND account_id = ?';
+    $stmtW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses WHERE (is_port = 0 OR is_port IS NULL)$account_clause ORDER BY name ASC");
     if ($stmtW) {
+        if (!$is_global_admin) {
+            $stmtW->bind_param("i", $account_id_for_admin);
+        }
         $stmtW->execute();
         $resultW = $stmtW->get_result();
         while ($wh = $resultW->fetch_assoc()) {
@@ -1244,6 +1278,7 @@ try {
 
     // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers = [];
+    $account_clause = $is_global_admin ? '' : ' AND m.account_id = ?';
     $stmtM = $conn->prepare("
         SELECT 
             m.id, 
@@ -1255,9 +1290,12 @@ try {
             ml.country
         FROM manufacturers m
         LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-        WHERE m.is_active = 1 
+        WHERE m.is_active = 1$account_clause
         ORDER BY m.name ASC");
     if ($stmtM) {
+        if (!$is_global_admin) {
+            $stmtM->bind_param("i", $account_id_for_admin);
+        }
         $stmtM->execute();
         $resultM = $stmtM->get_result();
         while ($mfg = $resultM->fetch_assoc()) {
@@ -2218,10 +2256,14 @@ if (!empty($bolCompletionMessage)) {
                             <label for="freight_cost">Freight Cost ($):</label>
                             <input type="number" id="freight_cost" name="freight_cost" step="0.01" min="0">
                         </div>
-                        <div>
-                            <label for="customer_cost">Customer Cost ($):</label>
-                            <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
-                        </div>
+                        <?php if (!$is_customer_admin): ?>
+                            <div>
+                                <label for="customer_cost">Customer Cost ($):</label>
+                                <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
+                            </div>
+                        <?php else: ?>
+                            <input type="hidden" id="customer_cost" name="customer_cost" value="">
+                        <?php endif; ?>
                     </div>
                     
 
@@ -2327,10 +2369,14 @@ if (!empty($bolCompletionMessage)) {
                             <label for="freight_cost_multi">Freight Cost ($):</label>
                             <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
                         </div>
-                        <div>
-                            <label for="customer_cost_multi">Customer Cost ($):</label>
-                            <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
-                        </div>
+                        <?php if (!$is_customer_admin): ?>
+                            <div>
+                                <label for="customer_cost_multi">Customer Cost ($):</label>
+                                <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
+                            </div>
+                        <?php else: ?>
+                            <input type="hidden" id="customer_cost_multi" name="customer_cost_multi" value="">
+                        <?php endif; ?>
                     </div>
                     
                     <!-- Overseas Shipment Fields -->
@@ -4005,7 +4051,9 @@ if (confirmShipmentBtn) {
         const departure = document.getElementById('departure_date').value;
         const arrival = document.getElementById('est_arrival_date').value;
         const freightCost = document.getElementById('freight_cost').value;
-        const customerCost = document.getElementById('customer_cost').value;
+        const customerCostInput = document.getElementById('customer_cost');
+        const customerCostValue = customerCostInput ? customerCostInput.value : '';
+        const customerCost = customerCostValue !== '' ? customerCostValue : freightCost;
         const miles = document.getElementById('miles').value;
 
         // Check if overseas fields are visible
@@ -4151,7 +4199,9 @@ if (confirmMultiShipmentBtn) {
         const departure = document.getElementById('departure_date_multi').value;
         const arrival = document.getElementById('est_arrival_date_multi').value;
         const freightCost = document.getElementById('freight_cost_multi').value;
-        const customerCost = document.getElementById('customer_cost_multi').value;
+        const customerCostMultiInput = document.getElementById('customer_cost_multi');
+        const customerCostValue = customerCostMultiInput ? customerCostMultiInput.value : '';
+        const customerCost = customerCostValue !== '' ? customerCostValue : freightCost;
         const miles = document.getElementById('miles_multi').value;
 
         if (!originId) {

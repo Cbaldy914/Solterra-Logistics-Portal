@@ -97,10 +97,26 @@ if ($project_id) {
 
 // Fetch manufacturers for dropdown
 $manufacturers = [];
-$sqlMfg = "SELECT id, name, short_name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
-$resMfg = $conn->query($sqlMfg);
-while ($row = $resMfg->fetch_assoc()) {
-    $manufacturers[] = $row;
+$manufacturer_where = "WHERE is_active = 1";
+$manufacturer_params = [];
+$manufacturer_types = '';
+if ($account_id) {
+    $manufacturer_where .= " AND account_id = ?";
+    $manufacturer_types = 'i';
+    $manufacturer_params[] = $account_id;
+}
+$sqlMfg = "SELECT id, name, short_name FROM manufacturers $manufacturer_where ORDER BY name ASC";
+$stmtMfg = $conn->prepare($sqlMfg);
+if ($stmtMfg) {
+    if (!empty($manufacturer_params)) {
+        $stmtMfg->bind_param($manufacturer_types, ...$manufacturer_params);
+    }
+    $stmtMfg->execute();
+    $resMfg = $stmtMfg->get_result();
+    while ($row = $resMfg->fetch_assoc()) {
+        $manufacturers[] = $row;
+    }
+    $stmtMfg->close();
 }
 
 // Fetch projects for destination options

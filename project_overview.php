@@ -85,46 +85,44 @@ document.addEventListener('DOMContentLoaded', function() {
     $can_add_modules = isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
     $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png';
     $planning_badge = null;
-    if ($isAdmin || $role === 'customer_admin') {
-        $has_projection = !empty($primary_projection);
-        $has_legs_with_dates = false;
-        $has_modules_only = false;
-        if ($has_projection) {
-            if (!empty($primary_projection['legs'])) {
-                foreach ($primary_projection['legs'] as $_leg) {
-                    if (!empty($_leg['start_date']) && strtotime($_leg['start_date']) > 0) {
-                        $has_legs_with_dates = true;
-                        break;
-                    }
+    $has_projection = !empty($primary_projection);
+    $has_legs_with_dates = false;
+    $has_modules_only = false;
+    if ($has_projection) {
+        if (!empty($primary_projection['legs'])) {
+            foreach ($primary_projection['legs'] as $_leg) {
+                if (!empty($_leg['start_date']) && strtotime($_leg['start_date']) > 0) {
+                    $has_legs_with_dates = true;
+                    break;
                 }
             }
-            if (!$has_legs_with_dates) {
-                $has_modules_only = !empty($primary_projection['module_allocations']);
-            }
         }
+        if (!$has_legs_with_dates) {
+            $has_modules_only = !empty($primary_projection['module_allocations']);
+        }
+    }
 
-        if ($has_legs_with_dates) {
-            $planning_badge = [
-                'class' => 'has-forecast',
-                'icon' => 'fas fa-check-circle',
-                'label' => 'Plan Set',
-                'title' => 'View or edit delivery plan'
-            ];
-        } elseif ($has_modules_only) {
-            $planning_badge = [
-                'class' => 'partial-forecast',
-                'icon' => 'fas fa-clock',
-                'label' => 'In Progress',
-                'title' => 'Plan partially configured - add routing details'
-            ];
-        } else {
-            $planning_badge = [
-                'class' => 'no-forecast',
-                'icon' => 'fas fa-plus-circle',
-                'label' => 'Add Plan',
-                'title' => 'Create a delivery plan'
-            ];
-        }
+    if ($has_legs_with_dates) {
+        $planning_badge = [
+            'class' => 'has-forecast',
+            'icon' => 'fas fa-check-circle',
+            'label' => 'Plan Set',
+            'title' => 'View or edit delivery plan'
+        ];
+    } elseif ($has_modules_only) {
+        $planning_badge = [
+            'class' => 'partial-forecast',
+            'icon' => 'fas fa-clock',
+            'label' => 'In Progress',
+            'title' => 'Plan partially configured - add routing details'
+        ];
+    } else {
+        $planning_badge = [
+            'class' => 'no-forecast',
+            'icon' => 'fas fa-plus-circle',
+            'label' => 'Add Plan',
+            'title' => 'Create a delivery plan'
+        ];
     }
     ?>
 
@@ -2702,7 +2700,7 @@ function handleLargeNumbers() {
 // Prepare costPie + budgetLineChart (for regular users)
 var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
 var dateLabelsForBudget   = <?php echo $dateLabelsForBudget ?: '[]';?>;
-var budgetLineData        = <?php echo $budgetLineChartDataJSON ?: '[]';?>;
+var budgetLineData        = <?php echo $budgetLineChartDataJSON ?: '{"anticipated_cost":[],"actual_cost":[],"forecast_breakdown":[],"actual_breakdown":[]}';?>;
 
 function initializeFinancialCharts(){
     // Cost Breakdown Pie
@@ -2753,10 +2751,10 @@ function initializeFinancialCharts(){
     if (!ctxBudgetEl || ctxBudgetEl.chartInitialized) return; // Exit if element doesn't exist or chart already created
     
     var ctxBudget = ctxBudgetEl.getContext('2d');
-    var antCost = budgetLineData.anticipated_cost;
-    var actCost = budgetLineData.actual_cost;
-    var forecastBreakdownData = budgetLineData.forecast_breakdown || [];
-    var actualBreakdownData = budgetLineData.actual_breakdown || [];
+    var antCost = (budgetLineData && Array.isArray(budgetLineData.anticipated_cost)) ? budgetLineData.anticipated_cost : [];
+    var actCost = (budgetLineData && Array.isArray(budgetLineData.actual_cost)) ? budgetLineData.actual_cost : [];
+    var forecastBreakdownData = (budgetLineData && Array.isArray(budgetLineData.forecast_breakdown)) ? budgetLineData.forecast_breakdown : [];
+    var actualBreakdownData = (budgetLineData && Array.isArray(budgetLineData.actual_breakdown)) ? budgetLineData.actual_breakdown : [];
 
     var budgetChart = new Chart(ctxBudget,{
         type:'line',

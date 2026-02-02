@@ -23,6 +23,9 @@ if (!isset($_REQUEST['id'])) {
 }
 $manufacturer_id = intval($_REQUEST['id']);
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+
 // Normalize country input so US variants persist as 'USA'
 function slp_normalize_country($country) {
     $trimmed = trim((string)$country);
@@ -154,7 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $stmt->bind_param(
-            "ssssssssssssdsi",
+            "ssssssssssssisi",
             $name,
             $short_name,
             $contact_person,
@@ -343,7 +346,7 @@ $conn->close();
     <!-- The manufacturer form -->
     <form action="" method="POST" enctype="multipart/form-data">
         <input type="hidden" name="id" value="<?php echo $manufacturer_id; ?>">
-        
+
         <div class="section-title">Basic Information</div>
         
         <label for="name">Manufacturer Name: <span style="color: red;">*</span></label>

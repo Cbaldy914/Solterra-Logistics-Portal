@@ -66,11 +66,16 @@ if ($role === 'global_admin') {
 // Fetch manufacturers for dropdown (for initial module batch)
 $manufacturers = [];
 $sqlManufacturers = "SELECT id, name, short_name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
-$resManufacturers = $conn->query($sqlManufacturers);
-if ($resManufacturers && $resManufacturers->num_rows > 0) {
-    while ($row = $resManufacturers->fetch_assoc()) {
-        $manufacturers[] = $row;
+$stmtManufacturers = $conn->prepare($sqlManufacturers);
+if ($stmtManufacturers) {
+    $stmtManufacturers->execute();
+    $resManufacturers = $stmtManufacturers->get_result();
+    if ($resManufacturers && $resManufacturers->num_rows > 0) {
+        while ($row = $resManufacturers->fetch_assoc()) {
+            $manufacturers[] = $row;
+        }
     }
+    $stmtManufacturers->close();
 }
 
 // Prepare variables to hold user messages:

@@ -430,19 +430,26 @@ try {
     }
 
     $all_warehouses_for_shipping = [];
-    $sqlAllWarehousesModal = "SELECT id, name, street_address, city, state, zip_code FROM warehouses ORDER BY name ASC";
-    $resultAllWarehousesModal = $conn->query($sqlAllWarehousesModal);
-    if ($resultAllWarehousesModal) {
+    $warehouse_where = $is_global_admin ? '' : 'WHERE account_id = ?';
+    $sqlAllWarehousesModal = "SELECT id, name, street_address, city, state, zip_code FROM warehouses $warehouse_where ORDER BY name ASC";
+    if ($stmtAllWarehousesModal = $conn->prepare($sqlAllWarehousesModal)) {
+        if (!$is_global_admin) {
+            $stmtAllWarehousesModal->bind_param("i", $account_id_for_user);
+        }
+        $stmtAllWarehousesModal->execute();
+        $resultAllWarehousesModal = $stmtAllWarehousesModal->get_result();
         while ($row = $resultAllWarehousesModal->fetch_assoc()) {
             // Build full address for Google Maps
             $address_parts = array_filter([$row['street_address'], $row['city'], $row['state'], $row['zip_code']]);
             $row['full_address'] = implode(', ', $address_parts);
             $all_warehouses_for_shipping[] = $row;
         }
+        $stmtAllWarehousesModal->close();
     }
 
     // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers_for_shipping = [];
+    $manufacturer_where = $is_global_admin ? '' : ' AND m.account_id = ?';
     $sqlAllManufacturersModal = "
         SELECT 
             m.id, 
@@ -453,16 +460,21 @@ try {
             ml.zip_code 
         FROM manufacturers m
         LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-        WHERE m.is_active = 1 
+        WHERE m.is_active = 1$manufacturer_where
         ORDER BY m.name ASC";
-    $resultAllManufacturersModal = $conn->query($sqlAllManufacturersModal);
-    if ($resultAllManufacturersModal) {
+    if ($stmtAllManufacturersModal = $conn->prepare($sqlAllManufacturersModal)) {
+        if (!$is_global_admin) {
+            $stmtAllManufacturersModal->bind_param("i", $account_id_for_user);
+        }
+        $stmtAllManufacturersModal->execute();
+        $resultAllManufacturersModal = $stmtAllManufacturersModal->get_result();
         while ($row = $resultAllManufacturersModal->fetch_assoc()) {
             // Build full address for Google Maps
             $address_parts = array_filter([$row['street_address'], $row['city'], $row['state'], $row['zip_code']]);
             $row['full_address'] = implode(', ', $address_parts);
             $all_manufacturers_for_shipping[] = $row;
         }
+        $stmtAllManufacturersModal->close();
     }
 
 } catch (Exception $e) {

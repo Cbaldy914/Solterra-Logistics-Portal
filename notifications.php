@@ -564,7 +564,8 @@ $conn->close();
                                     'document_upload' => '📄',
                                     'project_update' => '🏗️',
                                     'delivery_status' => '🚚',
-                                    'warranty_claim' => '⚠️'
+                                    'warranty_claim' => '⚠️',
+                                    'manufacturer_request' => '🏭'
                                 ];
                                 echo $icons[$notif['type']] ?? '📋';
                                 ?>
@@ -658,6 +659,13 @@ $conn->close();
                         <label for="in_app_warehouse_estimate_rated">✅ Warehouse Rates Added</label>
                     </div>
                     <?php endif; ?>
+                    <?php if (in_array("in_app_manufacturer_request", $available_settings_cols, true)): ?>
+                    <div class="form-check">
+                        <input type="checkbox" id="in_app_manufacturer_request" name="in_app_manufacturer_request" value="1"
+                               <?php echo !empty($settings['in_app_manufacturer_request']) ? 'checked' : ''; ?>>
+                        <label for="in_app_manufacturer_request">🏭 Manufacturer Requests</label>
+                    </div>
+                    <?php endif; ?>
                 </div>
                 
                 <!-- Email Notifications -->
@@ -730,6 +738,14 @@ $conn->close();
                                <?php echo !empty($settings['email_warehouse_estimate_rated']) ? 'checked' : ''; ?>
                                <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
                         <label for="email_warehouse_estimate_rated">Warehouse Rates Added</label>
+                    </div>
+                    <?php endif; ?>
+                    <?php if (in_array("email_manufacturer_request", $available_settings_cols, true)): ?>
+                    <div class="form-check sub-option">
+                        <input type="checkbox" id="email_manufacturer_request" name="email_manufacturer_request" value="1"
+                               <?php echo !empty($settings['email_manufacturer_request']) ? 'checked' : ''; ?>
+                               <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
+                        <label for="email_manufacturer_request">Manufacturer Requests</label>
                     </div>
                     <?php endif; ?>
                 </div>

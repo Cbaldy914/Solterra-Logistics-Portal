@@ -12,6 +12,12 @@ if (!$conn) {
 // Set content type to JSON
 header('Content-Type: application/json');
 
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Not logged in']);
+    exit;
+}
+
 // Check if manufacturer_id is provided
 if (!isset($_GET['manufacturer_id']) || empty($_GET['manufacturer_id'])) {
     echo json_encode(['error' => 'Manufacturer ID is required']);
@@ -20,19 +26,21 @@ if (!isset($_GET['manufacturer_id']) || empty($_GET['manufacturer_id'])) {
 
 $manufacturer_id = intval($_GET['manufacturer_id']);
 
+
 // Fetch all active locations for the manufacturer
 $stmt = $conn->prepare("
     SELECT 
-        id,
-        location_name,
-        street_address,
-        city,
-        state,
-        zip_code,
-        is_primary
-    FROM manufacturer_locations 
-    WHERE manufacturer_id = ? AND is_active = TRUE
-    ORDER BY is_primary DESC, location_name ASC
+        ml.id,
+        ml.location_name,
+        ml.street_address,
+        ml.city,
+        ml.state,
+        ml.zip_code,
+        ml.is_primary
+    FROM manufacturer_locations ml
+    JOIN manufacturers m ON m.id = ml.manufacturer_id
+    WHERE ml.manufacturer_id = ? AND ml.is_active = TRUE
+    ORDER BY ml.is_primary DESC, ml.location_name ASC
 ");
 
 if (!$stmt) {

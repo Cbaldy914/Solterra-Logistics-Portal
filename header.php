@@ -420,8 +420,12 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             </div>
           </li>
 
-          <li class="slp-item" role="none">
-            <a href="manufacturer_overview" class="slp-link" role="menuitem">Manufacturers</a>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Manufacturers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="manufacturer_overview" role="menuitem">Manufacturer Overview</a>
+              <a href="manufacturers" role="menuitem">Request Manufacturers</a>
+            </div>
           </li>
 
           <li class="slp-item slp-has-dropdown" role="none">

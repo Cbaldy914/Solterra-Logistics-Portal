@@ -38,6 +38,8 @@ function notification_settings_for(int $userId): array {
         'in_app_warehouse_estimate_rated' => 0,
         'email_warehouse_estimate_request' => 0,
         'email_warehouse_estimate_rated' => 0,
+        'in_app_manufacturer_request' => 1,
+        'email_manufacturer_request' => 0,
     ];
 
     try {

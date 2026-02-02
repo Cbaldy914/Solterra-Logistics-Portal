@@ -11,6 +11,9 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 require_once '../config.php';
 $conn = getDBConnection();
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+
 // Get manufacturer ID
 if (!isset($_GET['manufacturer_id'])) {
     header("Location: manufacturers.php");
@@ -29,6 +32,9 @@ $successMessage = '';
 // Handle delete action
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['location_id'])) {
     try {
+        if (!in_array($role, ['admin', 'global_admin'], true)) {
+            throw new Exception('You do not have permission to delete locations.');
+        }
         $location_id = intval($_GET['location_id']);
         
         // Check if this is the primary location
@@ -67,6 +73,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['locat
 // Handle set primary action
 if (isset($_GET['action']) && $_GET['action'] === 'set_primary' && isset($_GET['location_id'])) {
     try {
+        if (!in_array($role, ['admin', 'global_admin'], true)) {
+            throw new Exception('You do not have permission to change primary locations.');
+        }
         $location_id = intval($_GET['location_id']);
         
         // First, set all locations for this manufacturer to non-primary
@@ -341,7 +350,8 @@ $conn->close();
     
     <div class="header-container">
         <h1>Locations</h1>
-        <a href="add_manufacturer_location.php?manufacturer_id=<?php echo $manufacturer_id; ?>" class="action-buttons add-new">Add New Location</a>
+        <?php $location_action_label = ($role === 'customer_admin') ? 'Request Location' : 'Add New Location'; ?>
+        <a href="add_manufacturer_location.php?manufacturer_id=<?php echo $manufacturer_id; ?>" class="action-buttons add-new"><?php echo htmlspecialchars($location_action_label); ?></a>
     </div>
 
     <?php if (!empty($errorMessage)): ?>
@@ -406,20 +416,24 @@ $conn->close();
                                 </span>
                             </td>
                             <td>
-                                <div class="dropdown">
-                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $location['id']; ?>')">
-                                        Actions
-                                    </button>
-                                    <div id="dropdown-menu-<?php echo $location['id']; ?>" class="dropdown-menu">
-                                        <a href="edit_manufacturer_location.php?manufacturer_id=<?php echo $manufacturer_id; ?>&id=<?php echo $location['id']; ?>" class="dropdown-item edit">Edit</a>
-                                        <?php if (!$location['is_primary']): ?>
-                                            <a href="javascript:void(0);" onclick="confirmSetPrimary('<?php echo htmlspecialchars($location['location_name'], ENT_QUOTES); ?>', <?php echo $location['id']; ?>)" class="dropdown-item primary">Set as Primary</a>
-                                        <?php endif; ?>
-                                        <?php if (!$location['is_primary']): ?>
-                                            <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($location['location_name'], ENT_QUOTES); ?>', <?php echo $location['id']; ?>)" class="dropdown-item delete">Delete</a>
-                                        <?php endif; ?>
+                                <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
+                                    <div class="dropdown">
+                                        <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $location['id']; ?>')">
+                                            Actions
+                                        </button>
+                                        <div id="dropdown-menu-<?php echo $location['id']; ?>" class="dropdown-menu">
+                                            <a href="edit_manufacturer_location.php?manufacturer_id=<?php echo $manufacturer_id; ?>&id=<?php echo $location['id']; ?>" class="dropdown-item edit">Edit</a>
+                                            <?php if (!$location['is_primary']): ?>
+                                                <a href="javascript:void(0);" onclick="confirmSetPrimary('<?php echo htmlspecialchars($location['location_name'], ENT_QUOTES); ?>', <?php echo $location['id']; ?>)" class="dropdown-item primary">Set as Primary</a>
+                                            <?php endif; ?>
+                                            <?php if (!$location['is_primary']): ?>
+                                                <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($location['location_name'], ENT_QUOTES); ?>', <?php echo $location['id']; ?>)" class="dropdown-item delete">Delete</a>
+                                            <?php endif; ?>
+                                        </div>
                                     </div>
-                                </div>
+                                <?php else: ?>
+                                    <span style="color: #999;">View only</span>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

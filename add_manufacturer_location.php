@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 
 // Database connection
 require_once '../config.php';
+require_once __DIR__ . '/notification_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -18,12 +19,29 @@ if (!$conn) {
 // Get Google Maps API key from config
 $google_maps_api_key = getGoogleMapsApiKey();
 
-// Get manufacturer ID
-if (!isset($_GET['manufacturer_id'])) {
-    header("Location: manufacturers.php");
-    exit();
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+$account_id = null;
+
+if ($role !== 'global_admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if (!$account_id) {
+        die("No valid account found for this user.");
+    }
 }
-$manufacturer_id = intval($_GET['manufacturer_id']);
+
+$request_id = isset($_GET['request_id']) ? (int)$_GET['request_id'] : (int)($_POST['request_id'] ?? 0);
+$review_request = false;
+$request_data = null;
+$request_account_name = '';
+$requester_label = '';
 
 // Unified dashboard link
 $dashboard_link = 'dashboard.php';
@@ -54,6 +72,86 @@ function slp_normalize_country($country) {
     return $trimmed;
 }
 
+function slp_form_value(string $key, ?array $request_data = null, string $default = ''): string {
+    if (isset($_POST[$key])) {
+        return (string)$_POST[$key];
+    }
+    if ($request_data && array_key_exists($key, $request_data) && $request_data[$key] !== null) {
+        return (string)$request_data[$key];
+    }
+    return $default;
+}
+
+function slp_get_account_admin_ids(mysqli $conn, int $account_id): array {
+    $ids = [];
+    $stmt = $conn->prepare("SELECT u.id FROM users u JOIN customer_account_users cau ON cau.user_id = u.id WHERE cau.account_id = ? AND cau.role = 'admin'");
+    if ($stmt) {
+        $stmt->bind_param("i", $account_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $ids[] = (int)$row['id'];
+        }
+        $stmt->close();
+    }
+    return $ids;
+}
+
+function slp_get_global_admin_ids(mysqli $conn): array {
+    $ids = [];
+    $result = $conn->query("SELECT id FROM users WHERE role = 'global_admin'");
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $ids[] = (int)$row['id'];
+        }
+    }
+    return $ids;
+}
+
+if ($request_id > 0 && in_array($role, ['admin', 'global_admin'], true)) {
+    $stmtRequest = $conn->prepare("
+        SELECT mlr.*, ca.name AS account_name,
+               u.username, u.first_name, u.last_name
+        FROM manufacturer_location_requests mlr
+        JOIN customer_accounts ca ON ca.id = mlr.account_id
+        JOIN users u ON u.id = mlr.requested_by
+        WHERE mlr.id = ?
+    ");
+    if ($stmtRequest) {
+        $stmtRequest->bind_param("i", $request_id);
+        $stmtRequest->execute();
+        $resultRequest = $stmtRequest->get_result();
+        $request_row = $resultRequest->fetch_assoc();
+        $stmtRequest->close();
+        if (!$request_row) {
+            $errorMessage = 'Location request not found.';
+        } elseif ($role === 'admin' && $account_id && (int)$request_row['account_id'] !== (int)$account_id) {
+            $errorMessage = 'You do not have access to this request.';
+        } elseif ($request_row['status'] !== 'pending') {
+            $errorMessage = 'This request has already been processed.';
+        } else {
+            $review_request = true;
+            $request_data = $request_row;
+            $request_account_name = $request_row['account_name'] ?? '';
+            $requester_label = trim(($request_row['first_name'] ?? '') . ' ' . ($request_row['last_name'] ?? ''));
+            if ($requester_label === '') {
+                $requester_label = $request_row['username'] ?? '';
+            }
+        }
+    }
+}
+
+$manufacturer_id = 0;
+if ($review_request) {
+    $manufacturer_id = (int)($request_data['manufacturer_id'] ?? 0);
+} else {
+    $manufacturer_id = isset($_GET['manufacturer_id']) ? (int)$_GET['manufacturer_id'] : (int)($_POST['manufacturer_id'] ?? 0);
+}
+if ($manufacturer_id <= 0) {
+    header("Location: manufacturers.php");
+    exit();
+}
+
 // Fetch manufacturer info
 try {
     $stmt = $conn->prepare("SELECT name, short_name FROM manufacturers WHERE id = ?");
@@ -75,87 +173,224 @@ try {
 // Process form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
-        // Gather form fields
-        $location_name = trim($_POST['location_name'] ?? '');
-        $street_address = trim($_POST['street_address'] ?? '');
-        $city = trim($_POST['city'] ?? '');
-        $state = trim($_POST['state'] ?? '');
-        $zip_code = trim($_POST['zip_code'] ?? '');
-        $country = slp_normalize_country($_POST['country'] ?? 'USA');
-        $is_primary = isset($_POST['is_primary']) ? 1 : 0;
-        $is_active = isset($_POST['is_active']) ? 1 : 0;
-        $notes = trim($_POST['notes'] ?? '');
+        if ($request_id > 0 && !$review_request && in_array($role, ['admin', 'global_admin'], true)) {
+            throw new Exception('Unable to load the location request.');
+        }
+        if ($role === 'customer_admin' && $review_request) {
+            throw new Exception('You do not have access to review requests.');
+        }
 
-        // Validation
-        if ($location_name === '') {
-            throw new Exception("Location Name is required.");
-        }
-        if ($street_address === '' || $city === '') {
-            throw new Exception("Street address and city are required.");
-        }
-        if ($country === '') {
-            throw new Exception("Country is required.");
-        }
-        if (strtoupper($country) === 'USA') {
-            if ($state === '' || $zip_code === '') {
-                throw new Exception("State and ZIP code are required for USA addresses.");
+        $request_action = $review_request ? ($_POST['request_action'] ?? 'approve') : 'create';
+        if ($review_request && $request_action === 'reject') {
+            $rejection_reason = trim($_POST['rejection_reason'] ?? '');
+            if ($rejection_reason === '') {
+                throw new Exception('Please provide a rejection reason.');
+            }
+            $stmtReject = $conn->prepare("UPDATE manufacturer_location_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW(), rejection_reason = ? WHERE id = ?");
+            if (!$stmtReject) {
+                throw new Exception("Error preparing rejection update: " . $conn->error);
+            }
+            $stmtReject->bind_param("isi", $user_id, $rejection_reason, $request_id);
+            if (!$stmtReject->execute()) {
+                throw new Exception("Error rejecting request: " . $stmtReject->error);
+            }
+            $stmtReject->close();
+
+            if (!empty($request_data['requested_by'])) {
+                $title = 'Location request rejected';
+                $message = "Your location request for '{$manufacturer['name']}' was rejected.";
+                $message .= "\nReason: {$rejection_reason}";
+                notify_user((int)$request_data['requested_by'], 'manufacturer_request', $title, $message, 'manufacturers.php');
+            }
+
+            $successMessage = 'Location request rejected.';
+        } else {
+            $location_name = trim($_POST['location_name'] ?? '');
+            $street_address = trim($_POST['street_address'] ?? '');
+            $city = trim($_POST['city'] ?? '');
+            $state = trim($_POST['state'] ?? '');
+            $zip_code = trim($_POST['zip_code'] ?? '');
+            $country = slp_normalize_country($_POST['country'] ?? 'USA');
+            $is_primary = isset($_POST['is_primary']) ? 1 : 0;
+            $is_active = isset($_POST['is_active']) ? 1 : 0;
+            $notes = trim($_POST['notes'] ?? '');
+
+            if ($location_name === '') {
+                throw new Exception("Location Name is required.");
+            }
+            if ($street_address === '' || $city === '') {
+                throw new Exception("Street address and city are required.");
+            }
+            if ($country === '') {
+                throw new Exception("Country is required.");
+            }
+            if (strtoupper($country) === 'USA') {
+                if ($state === '' || $zip_code === '') {
+                    throw new Exception("State and ZIP code are required for USA addresses.");
+                }
+            }
+
+            if ($role === 'customer_admin') {
+                $stmt = $conn->prepare("
+                    INSERT INTO manufacturer_location_requests (
+                        manufacturer_id,
+                        account_id,
+                        requested_by,
+                        status,
+                        location_name,
+                        street_address,
+                        city,
+                        state,
+                        zip_code,
+                        country,
+                        is_primary,
+                        is_active,
+                        notes
+                    ) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                if (!$stmt) {
+                    throw new Exception("Error preparing request insert: " . $conn->error);
+                }
+                $stmt->bind_param(
+                    "iiissssssiis",
+                    $manufacturer_id,
+                    $account_id,
+                    $user_id,
+                    $location_name,
+                    $street_address,
+                    $city,
+                    $state,
+                    $zip_code,
+                    $country,
+                    $is_primary,
+                    $is_active,
+                    $notes
+                );
+                if (!$stmt->execute()) {
+                    throw new Exception("Error submitting request: " . $stmt->error);
+                }
+                $stmt->close();
+
+                $accountName = '';
+                $stmtAccountName = $conn->prepare("SELECT name FROM customer_accounts WHERE id = ?");
+                if ($stmtAccountName) {
+                    $stmtAccountName->bind_param("i", $account_id);
+                    $stmtAccountName->execute();
+                    $stmtAccountName->bind_result($accountName);
+                    $stmtAccountName->fetch();
+                    $stmtAccountName->close();
+                }
+                $requester = $_SESSION['username'] ?? 'Customer Admin';
+                $title = 'New location request';
+                $message = "{$requester} requested a new location for '{$manufacturer['name']}'.";
+                if ($accountName) {
+                    $message .= "\nAccount: {$accountName}";
+                }
+                $recipients = array_unique(array_merge(
+                    slp_get_account_admin_ids($conn, $account_id),
+                    slp_get_global_admin_ids($conn)
+                ));
+                foreach ($recipients as $recipient_id) {
+                    notify_user((int)$recipient_id, 'manufacturer_request', $title, $message, 'manufacturers.php');
+                }
+
+                $successMessage = 'Location request submitted successfully!';
+            } else {
+                if ($is_primary) {
+                    $update_stmt = $conn->prepare("UPDATE manufacturer_locations SET is_primary = FALSE WHERE manufacturer_id = ?");
+                    if ($update_stmt) {
+                        $update_stmt->bind_param("i", $manufacturer_id);
+                        $update_stmt->execute();
+                        $update_stmt->close();
+                    }
+                }
+
+                $stmt = $conn->prepare("
+                    INSERT INTO manufacturer_locations (
+                        manufacturer_id,
+                        location_name,
+                        street_address,
+                        city,
+                        state,
+                        zip_code,
+                        country,
+                        is_primary,
+                        is_active,
+                        notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                if (!$stmt) {
+                    throw new Exception("Error preparing location insert: " . $conn->error);
+                }
+                $stmt->bind_param(
+                    "issssssiis",
+                    $manufacturer_id,
+                    $location_name,
+                    $street_address,
+                    $city,
+                    $state,
+                    $zip_code,
+                    $country,
+                    $is_primary,
+                    $is_active,
+                    $notes
+                );
+                if (!$stmt->execute()) {
+                    throw new Exception("Error inserting location: " . $stmt->error);
+                }
+                $location_id = $conn->insert_id;
+                $stmt->close();
+
+                if ($review_request) {
+                    $stmtApprove = $conn->prepare("UPDATE manufacturer_location_requests SET status = 'approved', reviewed_by = ?, reviewed_at = NOW(), approved_location_id = ? WHERE id = ?");
+                    if (!$stmtApprove) {
+                        throw new Exception("Error preparing approval update: " . $conn->error);
+                    }
+                    $stmtApprove->bind_param("iii", $user_id, $location_id, $request_id);
+                    if (!$stmtApprove->execute()) {
+                        throw new Exception("Error approving request: " . $stmtApprove->error);
+                    }
+                    $stmtApprove->close();
+
+                    if (!empty($request_data['requested_by'])) {
+                        $title = 'Location request approved';
+                        $message = "Your location request for '{$manufacturer['name']}' has been approved.";
+                        notify_user((int)$request_data['requested_by'], 'manufacturer_request', $title, $message, 'manufacturers.php');
+                    }
+                    $successMessage = 'Location request approved and added successfully!';
+                } else {
+                    $successMessage = "Location added successfully!";
+                }
             }
         }
-
-        // If this is set as primary, we need to handle existing primary location
-        if ($is_primary) {
-            // Set all other locations for this manufacturer to non-primary
-            $update_stmt = $conn->prepare("UPDATE manufacturer_locations SET is_primary = FALSE WHERE manufacturer_id = ?");
-            if ($update_stmt) {
-                $update_stmt->bind_param("i", $manufacturer_id);
-                $update_stmt->execute();
-                $update_stmt->close();
-            }
-        }
-
-        // Insert into manufacturer_locations table
-        $stmt = $conn->prepare("
-            INSERT INTO manufacturer_locations (
-                manufacturer_id,
-                location_name, 
-                street_address, 
-                city, 
-                state, 
-                zip_code, 
-                country, 
-                is_primary,
-                is_active, 
-                notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        if (!$stmt) {
-            throw new Exception("Error preparing location insert: " . $conn->error);
-        }
-
-        $stmt->bind_param(
-            "issssssdds",
-            $manufacturer_id,
-            $location_name,
-            $street_address,
-            $city,
-            $state,
-            $zip_code,
-            $country,
-            $is_primary,
-            $is_active,
-            $notes
-        );
-
-        if (!$stmt->execute()) {
-            throw new Exception("Error inserting location: " . $stmt->error);
-        }
-        $stmt->close();
-
-        $successMessage = "Location added successfully!";
-
     } catch (Exception $ex) {
         $errorMessage = $ex->getMessage();
     }
+}
+
+$page_title = 'Add Location';
+$page_heading = 'Add Location';
+$submit_label = 'Add Location';
+if ($role === 'customer_admin') {
+    $page_title = 'Request Location';
+    $page_heading = 'Request Location';
+    $submit_label = 'Submit Request';
+}
+if ($review_request) {
+    $page_title = 'Review Location Request';
+    $page_heading = 'Review Location Request';
+    $submit_label = 'Approve Request';
+}
+
+$is_primary_checked = isset($_POST['is_primary']) ? true : ($review_request ? !empty($request_data['is_primary']) : false);
+$is_active_checked = isset($_POST['is_active']) ? true : ($review_request ? !empty($request_data['is_active']) : true);
+
+$manufacturer_context = 'Adding a new location for this manufacturer';
+if ($role === 'customer_admin') {
+    $manufacturer_context = 'Requesting a new location for this manufacturer';
+}
+if ($review_request) {
+    $manufacturer_context = 'Reviewing a location request for this manufacturer';
 }
 
 $conn->close();
@@ -165,7 +400,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Location - <?php echo htmlspecialchars($manufacturer['name'] ?? 'Manufacturer'); ?></title>
+    <title><?php echo htmlspecialchars($page_title); ?> - <?php echo htmlspecialchars($manufacturer['name'] ?? 'Manufacturer'); ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
@@ -266,6 +501,28 @@ $conn->close();
             font-style: italic;
             margin-top: 3px;
         }
+        .warning-message {
+            color: #856404;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .review-banner {
+            color: #1f2937;
+            background-color: #eef2ff;
+            border: 1px solid #c7d2fe;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .btn-submit.btn-reject {
+            background: #b91c1c;
+        }
+        .btn-submit.btn-reject:hover {
+            background: #991b1b;
+        }
         .manufacturer-info {
             background-color: #f8f9fa;
             padding: 15px;
@@ -283,7 +540,7 @@ $conn->close();
     <?php
         require_once 'components/breadcrumbs.php';
         echo slp_render_breadcrumbs([
-            'current_label' => 'Add Manufacturer Location',
+            'current_label' => $page_heading,
             'extra' => [
                 ['label' => 'Manage Manufacturers', 'url' => 'manufacturers.php'],
                 ['label' => 'Manage Locations', 'url' => 'manufacturer_locations.php?manufacturer_id='.(int)$manufacturer_id]
@@ -300,11 +557,19 @@ $conn->close();
                 <small style="color: #666;">(<?php echo htmlspecialchars($manufacturer['short_name']); ?>)</small>
             <?php endif; ?>
         </h2>
-        <p style="margin: 0; color: #666;">Adding a new location for this manufacturer</p>
+        <p style="margin: 0; color: #666;"><?php echo htmlspecialchars($manufacturer_context); ?></p>
     </div>
     <?php endif; ?>
 
-    <h1>Add New Location</h1>
+    <h1><?php echo htmlspecialchars($page_heading); ?></h1>
+
+    <?php if ($review_request): ?>
+        <div class="review-banner">
+            <strong>Reviewing request</strong><br>
+            Account: <?php echo htmlspecialchars($request_account_name); ?><br>
+            Requested by: <?php echo htmlspecialchars($requester_label ?: 'Unknown'); ?>
+        </div>
+    <?php endif; ?>
 
     <!-- Display success or error messages if any -->
     <?php if (!empty($successMessage)): ?>
@@ -320,10 +585,14 @@ $conn->close();
 
     <!-- The location form -->
     <form action="" method="POST">
+        <input type="hidden" name="manufacturer_id" value="<?php echo (int)$manufacturer_id; ?>">
+        <?php if ($review_request): ?>
+            <input type="hidden" name="request_id" value="<?php echo (int)$request_id; ?>">
+        <?php endif; ?>
         <div class="section-title">Location Information</div>
         
         <label for="location_name">Location Name: <span style="color: red;">*</span></label>
-        <input type="text" id="location_name" name="location_name" required placeholder="e.g., Phoenix Warehouse, Main Office, Distribution Center">
+        <input type="text" id="location_name" name="location_name" required placeholder="e.g., Phoenix Warehouse, Main Office, Distribution Center" value="<?php echo htmlspecialchars(slp_form_value('location_name', $request_data)); ?>">
         <div class="form-note">Descriptive name to identify this location</div>
 
         <div class="section-title">Address <span style="color: red;">*</span></div>
@@ -332,44 +601,55 @@ $conn->close();
         <div class="address-grid">
             <div>
                 <label for="street_address" style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
-                <input type="text" id="street_address" name="street_address" placeholder="123 Industrial Blvd">
+                <input type="text" id="street_address" name="street_address" placeholder="123 Industrial Blvd" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
             </div>
             <div>
                 <label for="city" style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
-                <input type="text" id="city" name="city" placeholder="Phoenix">
+                <input type="text" id="city" name="city" placeholder="Phoenix" value="<?php echo htmlspecialchars(slp_form_value('city', $request_data)); ?>">
             </div>
             <div>
                 <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State/Province:</label>
-                <input type="text" id="state" name="state" placeholder="AZ">
+                <input type="text" id="state" name="state" placeholder="AZ" value="<?php echo htmlspecialchars(slp_form_value('state', $request_data)); ?>">
             </div>
             <div>
                 <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip/Postal Code:</label>
-                <input type="text" id="zip_code" name="zip_code" placeholder="85281">
+                <input type="text" id="zip_code" name="zip_code" placeholder="85281" value="<?php echo htmlspecialchars(slp_form_value('zip_code', $request_data)); ?>">
             </div>
         </div>
 
         <label for="country">Country:</label>
-        <input type="text" id="country" name="country" value="USA" placeholder="USA">
+        <input type="text" id="country" name="country" value="<?php echo htmlspecialchars(slp_form_value('country', $request_data, 'USA')); ?>" placeholder="USA">
 
         <div class="section-title">Location Settings</div>
         
         <div class="checkbox-container">
-            <input type="checkbox" id="is_primary" name="is_primary">
+            <input type="checkbox" id="is_primary" name="is_primary" <?php echo $is_primary_checked ? 'checked' : ''; ?>>
             <label for="is_primary" style="margin-top: 0;">Set as Primary Location</label>
         </div>
         <div class="form-note">Primary location will be used as the default for this manufacturer</div>
 
         <div class="checkbox-container">
-            <input type="checkbox" id="is_active" name="is_active" checked>
+            <input type="checkbox" id="is_active" name="is_active" <?php echo $is_active_checked ? 'checked' : ''; ?>>
             <label for="is_active" style="margin-top: 0;">Active Location</label>
         </div>
         <div class="form-note">Uncheck to mark as inactive</div>
 
         <label for="notes">Notes:</label>
-        <textarea id="notes" name="notes" placeholder="Additional notes about this location (warehouse type, operating hours, special instructions, etc.)"></textarea>
+        <textarea id="notes" name="notes" placeholder="Additional notes about this location (warehouse type, operating hours, special instructions, etc.)"><?php echo htmlspecialchars(slp_form_value('notes', $request_data)); ?></textarea>
+
+        <?php if ($review_request): ?>
+            <div class="section-title">Request Review</div>
+            <label for="rejection_reason">Rejection Reason (required to reject)</label>
+            <textarea id="rejection_reason" name="rejection_reason" placeholder="Provide a reason if rejecting this request..."><?php echo htmlspecialchars($_POST['rejection_reason'] ?? ''); ?></textarea>
+        <?php endif; ?>
 
         <div class="btn-submit-container">
-            <input type="submit" value="Add Location" class="btn-submit">
+            <?php if ($review_request): ?>
+                <button type="submit" name="request_action" value="approve" class="btn-submit"><?php echo htmlspecialchars($submit_label); ?></button>
+                <button type="submit" name="request_action" value="reject" class="btn-submit btn-reject">Reject Request</button>
+            <?php else: ?>
+                <input type="submit" value="<?php echo htmlspecialchars($submit_label); ?>" class="btn-submit">
+            <?php endif; ?>
         </div>
     </form>
 </main>

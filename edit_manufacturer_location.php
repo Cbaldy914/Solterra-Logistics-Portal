@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role global_admin, admin, or customer_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
+// Ensure user has role global_admin or admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
     header("Location: unauthorized.php");
     exit();
 }
@@ -24,6 +24,9 @@ if (!isset($_REQUEST['manufacturer_id']) || !isset($_REQUEST['id'])) {
 }
 $manufacturer_id = intval($_REQUEST['manufacturer_id']);
 $location_id = intval($_REQUEST['id']);
+
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
 
 // Normalize country input so US variants persist as 'USA'
 function slp_normalize_country($country) {

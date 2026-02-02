@@ -28,7 +28,7 @@ if ($location_id <= 0) {
 }
 
 try {
-    $stmt = $conn->prepare("SELECT country FROM manufacturer_locations WHERE id = ? AND is_active = 1");
+    $stmt = $conn->prepare("SELECT ml.country FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.id = ? AND ml.is_active = 1");
     $stmt->bind_param("i", $location_id);
     $stmt->execute();
     $result = $stmt->get_result();

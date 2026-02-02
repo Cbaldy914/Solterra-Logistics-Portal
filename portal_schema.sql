@@ -378,6 +378,7 @@ CREATE TABLE projection_cost_summary (
 -- Warehouses and ports
 CREATE TABLE warehouses (
   id int(11) PRIMARY KEY AUTO_INCREMENT,
+  account_id int(11) DEFAULT NULL,
   name varchar(255) NOT NULL,
   code varchar(50),
   street_address varchar(255) NOT NULL,
@@ -401,7 +402,8 @@ CREATE TABLE warehouses (
   hours_saturday varchar(50),
   hours_sunday varchar(50),
   notes text,
-  created_at timestamp DEFAULT CURRENT_TIMESTAMP
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES customer_accounts(id)
 );
 
 -- Pallets in inventory
@@ -439,12 +441,14 @@ CREATE TABLE warehouse_cost_items (
 -- Manufacturers
 CREATE TABLE manufacturers (
   id int(11) PRIMARY KEY AUTO_INCREMENT,
+  account_id int(11) DEFAULT NULL,
   name varchar(255) NOT NULL,
   website varchar(255),
   headquarters_country varchar(100),
   is_active tinyint(1) DEFAULT 1,
   notes text,
-  created_at timestamp DEFAULT CURRENT_TIMESTAMP
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES customer_accounts(id)
 );
 
 -- Manufacturer locations (factories)

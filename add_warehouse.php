@@ -17,6 +17,32 @@ if (!$conn) {
 // Get Google Maps API key from config
 $google_maps_api_key = getGoogleMapsApiKey();
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+$account_id = null;
+$accounts = [];
+
+if ($role === 'global_admin') {
+    $resAccounts = $conn->query("SELECT id, name FROM customer_accounts ORDER BY name ASC");
+    if ($resAccounts) {
+        while ($row = $resAccounts->fetch_assoc()) {
+            $accounts[] = $row;
+        }
+    }
+} else {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if (!$account_id) {
+        die("No valid account found for this user.");
+    }
+}
+
 // Prepare variables to hold user messages:
 $successMessage = "";
 $errorMessage   = "";
@@ -24,6 +50,13 @@ $errorMessage   = "";
 // Process form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
     try {
+        if ($role === 'global_admin') {
+            $account_id = isset($_POST['account_id']) ? (int)$_POST['account_id'] : 0;
+            if ($account_id <= 0) {
+                throw new Exception("Please select a valid Account.");
+            }
+        }
+
         // Retrieve form data and sanitize
         $name = trim($_POST['name']);
         $street_address = trim($_POST['street_address']);
@@ -86,11 +119,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         }
 
         // Insert into the database with separate address fields (trigger will populate address field)
-        $stmt = $conn->prepare("INSERT INTO warehouses (name, street_address, city, state, zip_code, country, image_url, is_port) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt = $conn->prepare("INSERT INTO warehouses (account_id, name, street_address, city, state, zip_code, country, image_url, is_port) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
          if (!$stmt) {
             throw new Exception("Error preparing warehouse insert: " . $conn->error);
         }
-        $stmt->bind_param("sssssssi", $name, $street_address, $city, $state, $zip_code, $country, $image_url, $is_port);
+        $stmt->bind_param("isssssssi", $account_id, $name, $street_address, $city, $state, $zip_code, $country, $image_url, $is_port);
         if ($stmt->execute()) {
             $warehouse_id = $conn->insert_id;
             
@@ -602,11 +635,37 @@ $conn->close();
     <?php endif; ?>
 
     <form action="add_warehouse" method="post" enctype="multipart/form-data">
+        <?php if ($role === 'global_admin'): ?>
+            <div class="accordion-section">
+                <div class="accordion-header active" onclick="toggleAccordion(this)">
+                    <h2><span class="step-badge">1</span> Account</h2>
+                    <span class="accordion-toggle">&#9660;</span>
+                </div>
+                <div class="accordion-content open">
+                    <div class="section-description">
+                        Assign this warehouse to a customer account.
+                    </div>
+                    <div class="form-row single">
+                        <div class="form-group">
+                            <label for="account_id">Account <span class="required-star">*</span></label>
+                            <select id="account_id" name="account_id" required>
+                                <option value="">Select Account</option>
+                                <?php foreach ($accounts as $account): ?>
+                                    <option value="<?php echo (int)$account['id']; ?>" <?php echo ((int)($_POST['account_id'] ?? 0) === (int)$account['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($account['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <!-- Section 1: Basic Information -->
         <div class="accordion-section">
             <div class="accordion-header active" onclick="toggleAccordion(this)">
-                <h2><span class="step-badge">1</span> Basic Information</h2>
+                <h2><span class="step-badge"><?php echo ($role === 'global_admin') ? '2' : '1'; ?></span> Basic Information</h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content open">

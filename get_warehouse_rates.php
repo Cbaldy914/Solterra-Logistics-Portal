@@ -34,6 +34,31 @@ if ($warehouse_id <= 0) {
     exit();
 }
 
+$account_id = null;
+if ($user_role !== 'global_admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $_SESSION['user_id']);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if ($account_id) {
+        $stmtAccess = $conn->prepare("SELECT id FROM warehouses WHERE id = ? AND account_id = ?");
+        if ($stmtAccess) {
+            $stmtAccess->bind_param("ii", $warehouse_id, $account_id);
+            $stmtAccess->execute();
+            $accessResult = $stmtAccess->get_result();
+            $stmtAccess->close();
+            if ($accessResult->num_rows === 0) {
+                echo json_encode(['success' => false, 'message' => 'Warehouse access denied']);
+                exit();
+            }
+        }
+    }
+}
+
 try {
     // Fetch the most recent warehouse quote that has rates for this warehouse
     // Look through all warehouse_quotes and find the latest one with rates for this warehouse_id

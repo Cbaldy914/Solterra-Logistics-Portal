@@ -28,13 +28,13 @@ $remaining_mw = 0;
 // If a project is provided, verify access and load it; otherwise enable unassigned flow
 $project = null;
 if ($project_id) {
-    if ($role === 'admin') {
+    if (in_array($role, ['admin', 'customer_admin'], true)) {
         $stmtAccess = $conn->prepare("
             SELECT p.*, ca.name as account_name
             FROM projects p 
             JOIN customer_accounts ca ON p.account_id = ca.id
             JOIN customer_account_users cau ON p.account_id = cau.account_id 
-            WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+            WHERE p.id = ? AND cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
         ");
         $stmtAccess->bind_param("ii", $project_id, $user_id);
     } else {
@@ -78,8 +78,8 @@ if ($project_id) {
 $accounts = [];
 $projects_for_account = [];
 $account_id_for_admin = null;
-if (!$project && $role === 'admin') {
-    $stmtAdmin = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+if (!$project && in_array($role, ['admin', 'customer_admin'], true)) {
+    $stmtAdmin = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
     $stmtAdmin->bind_param("i", $user_id);
     $stmtAdmin->execute();
     $stmtAdmin->bind_result($account_id_for_admin);
@@ -104,12 +104,14 @@ if (!$project && $role === 'global_admin') {
 // Get manufacturers for dropdown
 $manufacturers = [];
 $stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
-$stmtManufacturers->execute();
-$manufacturersResult = $stmtManufacturers->get_result();
-while ($manufacturer = $manufacturersResult->fetch_assoc()) {
-    $manufacturers[] = $manufacturer;
+if ($stmtManufacturers) {
+    $stmtManufacturers->execute();
+    $manufacturersResult = $stmtManufacturers->get_result();
+    while ($manufacturer = $manufacturersResult->fetch_assoc()) {
+        $manufacturers[] = $manufacturer;
+    }
+    $stmtManufacturers->close();
 }
-$stmtManufacturers->close();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -162,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($stmtM->fetch()) { $vendor_name = $mname; }
             $stmtM->close();
         }
-        if ($location_id && ($stmtL = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?"))) {
+        if ($location_id && ($stmtL = $conn->prepare("SELECT ml.street_address, ml.city, ml.state, ml.zip_code FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.id = ?"))) {
             $stmtL->bind_param("i", $location_id);
             $stmtL->execute();
             $stmtL->bind_result($st, $ci, $stt, $zip);
@@ -170,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtL->close();
         } else {
             // Fallback to primary location
-            if ($stmtL2 = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = TRUE LIMIT 1")) {
+            if ($stmtL2 = $conn->prepare("SELECT ml.street_address, ml.city, ml.state, ml.zip_code FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.is_primary = TRUE LIMIT 1")) {
                 $stmtL2->bind_param("i", $manufacturer_id);
                 $stmtL2->execute();
                 $stmtL2->bind_result($st2, $ci2, $stt2, $zip2);

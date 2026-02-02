@@ -156,12 +156,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $in_app_project_update = isset($_POST['in_app_project_update']) ? 1 : 0;
             $in_app_delivery_status = isset($_POST['in_app_delivery_status']) ? 1 : 0;
             $in_app_warranty_claim = isset($_POST['in_app_warranty_claim']) ? 1 : 0;
+            $in_app_manufacturer_request = isset($_POST['in_app_manufacturer_request']) ? 1 : 0;
             
             $email_enabled = isset($_POST['email_enabled']) ? 1 : 0;
             $email_document_upload = ($email_enabled && isset($_POST['email_document_upload'])) ? 1 : 0;
             $email_project_update = ($email_enabled && isset($_POST['email_project_update'])) ? 1 : 0;
             $email_delivery_status = ($email_enabled && isset($_POST['email_delivery_status'])) ? 1 : 0;
             $email_warranty_claim = ($email_enabled && isset($_POST['email_warranty_claim'])) ? 1 : 0;
+            $email_manufacturer_request = ($email_enabled && isset($_POST['email_manufacturer_request'])) ? 1 : 0;
             
             $stmt = $conn->prepare("
                 UPDATE notification_settings 
@@ -169,24 +171,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     in_app_project_update = ?,
                     in_app_delivery_status = ?,
                     in_app_warranty_claim = ?,
+                    in_app_manufacturer_request = ?,
                     email_enabled = ?,
                     email_document_upload = ?,
                     email_project_update = ?,
                     email_delivery_status = ?,
-                    email_warranty_claim = ?
+                    email_warranty_claim = ?,
+                    email_manufacturer_request = ?
                 WHERE user_id = ?
             ");
             
-            $stmt->bind_param('iiiiiiiiii',
+            $stmt->bind_param('iiiiiiiiiiii',
                 $in_app_document_upload,
                 $in_app_project_update,
                 $in_app_delivery_status,
                 $in_app_warranty_claim,
+                $in_app_manufacturer_request,
                 $email_enabled,
                 $email_document_upload,
                 $email_project_update,
                 $email_delivery_status,
                 $email_warranty_claim,
+                $email_manufacturer_request,
                 $user_id
             );
             
@@ -807,6 +813,12 @@ if (empty($displayName)) {
                                        <?php echo !empty($notif_settings['in_app_warranty_claim']) ? 'checked' : ''; ?>>
                                 <label for="in_app_warranty_claim">⚠️ Warranty Claims</label>
                             </div>
+
+                            <div class="form-check">
+                                <input type="checkbox" id="in_app_manufacturer_request" name="in_app_manufacturer_request" value="1"
+                                       <?php echo !empty($notif_settings['in_app_manufacturer_request']) ? 'checked' : ''; ?>>
+                                <label for="in_app_manufacturer_request">🏭 Manufacturer Requests</label>
+                            </div>
                         </div>
                         
                         <div class="settings-section">
@@ -844,6 +856,13 @@ if (empty($displayName)) {
                                        <?php echo !empty($notif_settings['email_warranty_claim']) ? 'checked' : ''; ?>
                                        <?php echo empty($notif_settings['email_enabled']) ? 'disabled' : ''; ?>>
                                 <label for="email_warranty_claim">Warranty Claims</label>
+                            </div>
+                            
+                            <div class="form-check sub-option">
+                                <input type="checkbox" id="email_manufacturer_request" name="email_manufacturer_request" value="1"
+                                       <?php echo !empty($notif_settings['email_manufacturer_request']) ? 'checked' : ''; ?>
+                                       <?php echo empty($notif_settings['email_enabled']) ? 'disabled' : ''; ?>>
+                                <label for="email_manufacturer_request">Manufacturer Requests</label>
                             </div>
                             
                             <div class="form-note">
@@ -901,13 +920,14 @@ document.getElementById('new_password')?.addEventListener('input', function(e) {
 });
 
 // Enable/disable email sub-options based on master toggle
-document.getElementById('email_enabled').addEventListener('change', function() {
-    const enabled = this.checked;
-    document.getElementById('email_document_upload').disabled = !enabled;
-    document.getElementById('email_project_update').disabled = !enabled;
-    document.getElementById('email_delivery_status').disabled = !enabled;
-    document.getElementById('email_warranty_claim').disabled = !enabled;
-});
+    document.getElementById('email_enabled').addEventListener('change', function() {
+        const enabled = this.checked;
+        document.getElementById('email_document_upload').disabled = !enabled;
+        document.getElementById('email_project_update').disabled = !enabled;
+        document.getElementById('email_delivery_status').disabled = !enabled;
+        document.getElementById('email_warranty_claim').disabled = !enabled;
+        document.getElementById('email_manufacturer_request').disabled = !enabled;
+    });
 </script>
 </body>
 </html>
