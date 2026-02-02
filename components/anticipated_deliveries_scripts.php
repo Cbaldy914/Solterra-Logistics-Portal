@@ -570,7 +570,11 @@
                 hideLoading();
                 if (data.success) {
                     showToast('Projection deleted', 'success');
-                    window.location.href = `anticipated_deliveries.php?project_id=${projectId}`;
+                    if (isGeneralMode) {
+                        window.location.href = 'project_planning.php';
+                    } else {
+                        window.location.href = `anticipated_deliveries.php?project_id=${projectId}`;
+                    }
                 } else {
                     showToast('Failed to delete: ' + data.error, 'error');
                 }
