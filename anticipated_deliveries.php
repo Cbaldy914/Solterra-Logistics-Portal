@@ -8,6 +8,15 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Database connection
+require_once '../config.php';
+require_once 'projection_helpers.php';
+
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
+
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
 $account_ids_for_user = [];
@@ -23,15 +32,6 @@ if ($role !== 'global_admin') {
         }
         $stmtAccts->close();
     }
-}
-
-// Database connection
-require_once '../config.php';
-require_once 'projection_helpers.php';
-
-$conn = getDBConnection();
-if (!$conn) {
-    die("Connection failed");
 }
 
 // ========== AJAX HANDLERS ==========
@@ -134,20 +134,8 @@ if (isset($_GET['projection_id']) && !empty($_GET['projection_id']) &&
 
     // Fetch manufacturers for dropdown
     $manufacturers_for_manual = [];
-    $manufacturer_where = 'WHERE is_active = 1';
-    $manufacturer_params = [];
-    $manufacturer_types = '';
-    if ($role !== 'global_admin' && !empty($account_ids_for_user)) {
-        $placeholders = implode(',', array_fill(0, count($account_ids_for_user), '?'));
-        $manufacturer_where .= " AND account_id IN ($placeholders)";
-        $manufacturer_types = str_repeat('i', count($account_ids_for_user));
-        $manufacturer_params = $account_ids_for_user;
-    }
-    $stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers $manufacturer_where ORDER BY name ASC");
+    $stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
     if ($stmtManufacturers) {
-        if (!empty($manufacturer_params)) {
-            $stmtManufacturers->bind_param($manufacturer_types, ...$manufacturer_params);
-        }
         $stmtManufacturers->execute();
         $manufacturersResult = $stmtManufacturers->get_result();
         while ($manufacturer = $manufacturersResult->fetch_assoc()) {
@@ -298,20 +286,8 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
 // Fetch manufacturers for dropdown (same as add_module_batch.php)
 $manufacturers_for_manual = [];
-$manufacturer_where = 'WHERE is_active = 1';
-$manufacturer_params = [];
-$manufacturer_types = '';
-if ($role !== 'global_admin' && !empty($account_ids_for_user)) {
-    $placeholders = implode(',', array_fill(0, count($account_ids_for_user), '?'));
-    $manufacturer_where .= " AND account_id IN ($placeholders)";
-    $manufacturer_types = str_repeat('i', count($account_ids_for_user));
-    $manufacturer_params = $account_ids_for_user;
-}
-$stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers $manufacturer_where ORDER BY name ASC");
+$stmtManufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
 if ($stmtManufacturers) {
-    if (!empty($manufacturer_params)) {
-        $stmtManufacturers->bind_param($manufacturer_types, ...$manufacturer_params);
-    }
     $stmtManufacturers->execute();
     $manufacturersResult = $stmtManufacturers->get_result();
     while ($manufacturer = $manufacturersResult->fetch_assoc()) {
