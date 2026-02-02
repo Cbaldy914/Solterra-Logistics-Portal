@@ -2221,6 +2221,13 @@ $acc_actual_freight = 0;
 $acc_actual_warehousing = 0;
 $acc_actual_milestones = 0;
 $current_month = date('Y-m');
+$has_future_actual_costs = false;
+foreach (array_keys($deliveries_by_month_actual_cost) as $month_key) {
+    if ($month_key > $current_month) {
+        $has_future_actual_costs = true;
+        break;
+    }
+}
 
 foreach ($all_months_cost as $month_key) {
     $acc_ant += ($deliveries_by_month_anticipated[$month_key] ?? 0);
@@ -2237,7 +2244,7 @@ foreach ($all_months_cost as $month_key) {
         'milestones' => $acc_forecast_milestones
     ];
 
-    if ($month_key <= $current_month) {
+    if ($has_future_actual_costs || $month_key <= $current_month) {
         $acc_act += ($deliveries_by_month_actual_cost[$month_key] ?? 0);
         $budgetLine_actual[] = $acc_act;
 
