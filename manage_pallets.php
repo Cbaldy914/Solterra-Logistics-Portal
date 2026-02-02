@@ -449,7 +449,6 @@ try {
 
     // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers_for_shipping = [];
-    $manufacturer_where = $is_global_admin ? '' : ' AND m.account_id = ?';
     $sqlAllManufacturersModal = "
         SELECT 
             m.id, 
@@ -460,12 +459,9 @@ try {
             ml.zip_code 
         FROM manufacturers m
         LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-        WHERE m.is_active = 1$manufacturer_where
+        WHERE m.is_active = 1
         ORDER BY m.name ASC";
     if ($stmtAllManufacturersModal = $conn->prepare($sqlAllManufacturersModal)) {
-        if (!$is_global_admin) {
-            $stmtAllManufacturersModal->bind_param("i", $account_id_for_user);
-        }
         $stmtAllManufacturersModal->execute();
         $resultAllManufacturersModal = $stmtAllManufacturersModal->get_result();
         while ($row = $resultAllManufacturersModal->fetch_assoc()) {
