@@ -177,6 +177,60 @@ try {
         throw new Exception("Failed to delete module batch");
     }
 
+    // Step 8: Remove projection allocations tied to this batch and clear logistics if empty
+    $projection_ids = [];
+    if ($stmtProj = $conn->prepare("SELECT DISTINCT projection_id FROM projection_module_allocations WHERE module_id = ? AND is_projection_module = 0")) {
+        $stmtProj->bind_param("i", $batchId);
+        $stmtProj->execute();
+        $resProj = $stmtProj->get_result();
+        while ($row = $resProj->fetch_assoc()) {
+            $projection_ids[] = (int)$row['projection_id'];
+        }
+        $stmtProj->close();
+    }
+
+    if (!empty($projection_ids)) {
+        if ($stmtDelAlloc = $conn->prepare("DELETE FROM projection_module_allocations WHERE module_id = ? AND is_projection_module = 0")) {
+            $stmtDelAlloc->bind_param("i", $batchId);
+            $stmtDelAlloc->execute();
+            $stmtDelAlloc->close();
+        }
+
+        if ($stmtCount = $conn->prepare("SELECT COUNT(*) FROM projection_module_allocations WHERE projection_id = ?")) {
+            foreach ($projection_ids as $projection_id) {
+                $stmtCount->bind_param("i", $projection_id);
+                $stmtCount->execute();
+                $stmtCount->bind_result($alloc_count);
+                $stmtCount->fetch();
+                $stmtCount->free_result();
+
+                if ((int)$alloc_count === 0) {
+                    // Clear logistics data for empty projections
+                    $conn->query("DELETE FROM projection_stop_fees WHERE stop_id IN (SELECT id FROM projection_stops WHERE projection_id = " . (int)$projection_id . ")");
+                    $clear_legs = $conn->prepare("DELETE FROM projection_legs WHERE projection_id = ?");
+                    if ($clear_legs) {
+                        $clear_legs->bind_param("i", $projection_id);
+                        $clear_legs->execute();
+                        $clear_legs->close();
+                    }
+                    $clear_stops = $conn->prepare("DELETE FROM projection_stops WHERE projection_id = ?");
+                    if ($clear_stops) {
+                        $clear_stops->bind_param("i", $projection_id);
+                        $clear_stops->execute();
+                        $clear_stops->close();
+                    }
+                    $clear_summary = $conn->prepare("DELETE FROM projection_cost_summary WHERE projection_id = ?");
+                    if ($clear_summary) {
+                        $clear_summary->bind_param("i", $projection_id);
+                        $clear_summary->execute();
+                        $clear_summary->close();
+                    }
+                }
+            }
+            $stmtCount->close();
+        }
+    }
+
     // Best-effort: remove uploaded docs folder for this batch if it exists and is not a project document
     if (!empty($moduleDocsUrl) && strpos($moduleDocsUrl, 'uploads/module_batches/') === 0) {
         $baseDir = dirname($moduleDocsUrl);
