@@ -1004,31 +1004,28 @@ try {
 
     // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers = [];
-    if (!empty($batch_data['account_id'])) {
-        $stmtM = $conn->prepare("
-            SELECT 
-                m.id, 
-                m.name, 
-                ml.street_address, 
-                ml.city, 
-                ml.state, 
-                ml.zip_code 
-            FROM manufacturers m
-            LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-            WHERE m.is_active = 1 AND m.account_id = ?
-            ORDER BY m.name ASC");
-        if ($stmtM) {
-            $stmtM->bind_param("i", $batch_data['account_id']);
-            $stmtM->execute();
-            $resultM = $stmtM->get_result();
-            while ($mfg = $resultM->fetch_assoc()) {
-                // Build full address for Google Maps
-                $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code']]);
-                $mfg['full_address'] = implode(', ', $address_parts);
-                $all_manufacturers[] = $mfg;
-            }
-            $stmtM->close();
+    $stmtM = $conn->prepare("
+        SELECT 
+            m.id, 
+            m.name, 
+            ml.street_address, 
+            ml.city, 
+            ml.state, 
+            ml.zip_code 
+        FROM manufacturers m
+        LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+        WHERE m.is_active = 1
+        ORDER BY m.name ASC");
+    if ($stmtM) {
+        $stmtM->execute();
+        $resultM = $stmtM->get_result();
+        while ($mfg = $resultM->fetch_assoc()) {
+            // Build full address for Google Maps
+            $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code']]);
+            $mfg['full_address'] = implode(', ', $address_parts);
+            $all_manufacturers[] = $mfg;
         }
+        $stmtM->close();
     }
 
 } catch (Exception $e) {
