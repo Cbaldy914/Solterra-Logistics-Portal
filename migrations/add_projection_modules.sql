@@ -45,3 +45,9 @@ CREATE TABLE IF NOT EXISTS projection_module_milestones (
 -- Add flag to projection_module_allocations to track source table
 ALTER TABLE projection_module_allocations
   ADD COLUMN is_projection_module TINYINT(1) NOT NULL DEFAULT 0 AFTER pallets;
+
+-- Drop the FK constraint on module_id since it can now reference either
+-- the modules table or the projection_modules table depending on is_projection_module.
+-- The constraint name may vary — try the known name first.
+ALTER TABLE projection_module_allocations
+  DROP FOREIGN KEY fk_allocation_module;
