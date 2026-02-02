@@ -860,7 +860,7 @@ function initPieChart() {
 
 // Financial chart data from PHP
 var budgetChartData = <?php echo $budgetLineChartDataJSON ?? '{"anticipated_cost":[],"actual_cost":[]}'; ?>;
-var budgetDateLabels = <?php echo $dateLabelsForBudget ?? '[]'; ?>;
+var budgetDateLabels = <?php echo $dateLabelsForBudget ?: '[]'; ?>;
 var costPieData = <?php echo json_encode(array_values($pieChartDataFinancial ?? []), JSON_UNESCAPED_UNICODE) ?: '[0,0,0]'; ?>;
 var costPieLabels = <?php echo json_encode(array_keys($pieChartDataFinancial ?? []), JSON_UNESCAPED_UNICODE) ?: '["Freight","Warehousing","Accessorial"]'; ?>;
 var totalActualCost = <?php echo $total_logistics_cost ?? 0; ?>;
