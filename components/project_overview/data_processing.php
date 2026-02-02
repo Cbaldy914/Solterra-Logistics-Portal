@@ -241,6 +241,30 @@ foreach($total_orders as $lbl => $info) {
     $total_raw_modules += $info['raw_quantity'];
 }
 
+// Projection fallback totals (used when projection allocations are incomplete)
+$projection_fallback_totals = null;
+$fallback_total_watts = 0;
+foreach ($total_orders as $lbl => $info) {
+    $fallback_total_watts += $info['raw_quantity'] * $info['wattage'];
+}
+if ($total_raw_modules > 0 || $fallback_total_watts > 0) {
+    $fallback_modules_per_pallet = (!empty($project['modules_per_pallet']) && $project['modules_per_pallet'] > 0)
+        ? (int)$project['modules_per_pallet']
+        : 30;
+    $fallback_pallets_per_truck = 20;
+    $fallback_total_pallets = ($total_raw_modules > 0 && $fallback_modules_per_pallet > 0)
+        ? (int)ceil($total_raw_modules / $fallback_modules_per_pallet)
+        : 0;
+
+    $projection_fallback_totals = [
+        'total_modules' => $total_raw_modules,
+        'total_watts' => $fallback_total_watts,
+        'total_pallets' => $fallback_total_pallets,
+        'modules_per_pallet' => $fallback_modules_per_pallet,
+        'pallets_per_truck' => $fallback_pallets_per_truck,
+    ];
+}
+
 // Create combined wattage label
 $non_zero_watts = array_filter($wattages, fn($v)=>$v>0);
 if (count($non_zero_watts) > 0) {
@@ -282,61 +306,229 @@ function getWeekStartingSunday($dateStr) {
 }
 
 /**
+ * Normalize date values from the database.
+ * Returns null for empty/invalid dates.
+ */
+function normalizeDateValue($dateValue) {
+    if (empty($dateValue)) {
+        return null;
+    }
+
+    if ($dateValue === '0000-00-00' || $dateValue === '0000-00-00 00:00:00') {
+        return null;
+    }
+
+    $timestamp = strtotime($dateValue);
+    if ($timestamp === false || $timestamp <= 0) {
+        return null;
+    }
+
+    $year = (int)date('Y', $timestamp);
+    if ($year < 2000) {
+        return null;
+    }
+
+    return date('Y-m-d', $timestamp);
+}
+
+/**
+ * Estimate total pallets, modules, and trucks from projection allocations.
+ *
+ * @param array $projection
+ * @return array
+ */
+function getProjectionTotals($projection, $fallback_totals = null) {
+    $totals = [
+        'total_pallets' => 0,
+        'total_modules' => 0,
+        'total_watts' => 0,
+        'pallets_per_truck' => 20,
+        'modules_per_pallet' => 30,
+        'total_trucks' => 0,
+    ];
+
+    $modules_per_pallet_sum = 0;
+    $modules_per_pallet_count = 0;
+
+    if ($projection && !empty($projection['module_allocations'])) {
+        foreach ($projection['module_allocations'] as $alloc) {
+            $pallets = (int)($alloc['pallets'] ?? 0);
+            $quantity = (int)($alloc['quantity'] ?? 0);
+            $wattage = (float)($alloc['wattage'] ?? 0);
+
+            $totals['total_pallets'] += $pallets;
+            $totals['total_modules'] += $quantity;
+            $totals['total_watts'] += $wattage * $quantity;
+
+            if (!empty($alloc['pallets_per_truck'])) {
+                $totals['pallets_per_truck'] = (int)$alloc['pallets_per_truck'];
+            }
+
+            if (!empty($alloc['modules_per_pallet'])) {
+                $modules_per_pallet_sum += (int)$alloc['modules_per_pallet'];
+                $modules_per_pallet_count++;
+            }
+        }
+    }
+
+    if (!empty($fallback_totals)) {
+        if (($totals['total_modules'] ?? 0) <= 0 && !empty($fallback_totals['total_modules'])) {
+            $totals['total_modules'] = (int)$fallback_totals['total_modules'];
+        }
+        if (($totals['total_watts'] ?? 0) <= 0 && !empty($fallback_totals['total_watts'])) {
+            $totals['total_watts'] = (float)$fallback_totals['total_watts'];
+        }
+        if (($totals['total_pallets'] ?? 0) <= 0 && !empty($fallback_totals['total_pallets'])) {
+            $totals['total_pallets'] = (int)$fallback_totals['total_pallets'];
+        }
+        if (!empty($fallback_totals['modules_per_pallet'])) {
+            $totals['modules_per_pallet'] = (int)$fallback_totals['modules_per_pallet'];
+        }
+        if (!empty($fallback_totals['pallets_per_truck'])) {
+            $totals['pallets_per_truck'] = (int)$fallback_totals['pallets_per_truck'];
+        }
+    }
+
+    if ($totals['total_pallets'] > 0) {
+        $totals['modules_per_pallet'] = $totals['total_modules'] > 0
+            ? $totals['total_modules'] / $totals['total_pallets']
+            : $totals['modules_per_pallet'];
+    } elseif ($modules_per_pallet_count > 0) {
+        $totals['modules_per_pallet'] = $modules_per_pallet_sum / $modules_per_pallet_count;
+    }
+
+    if ($totals['total_pallets'] <= 0 && $totals['total_modules'] > 0) {
+        $totals['total_pallets'] = (int)ceil($totals['total_modules'] / max(1, $totals['modules_per_pallet']));
+    }
+
+    if ($totals['pallets_per_truck'] <= 0) {
+        $totals['pallets_per_truck'] = 20;
+    }
+
+    if ($totals['total_pallets'] > 0) {
+        $totals['total_trucks'] = (int)ceil($totals['total_pallets'] / $totals['pallets_per_truck']);
+    }
+
+    return $totals;
+}
+
+/**
+ * Pick the delivery leg that represents project delivery.
+ */
+function selectProjectionDeliveryLeg($projection) {
+    if (!$projection || empty($projection['legs'])) {
+        return null;
+    }
+
+    $legs = $projection['legs'];
+    usort($legs, function ($a, $b) {
+        $orderA = isset($a['leg_order']) ? (int)$a['leg_order'] : 0;
+        $orderB = isset($b['leg_order']) ? (int)$b['leg_order'] : 0;
+        return $orderA <=> $orderB;
+    });
+
+    $milestone_legs = array_filter($legs, function ($leg) {
+        return ($leg['triggers_milestone'] ?? '') === 'project_delivery';
+    });
+    if (!empty($milestone_legs)) {
+        return end($milestone_legs);
+    }
+
+    $destination_legs = array_filter($legs, function ($leg) {
+        return ($leg['to_type'] ?? '') === 'destination';
+    });
+    if (!empty($destination_legs)) {
+        return end($destination_legs);
+    }
+
+    return end($legs);
+}
+
+/**
  * Calculate anticipated deliveries from a projection's final leg to project site.
  *
  * @param array $projection The full projection with legs and module_allocations
  * @param string $view_mode 'mw', 'modules', 'pallets', or 'trucks'
+ * @param array|null $fallback_totals Optional totals from project orders
  * @return array ['deliveries' => [date => quantity], 'total_quantity' => float]
  */
-function calculateAnticipatedDeliveriesFromProjection($projection, $view_mode = 'mw') {
+function calculateAnticipatedDeliveriesFromProjection($projection, $view_mode = 'mw', $fallback_totals = null) {
     $result = ['deliveries' => [], 'total_quantity' => 0];
 
     if (!$projection || empty($projection['legs'])) {
         return $result;
     }
 
-    // Find the final leg that delivers to the project (to_type = 'destination')
-    $final_leg = null;
-    foreach ($projection['legs'] as $leg) {
-        if (($leg['to_type'] ?? '') === 'destination') {
-            $final_leg = $leg;
-            break;
-        }
+    // Find the final leg that delivers to the project
+    $final_leg = selectProjectionDeliveryLeg($projection);
+
+    if (!$final_leg) {
+        return $result;
     }
 
-    if (!$final_leg || empty($final_leg['start_date'])) {
+    $leg_start_date = normalizeDateValue($final_leg['start_date'] ?? null);
+    $leg_end_date = normalizeDateValue($final_leg['end_date'] ?? null);
+
+    if (!$leg_start_date && $leg_end_date) {
+        $leg_start_date = $leg_end_date;
+    }
+
+    if (!$leg_start_date && !empty($projection['stops'])) {
+        $stops_by_id = [];
+        foreach ($projection['stops'] as $stop) {
+            if (!empty($stop['id'])) {
+                $stops_by_id[(string)$stop['id']] = $stop;
+            }
+        }
+        $from_stop = $stops_by_id[(string)($final_leg['from_stop_id'] ?? '')] ?? null;
+        $to_stop = $stops_by_id[(string)($final_leg['to_stop_id'] ?? '')] ?? null;
+
+        $leg_start_date = normalizeDateValue($from_stop['estimated_departure_date'] ?? null)
+            ?: normalizeDateValue($from_stop['estimated_arrival_date'] ?? null)
+            ?: normalizeDateValue($to_stop['estimated_arrival_date'] ?? null);
+    }
+
+    if (!$leg_start_date) {
         return $result;
     }
 
     // Get delivery parameters from the leg
-    $start_date = new DateTime($final_leg['start_date']);
+    $start_date = new DateTime($leg_start_date);
     $delivery_rate = (float)($final_leg['delivery_rate'] ?? 0);
     $delivery_rate_unit = $final_leg['delivery_rate_unit'] ?? 'per_week';
     $trucks_required = (int)($final_leg['trucks_required'] ?? 0);
+
+    $projection_totals = getProjectionTotals($projection, $fallback_totals);
+    $total_pallets = $projection_totals['total_pallets'];
+    $total_modules = $projection_totals['total_modules'];
+    $total_watts = $projection_totals['total_watts'];
+    $modules_per_pallet = $projection_totals['modules_per_pallet'];
+
+    if ($trucks_required <= 0) {
+        $trucks_required = $projection_totals['total_trucks'];
+    }
+
+    if ($delivery_rate <= 0 && $leg_start_date && $leg_end_date && $trucks_required > 0) {
+        $start_dt = new DateTime($leg_start_date);
+        $end_dt = new DateTime($leg_end_date);
+        $duration_days = max(1, $start_dt->diff($end_dt)->days + 1);
+        $weeks = max(1, (int)ceil($duration_days / 7));
+        $delivery_rate = $trucks_required / $weeks;
+        $delivery_rate_unit = 'per_week';
+    }
+
+    if ($delivery_rate <= 0 && $trucks_required > 0) {
+        $delivery_rate = $trucks_required;
+        $delivery_rate_unit = 'per_week';
+    }
 
     if ($delivery_rate <= 0 || $trucks_required <= 0) {
         return $result;
     }
 
-    // Calculate totals from module allocations for conversion
-    $total_pallets = 0;
-    $total_modules = 0;
-    $total_watts = 0;
-    $pallets_per_truck = 20; // default
-
-    if (!empty($projection['module_allocations'])) {
-        foreach ($projection['module_allocations'] as $alloc) {
-            $total_pallets += (int)($alloc['pallets'] ?? 0);
-            $total_modules += (int)($alloc['quantity'] ?? 0);
-            $total_watts += (float)($alloc['wattage'] ?? 0) * (int)($alloc['quantity'] ?? 0);
-            if (!empty($alloc['pallets_per_truck'])) {
-                $pallets_per_truck = (int)$alloc['pallets_per_truck'];
-            }
-        }
+    if ($total_pallets <= 0 && $total_modules > 0 && $modules_per_pallet > 0) {
+        $total_pallets = (int)ceil($total_modules / $modules_per_pallet);
     }
-
-    // Calculate modules per pallet (average)
-    $modules_per_pallet = $total_pallets > 0 ? $total_modules / $total_pallets : 30;
 
     // Calculate what one truck delivers in the requested view_mode
     $per_truck = 0;
@@ -449,7 +641,7 @@ $using_projection_forecast = false;
 
 // PRIORITY 1: Use primary projection's final leg delivery schedule if available
 if ($primary_projection && !empty($primary_projection['legs'])) {
-    $projection_data = calculateAnticipatedDeliveriesFromProjection($primary_projection, $view_mode);
+    $projection_data = calculateAnticipatedDeliveriesFromProjection($primary_projection, $view_mode, $projection_fallback_totals);
 
     if (!empty($projection_data['deliveries'])) {
         $anticipated_deliveries = $projection_data['deliveries'];
@@ -495,7 +687,10 @@ if (!$using_projection_forecast) {
 
     while ($r = $anticipated_res->fetch_assoc()) {
         $w = (float)$r['wattage'];
-        $dOriginal = $r['delivery_date'];
+        $dOriginal = normalizeDateValue($r['delivery_date'] ?? null);
+        if (!$dOriginal) {
+            continue;
+        }
         $d = getWeekEndingSunday($dOriginal);
         $q_raw = (int)$r['quantity'];
         $q_calc = calculateQuantity($q_raw, $w, $view_mode);
@@ -515,7 +710,10 @@ $actual_res = fetchDeliveriesByDate($conn, $project_id, 'actual_delivery_date', 
 $actual_deliveries = [];
 while ($r = $actual_res->fetch_assoc()) {
     $w = (float)$r['wattage'];
-    $dOriginal = $r['delivery_date'];
+    $dOriginal = normalizeDateValue($r['delivery_date'] ?? null);
+    if (!$dOriginal) {
+        continue;
+    }
     $d = getWeekEndingSunday($dOriginal);
 
     $q_raw = (int)$r['quantity'];
@@ -1446,20 +1644,15 @@ $all_projection_weeks = []; // All weeks with costs (for modal)
 
 if ($primary_projection) {
     $today_str = (new DateTime())->format('Y-m-d');
+    $projection_totals = getProjectionTotals($primary_projection, $projection_fallback_totals);
+    $projection_total_trucks = $projection_totals['total_trucks'];
     $projection_weekly_costs = [];
     $projection_monthly_costs = [];
     $projection_milestone_amounts = [];
     $projection_po_events = [];
 
     $normalizeDate = function ($dateValue) {
-        if (empty($dateValue)) {
-            return null;
-        }
-        $timestamp = strtotime($dateValue);
-        if ($timestamp === false) {
-            return null;
-        }
-        return date('Y-m-d', $timestamp);
+        return normalizeDateValue($dateValue);
     };
 
     $ensureWeeklyBucket = function ($weekKey) use (&$projection_weekly_costs) {
@@ -1471,7 +1664,7 @@ if ($primary_projection) {
         }
     };
 
-    $getLegWeeklyTruckSchedule = function ($leg) use ($normalizeDate) {
+    $getLegWeeklyTruckSchedule = function ($leg) use ($normalizeDate, $projection_total_trucks) {
         $schedule = [];
         $startDate = $normalizeDate($leg['start_date'] ?? null) ?: $normalizeDate($leg['end_date'] ?? null);
         if (!$startDate) {
@@ -1479,6 +1672,9 @@ if ($primary_projection) {
         }
 
         $totalTrucks = (int)($leg['trucks_required'] ?? 0);
+        if ($totalTrucks <= 0 && $projection_total_trucks > 0) {
+            $totalTrucks = $projection_total_trucks;
+        }
         if ($totalTrucks <= 0) {
             return $schedule;
         }
@@ -1866,8 +2062,8 @@ $allDel = $stmt->get_result();
 $stmt->close();
 
 while($dv = $allDel->fetch_assoc()) {
-    $adate = $dv['actual_delivery_date'];
-    $ddate = $dv['anticipated_delivery_date'];
+    $adate = normalizeDateValue($dv['actual_delivery_date'] ?? null);
+    $ddate = normalizeDateValue($dv['anticipated_delivery_date'] ?? null);
     $stat  = $dv['status_of_delivery'];
     $watt  = (float)$dv['wattage'];
     $qty   = (int)$dv['quantity'];
@@ -1976,16 +2172,19 @@ if ($primary_projection && !empty($projection_monthly_costs)) {
     $stmt->close();
 
     while($dv = $allDelForecast->fetch_assoc()) {
-        $ddate = $dv['anticipated_delivery_date'];
+        $ddate = normalizeDateValue($dv['anticipated_delivery_date'] ?? null);
         $stat  = $dv['status_of_delivery'];
         $watt  = (float)$dv['wattage'];
         $qty   = (int)$dv['quantity'];
 
-        $cost_date = $dv['actual_delivery_date'];
+        $cost_date = normalizeDateValue($dv['actual_delivery_date'] ?? null);
         if (empty($cost_date) && $stat === 'Canceled') {
             $cost_date = (!empty($ddate)) ? $ddate : date('Y-m-d');
-        } else if (empty($cost_date)) {
+        } elseif (empty($cost_date)) {
             $cost_date = $ddate;
+        }
+        if (empty($cost_date)) {
+            $cost_date = date('Y-m-d');
         }
         if (!empty($cost_date)) {
             $monthKey = substr($cost_date, 0, 7);
@@ -2004,6 +2203,9 @@ $all_months_cost = array_unique(array_merge(
     array_keys($deliveries_by_month_actual_cost),
     array_keys($deliveries_by_month_anticipated)
 ));
+$all_months_cost = array_values(array_filter($all_months_cost, function ($month_key) {
+    return is_string($month_key) && preg_match('/^\d{4}-\d{2}$/', $month_key);
+}));
 sort($all_months_cost);
 
 $budgetLine_anticipated = [];
