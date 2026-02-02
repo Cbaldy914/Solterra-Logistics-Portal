@@ -11,6 +11,18 @@ if (!isset($_SESSION['user_id']) ||
 
 $role = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
+$account_id = null;
+
+if ($role === 'admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+}
 
 /* ─────────────────────────────────────  DB CONNECTION  ─────────────────────────────────────── */
 require_once '../config.php';
@@ -60,8 +72,16 @@ if ($stmtP) {
 }
 
 // Fetch Warehouses
-$stmtW = $conn->prepare("SELECT id, name FROM warehouses ORDER BY name ASC");
+$warehouse_sql = "SELECT id, name FROM warehouses";
+if ($role === 'admin') {
+    $warehouse_sql .= " WHERE account_id = ?";
+}
+$warehouse_sql .= " ORDER BY name ASC";
+$stmtW = $conn->prepare($warehouse_sql);
 if ($stmtW) {
+    if ($role === 'admin') {
+        $stmtW->bind_param("i", $account_id);
+    }
     $stmtW->execute();
     $resultW = $stmtW->get_result();
     while ($wh = $resultW->fetch_assoc()) {
@@ -102,7 +122,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
     $total_freight_cost        = ($_POST['freight_cost']        !== '') ? (float)$_POST['freight_cost']        : 0.0;
     $total_accessorial_paid    = ($_POST['accessorial_costs_paid'] !== '') ? (float)$_POST['accessorial_costs_paid'] : 0.0;
     $total_accessorial_charged = ($_POST['accessorial_costs']     !== '') ? (float)$_POST['accessorial_costs']     : 0.0; // From hidden field synced by JS
-    $total_customer_cost       = ($_POST['customer_cost']       !== '') ? (float)$_POST['customer_cost']       : 0.0;
+    $total_customer_cost       = ($_POST['customer_cost']       !== '') ? (float)$_POST['customer_cost']       : null;
+    if ($total_customer_cost === null) {
+        $total_customer_cost = $total_freight_cost;
+    }
+    if ($total_freight_cost <= 0 && $total_customer_cost > 0) {
+        $total_freight_cost = $total_customer_cost;
+    }
     $total_miles               = ($_POST['miles']               !== '') ? (float)$_POST['miles']               : null;
 
     // --- POD Upload --- 
@@ -166,9 +192,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
             
             // Try to find the manufacturer location ID
             // First, get manufacturer ID
-            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? OR short_name = ? LIMIT 1");
+            $account_clause = $role === 'global_admin' ? '' : ' AND account_id = ?';
+            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE (name = ? OR short_name = ?) $account_clause LIMIT 1");
             if ($stmt_mfg) {
-                $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                if ($role === 'global_admin') {
+                    $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                } else {
+                    $stmt_mfg->bind_param("ssi", $manufacturer_name, $manufacturer_name, $account_id);
+                }
                 $stmt_mfg->execute();
                 $stmt_mfg->bind_result($manufacturer_id);
                 if ($stmt_mfg->fetch()) {
@@ -177,10 +208,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                     // If supplier contains location info (like "Meyer Burger - Raleigh Plant"), find specific location
                     if (strpos($supplier, ' - ') !== false) {
                         $location_part = trim(explode(' - ', $supplier)[1]);
-                        $stmt_loc = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND location_name LIKE ? AND is_active = 1 LIMIT 1");
+                        $account_clause = $role === 'global_admin' ? '' : ' AND m.account_id = ?';
+                        $stmt_loc = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.location_name LIKE ? AND ml.is_active = 1 $account_clause LIMIT 1");
                         if ($stmt_loc) {
                             $location_search = "%{$location_part}%";
-                            $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
+                            if ($role === 'global_admin') {
+                                $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
+                            } else {
+                                $stmt_loc->bind_param("isi", $manufacturer_id, $location_search, $account_id);
+                            }
                             $stmt_loc->execute();
                             $stmt_loc->bind_result($found_location_id);
                             if ($stmt_loc->fetch()) {
@@ -192,9 +228,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                     
                     // If no specific location found, use primary location
                     if (!$manufacturer_location_id) {
-                        $stmt_primary = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = 1 AND is_active = 1 LIMIT 1");
+                        $account_clause = $role === 'global_admin' ? '' : ' AND m.account_id = ?';
+                        $stmt_primary = $conn->prepare("SELECT ml.id FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ? AND ml.is_primary = 1 AND ml.is_active = 1 $account_clause LIMIT 1");
                         if ($stmt_primary) {
-                            $stmt_primary->bind_param("i", $manufacturer_id);
+                            if ($role === 'global_admin') {
+                                $stmt_primary->bind_param("i", $manufacturer_id);
+                            } else {
+                                $stmt_primary->bind_param("ii", $manufacturer_id, $account_id);
+                            }
                             $stmt_primary->execute();
                             $stmt_primary->bind_result($primary_location_id);
                             if ($stmt_primary->fetch()) {

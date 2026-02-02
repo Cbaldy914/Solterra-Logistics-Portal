@@ -13,10 +13,42 @@ require_once 'document_helpers.php';
 $conn = getDBConnection();
 $google_maps_api_key = getGoogleMapsApiKey();
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+$account_id = null;
+
+if ($role !== 'global_admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if (!$account_id) {
+        die("No valid account found for this user.");
+    }
+}
+
 // Get and validate warehouse ID
 $warehouse_id = isset($_GET['warehouse_id']) ? intval($_GET['warehouse_id']) : 0;
 if ($warehouse_id <= 0) {
     die("Invalid Warehouse ID provided.");
+}
+
+if ($role !== 'global_admin') {
+    $stmtAccess = $conn->prepare("SELECT id FROM warehouses WHERE id = ? AND account_id = ?");
+    if ($stmtAccess) {
+        $stmtAccess->bind_param("ii", $warehouse_id, $account_id);
+        $stmtAccess->execute();
+        $accessResult = $stmtAccess->get_result();
+        $stmtAccess->close();
+        if ($accessResult->num_rows === 0) {
+            header("Location: unauthorized.php");
+            exit();
+        }
+    }
 }
 
 $warehouse = null;
@@ -511,9 +543,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 try {
     // Fetch Warehouse/Port Details
-    $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ?");
+    if ($role === 'global_admin') {
+        $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ?");
+    } else {
+        $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ? AND account_id = ?");
+    }
     if (!$stmtW) throw new Exception("Failed to prepare warehouse query: " . $conn->error);
-    $stmtW->bind_param("i", $warehouse_id);
+    if ($role === 'global_admin') {
+        $stmtW->bind_param("i", $warehouse_id);
+    } else {
+        $stmtW->bind_param("ii", $warehouse_id, $account_id);
+    }
     $stmtW->execute();
     $resultW = $stmtW->get_result();
     if ($resultW->num_rows === 0) {
@@ -611,8 +651,12 @@ try {
     $total_storage_cost_monthly_rate = $total_pallets * $warehouse_fees['monthly'];
 
     // Fetch all projects for dropdown options (build full addresses like create_shipment.php)
-    $stmtAllP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC");
+    $project_clause = $role === 'global_admin' ? '' : ' AND account_id = ?';
+    $stmtAllP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE (status IS NULL OR status = 'active')$project_clause ORDER BY project_name ASC");
     if ($stmtAllP) {
+        if ($role !== 'global_admin') {
+            $stmtAllP->bind_param("i", $account_id);
+        }
         $stmtAllP->execute();
         $resultAllP = $stmtAllP->get_result();
         while ($proj = $resultAllP->fetch_assoc()) {
@@ -625,9 +669,14 @@ try {
     }
 
     // Fetch other warehouses (exclude ports and current warehouse, build full addresses like create_shipment.php)
-    $stmtOtherW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses WHERE (is_port = 0 OR is_port IS NULL) AND id != ? ORDER BY name ASC");
+    $account_clause = $role === 'global_admin' ? '' : ' AND account_id = ?';
+    $stmtOtherW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses WHERE (is_port = 0 OR is_port IS NULL) AND id != ?$account_clause ORDER BY name ASC");
     if ($stmtOtherW) {
-        $stmtOtherW->bind_param("i", $warehouse_id);
+        if ($role === 'global_admin') {
+            $stmtOtherW->bind_param("i", $warehouse_id);
+        } else {
+            $stmtOtherW->bind_param("ii", $warehouse_id, $account_id);
+        }
         $stmtOtherW->execute();
         $resultOtherW = $stmtOtherW->get_result();
         while ($wh = $resultOtherW->fetch_assoc()) {

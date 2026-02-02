@@ -173,7 +173,11 @@ try {
 
                 // Send invite email
                 require_once __DIR__ . '/../Mailer.php';
-                $reset_link = "https://" . $_SERVER['HTTP_HOST'] . "/reset_password?token=" . $token;
+                $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+                $host = $_SERVER['HTTP_HOST'];
+                $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
+                $basePath = preg_replace('#/api$#', '', $scriptDir);
+                $reset_link = $scheme . '://' . $host . ($basePath !== '' ? $basePath : '') . '/reset_password.php?token=' . $token;
                 $subject = "You're invited to Solterra Solutions Portal";
                 $body = "Hello,\n\n" .
                     "You have been invited to the Solterra Solutions Logistics Portal.\n\n" .

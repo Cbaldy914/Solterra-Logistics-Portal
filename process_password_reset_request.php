@@ -76,7 +76,11 @@ if ($result->num_rows > 0) {
     
     if ($insert_stmt->execute()) {
         // Send email with reset link
-        $reset_link = "https://" . $_SERVER['HTTP_HOST'] . "/reset_password?token=" . $token;
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'];
+        $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'])), '/');
+        $basePath = preg_replace('#/api$#', '', $scriptDir);
+        $reset_link = $scheme . '://' . $host . ($basePath !== '' ? $basePath : '') . '/reset_password.php?token=' . $token;
         
         $subject = "Password Reset Request - Solterra Solutions Portal";
         $message = "Hello " . $user['username'] . ",

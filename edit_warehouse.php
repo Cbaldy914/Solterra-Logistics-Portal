@@ -23,9 +23,55 @@ if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
 
 $warehouse_id = intval($_GET['id']);
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+$account_id = null;
+$accounts = [];
+
+if ($role === 'global_admin') {
+    $resAccounts = $conn->query("SELECT id, name FROM customer_accounts ORDER BY name ASC");
+    if ($resAccounts) {
+        while ($row = $resAccounts->fetch_assoc()) {
+            $accounts[] = $row;
+        }
+    }
+} else {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if (!$account_id) {
+        die("No valid account found for this user.");
+    }
+
+    $stmtAccess = $conn->prepare("SELECT id FROM warehouses WHERE id = ? AND account_id = ?");
+    if ($stmtAccess) {
+        $stmtAccess->bind_param("ii", $warehouse_id, $account_id);
+        $stmtAccess->execute();
+        $accessResult = $stmtAccess->get_result();
+        $stmtAccess->close();
+        if ($accessResult->num_rows === 0) {
+            header("Location: unauthorized.php");
+            exit();
+        }
+    }
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        $account_id_update = $account_id;
+        if ($role === 'global_admin') {
+            $account_id_update = isset($_POST['account_id']) ? (int)$_POST['account_id'] : 0;
+            if ($account_id_update <= 0) {
+                throw new Exception("Please select a valid Account.");
+            }
+        }
+
         // Validate required fields
         $name = trim($_POST['name'] ?? '');
         $street_address = trim($_POST['street_address'] ?? '');
@@ -56,12 +102,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $combined_address = implode(', ', $address_parts);
 
         // Update warehouse basic information
-        $stmt = $conn->prepare("UPDATE warehouses SET name = ?, address = ?, street_address = ?, city = ?, state = ?, zip_code = ?, country = ?, is_port = ? WHERE id = ?");
+        $stmt = $conn->prepare("UPDATE warehouses SET account_id = ?, name = ?, address = ?, street_address = ?, city = ?, state = ?, zip_code = ?, country = ?, is_port = ? WHERE id = ?");
         if (!$stmt) {
             throw new Exception("Error preparing update statement: " . $conn->error);
         }
 
-        $stmt->bind_param("sssssssii", $name, $combined_address, $street_address, $city, $state, $zip_code, $country, $is_port, $warehouse_id);
+        $stmt->bind_param("issssssssii", $account_id_update, $name, $combined_address, $street_address, $city, $state, $zip_code, $country, $is_port, $warehouse_id);
         
         if ($stmt->execute()) {
             // Smart UPSERT for cost items - preserve IDs where possible
@@ -163,12 +209,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Fetch warehouse data and cost items
 if (!$warehouse) {
     try {
-        $stmt = $conn->prepare("SELECT id, name, address, street_address, city, state, zip_code, country, is_port FROM warehouses WHERE id = ?");
+        if ($role === 'global_admin') {
+            $stmt = $conn->prepare("SELECT id, account_id, name, address, street_address, city, state, zip_code, country, is_port FROM warehouses WHERE id = ?");
+        } else {
+            $stmt = $conn->prepare("SELECT id, account_id, name, address, street_address, city, state, zip_code, country, is_port FROM warehouses WHERE id = ? AND account_id = ?");
+        }
         if (!$stmt) {
             throw new Exception("Error preparing select statement: " . $conn->error);
         }
 
-        $stmt->bind_param("i", $warehouse_id);
+        if ($role === 'global_admin') {
+            $stmt->bind_param("i", $warehouse_id);
+        } else {
+            $stmt->bind_param("ii", $warehouse_id, $account_id);
+        }
         $stmt->execute();
         $result = $stmt->get_result();
 
@@ -641,11 +695,37 @@ if (!$warehouse && empty($successMessage)) {
 
     <?php if ($warehouse): ?>
     <form method="POST" action="">
+        <?php if ($role === 'global_admin'): ?>
+            <div class="accordion-section">
+                <div class="accordion-header active" onclick="toggleAccordion(this)">
+                    <h2><span class="step-badge">1</span> Account</h2>
+                    <span class="accordion-toggle">&#9660;</span>
+                </div>
+                <div class="accordion-content open">
+                    <div class="section-description">
+                        Assign this warehouse to a customer account.
+                    </div>
+                    <div class="form-row single">
+                        <div class="form-group">
+                            <label for="account_id">Account <span class="required-star">*</span></label>
+                            <select id="account_id" name="account_id" required>
+                                <option value="">Select Account</option>
+                                <?php foreach ($accounts as $account): ?>
+                                    <option value="<?php echo (int)$account['id']; ?>" <?php echo ((int)($warehouse['account_id'] ?? 0) === (int)$account['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($account['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <!-- Section 1: Basic Information -->
         <div class="accordion-section">
             <div class="accordion-header active" onclick="toggleAccordion(this)">
-                <h2><span class="step-badge">1</span> Basic Information</h2>
+                <h2><span class="step-badge"><?php echo ($role === 'global_admin') ? '2' : '1'; ?></span> Basic Information</h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content open">

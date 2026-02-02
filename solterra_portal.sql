@@ -19420,6 +19420,7 @@ INSERT INTO `login_attempts` (`id`, `username`, `ip_address`, `user_agent`, `att
 
 CREATE TABLE `manufacturers` (
   `id` int(11) NOT NULL,
+  `account_id` int(11) DEFAULT NULL,
   `name` varchar(255) NOT NULL,
   `short_name` varchar(100) DEFAULT NULL,
   `contact_person` varchar(255) DEFAULT NULL,
@@ -21417,6 +21418,7 @@ CREATE TABLE `v_project_projection_status` (
 
 CREATE TABLE `warehouses` (
   `id` int(11) NOT NULL,
+  `account_id` int(11) DEFAULT NULL,
   `name` varchar(255) NOT NULL,
   `address` varchar(255) NOT NULL,
   `image_url` varchar(255) DEFAULT NULL,

@@ -1,0 +1,33 @@
+Plan: Manufacturer Requests + Account-Scoped Warehouses
+
+1) Confirm current schema and update the pending migration.
+   - Adjust `migrations/2025_10_07_account_scoped_manufacturers_warehouses.sql` so only `warehouses.account_id` is added.
+   - Add new request tables (e.g., `manufacturer_requests`, `manufacturer_location_requests`) with status, requested_by, reviewed_by, reviewed_at, rejection_reason, and account_id.
+
+2) Split manufacturer permissions by role.
+   - Restrict full CRUD (`manufacturers.php`, `edit_manufacturer.php`, `add_manufacturer_location.php`, etc.) to `admin` + `global_admin`.
+   - For `customer_admin`, reuse `add_manufacturer.php`/`add_manufacturer_location.php` to submit requests instead of inserting real records.
+   - Add a “My Manufacturer Requests” view so customers can track pending/approved/rejected items.
+
+3) Build the approval workflow for admins.
+   - Create an admin/global_admin request queue with approve/reject actions.
+   - Approve = insert into `manufacturers` + `manufacturer_locations` (or just locations for location requests).
+   - Reject = set status + reason; keep the request visible to the requester.
+
+4) Make manufacturers global across the portal.
+   - Remove account_id filters from manufacturer lookups and location endpoints.
+   - Update dropdown sources in `add_project.php`, `add_module_batch.php`, `edit_module_batch.php`, `get_manufacturer_locations.php`, `get_manufacturer_country.php`, and any other manufacturer/location selectors.
+
+5) Finalize warehouse scoping.
+   - Ensure all warehouse list/edit/delete flows use `account_id` scoping for `admin` + `customer_admin`.
+   - Keep `global_admin` able to see all accounts (optionally add a filter).
+   - Update any legacy pages (e.g., `warehouses.php`) that bypass scoping.
+
+6) Add notifications for manufacturer requests.
+   - Add notification types + settings (in `notification_helpers.php`, `account_settings.php`, and settings UI).
+   - Notify account admins + global_admin when a request is created.
+   - Notify the requester when approved or rejected, with a link to the request detail.
+
+7) Validation + QA pass.
+   - Prevent duplicate manufacturer creation on approval (warn if name already exists).
+   - Smoke test role flows: customer_admin request → admin approval → manufacturer appears in module forms.

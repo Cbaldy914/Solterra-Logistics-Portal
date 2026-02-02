@@ -986,43 +986,49 @@ try {
 
     // Fetch Warehouses (with addresses)
     $all_warehouses = [];
-    $stmtW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses ORDER BY name ASC");
-    if ($stmtW) {
-        $stmtW->execute();
-        $resultW = $stmtW->get_result();
-        while ($wh = $resultW->fetch_assoc()) {
-            // Build full address for Google Maps
-            $address_parts = array_filter([$wh['street_address'], $wh['city'], $wh['state'], $wh['zip_code']]);
-            $wh['full_address'] = implode(', ', $address_parts);
-            $all_warehouses[] = $wh;
+    if (!empty($batch_data['account_id'])) {
+        $stmtW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses WHERE account_id = ? ORDER BY name ASC");
+        if ($stmtW) {
+            $stmtW->bind_param("i", $batch_data['account_id']);
+            $stmtW->execute();
+            $resultW = $stmtW->get_result();
+            while ($wh = $resultW->fetch_assoc()) {
+                // Build full address for Google Maps
+                $address_parts = array_filter([$wh['street_address'], $wh['city'], $wh['state'], $wh['zip_code']]);
+                $wh['full_address'] = implode(', ', $address_parts);
+                $all_warehouses[] = $wh;
+            }
+            $stmtW->close();
         }
-        $stmtW->close();
     }
 
     // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers = [];
-    $stmtM = $conn->prepare("
-        SELECT 
-            m.id, 
-            m.name, 
-            ml.street_address, 
-            ml.city, 
-            ml.state, 
-            ml.zip_code 
-        FROM manufacturers m
-        LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-        WHERE m.is_active = 1 
-        ORDER BY m.name ASC");
-    if ($stmtM) {
-        $stmtM->execute();
-        $resultM = $stmtM->get_result();
-        while ($mfg = $resultM->fetch_assoc()) {
-            // Build full address for Google Maps
-            $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code']]);
-            $mfg['full_address'] = implode(', ', $address_parts);
-            $all_manufacturers[] = $mfg;
+    if (!empty($batch_data['account_id'])) {
+        $stmtM = $conn->prepare("
+            SELECT 
+                m.id, 
+                m.name, 
+                ml.street_address, 
+                ml.city, 
+                ml.state, 
+                ml.zip_code 
+            FROM manufacturers m
+            LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+            WHERE m.is_active = 1 AND m.account_id = ?
+            ORDER BY m.name ASC");
+        if ($stmtM) {
+            $stmtM->bind_param("i", $batch_data['account_id']);
+            $stmtM->execute();
+            $resultM = $stmtM->get_result();
+            while ($mfg = $resultM->fetch_assoc()) {
+                // Build full address for Google Maps
+                $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code']]);
+                $mfg['full_address'] = implode(', ', $address_parts);
+                $all_manufacturers[] = $mfg;
+            }
+            $stmtM->close();
         }
-        $stmtM->close();
     }
 
 } catch (Exception $e) {

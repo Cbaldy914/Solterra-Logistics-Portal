@@ -93,10 +93,26 @@ if ($account_id) {
 
 // Fetch warehouses for destination options
 $warehouses = [];
-$sqlWh = "SELECT id, name, city, state FROM warehouses ORDER BY name ASC";
-$resWh = $conn->query($sqlWh);
-while ($row = $resWh->fetch_assoc()) {
-    $warehouses[] = $row;
+$warehouse_where = '';
+$warehouse_params = [];
+$warehouse_types = '';
+if ($account_id) {
+    $warehouse_where = 'WHERE account_id = ?';
+    $warehouse_types = 'i';
+    $warehouse_params[] = $account_id;
+}
+$sqlWh = "SELECT id, name, city, state FROM warehouses $warehouse_where ORDER BY name ASC";
+$stmtWh = $conn->prepare($sqlWh);
+if ($stmtWh) {
+    if (!empty($warehouse_params)) {
+        $stmtWh->bind_param($warehouse_types, ...$warehouse_params);
+    }
+    $stmtWh->execute();
+    $resWh = $stmtWh->get_result();
+    while ($row = $resWh->fetch_assoc()) {
+        $warehouses[] = $row;
+    }
+    $stmtWh->close();
 }
 
 // Check if Excel is supported

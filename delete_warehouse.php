@@ -22,9 +22,32 @@ if (!$conn) {
     die("Connection failed");
 }
 
+$role = $_SESSION['role'] ?? '';
+$user_id = $_SESSION['user_id'] ?? 0;
+$account_id = null;
+
+if ($role !== 'global_admin') {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    if ($stmtAccount) {
+        $stmtAccount->bind_param("i", $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($account_id);
+        $stmtAccount->fetch();
+        $stmtAccount->close();
+    }
+    if (!$account_id) {
+        die("No valid account found for this user.");
+    }
+}
+
 // Delete the warehouse
-$stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ?");
-$stmt->bind_param("i", $warehouse_id);
+if ($role === 'global_admin') {
+    $stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ?");
+    $stmt->bind_param("i", $warehouse_id);
+} else {
+    $stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ? AND account_id = ?");
+    $stmt->bind_param("ii", $warehouse_id, $account_id);
+}
 if ($stmt->execute()) {
     // Optionally, you might want to handle deleting associated files or data
     header("Location: warehouses");
