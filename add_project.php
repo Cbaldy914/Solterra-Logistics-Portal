@@ -659,41 +659,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-weight: 500;
             margin: 0;
         }
-        .header-actions {
-            display: flex;
-            gap: 12px;
+        /* Step Indicator - Fixed when scrolled */
+        .step-indicator-wrapper {
+            position: relative;
+            z-index: 1000;
+            margin-bottom: 32px;
+            transition: all 0.3s ease;
         }
-        .btn-back {
-            display: inline-flex;
+        .step-indicator-wrapper.is-fixed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 12px 20px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #e0e0e0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .step-indicator-wrapper.is-fixed .step-indicator {
+            max-width: 1200px;
+            margin: 0 auto;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+            padding: 12px 16px;
+        }
+        .step-indicator-wrapper.is-fixed .step-label {
+            display: none;
+        }
+        .step-indicator-wrapper.is-fixed .step-tag {
+            display: none;
+        }
+        .step-indicator-wrapper.is-fixed .step {
+            padding: 8px 12px;
+        }
+        .step-indicator-wrapper.is-fixed .step-number {
+            width: 32px;
+            height: 32px;
+            font-size: 0.85rem;
+        }
+        .step-indicator-wrapper.is-fixed .step-connector {
+            width: 40px;
+        }
+        .step-indicator-wrapper.is-fixed .current-step-label {
+            display: flex;
+        }
+        .step-indicator-placeholder {
+            display: none;
+        }
+        .step-indicator-placeholder.active {
+            display: block;
+        }
+        .current-step-label {
+            display: none;
             align-items: center;
             gap: 8px;
-            padding: 12px 24px;
-            background: #fff;
-            color: #488C9A;
-            border: 2px solid #488C9A;
-            border-radius: 12px;
+            margin-left: 16px;
+            padding-left: 16px;
+            border-left: 2px solid #e9ecef;
+            font-weight: 600;
+            color: #293E4C;
             font-size: 0.95rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-decoration: none;
         }
-        .btn-back:hover {
-            background: #488C9A;
-            color: #fff;
+        .current-step-label .step-name {
+            color: #488C9A;
         }
-
-        /* Step Indicator */
         .step-indicator {
             display: flex;
             justify-content: center;
             align-items: center;
             gap: 0;
-            margin-bottom: 32px;
             padding: 20px;
             background: #fff;
             border-radius: 16px;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            transition: all 0.3s ease;
         }
         .step {
             display: flex;
@@ -702,6 +741,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             padding: 12px 20px;
             cursor: pointer;
             transition: all 0.3s ease;
+            border-radius: 12px;
+        }
+        .step:hover {
+            background: rgba(72, 140, 154, 0.06);
+        }
+        .step:hover .step-number {
+            transform: scale(1.05);
         }
         .step-number {
             width: 36px;
@@ -715,10 +761,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-weight: 600;
             font-size: 0.9rem;
             transition: all 0.3s ease;
+            position: relative;
         }
         .step.active .step-number {
             background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
             color: #fff;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4);
         }
         .step.completed .step-number {
             background: #28a745;
@@ -731,18 +779,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-weight: 500;
             color: #6c757d;
             font-size: 0.95rem;
+            transition: color 0.2s ease;
         }
         .step.active .step-label {
             color: #293E4C;
+            font-weight: 600;
+        }
+        .step.completed .step-label {
+            color: #28a745;
         }
         .step-connector {
             width: 60px;
             height: 3px;
             background: #e9ecef;
             margin: 0 5px;
+            border-radius: 2px;
+            transition: background 0.3s ease;
         }
         .step-connector.completed {
-            background: #28a745;
+            background: linear-gradient(90deg, #28a745, #34ce57);
         }
         .step-tag {
             font-size: 0.7rem;
@@ -750,6 +805,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border-radius: 10px;
             margin-left: 8px;
             font-weight: 600;
+            transition: all 0.3s ease;
         }
         .step-tag.required {
             background: #fff3cd;
@@ -758,6 +814,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .step-tag.optional {
             background: #e9ecef;
             color: #6c757d;
+        }
+        .step.active .step-tag.required {
+            background: #488C9A;
+            color: #fff;
+        }
+        .step.completed .step-tag {
+            background: #d4edda;
+            color: #155724;
+        }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4); }
+            50% { box-shadow: 0 4px 20px rgba(72, 140, 154, 0.6); }
+            100% { box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4); }
+        }
+        .step.active .step-number {
+            animation: pulse-ring 2s ease-in-out infinite;
         }
 
         /* Accordion Sections */
@@ -1505,12 +1577,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             .step-indicator {
                 flex-wrap: wrap;
                 gap: 10px;
+                padding: 16px;
             }
             .step-connector {
                 display: none;
             }
             .step-label {
                 display: none;
+            }
+            .step-tag {
+                display: none;
+            }
+            .step {
+                padding: 10px 14px;
+            }
+            .current-step-label {
+                width: 100%;
+                margin: 12px 0 0 0;
+                padding: 12px 0 0 0;
+                border-left: none;
+                border-top: 1px solid #e9ecef;
+                justify-content: center;
+                display: flex !important;
+            }
+            .step-indicator-wrapper.is-fixed .step-indicator {
+                padding: 12px 16px;
+            }
+            .step-indicator-wrapper.is-fixed .current-step-label {
+                margin-top: 0;
+                padding-top: 0;
+                border-top: none;
+                width: auto;
             }
         }
     </style>
@@ -1527,9 +1624,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <h1>Create New Project</h1>
                 <p class="subtitle">Set up a new solar project in just a few steps</p>
             </div>
-            <div class="header-actions">
-                <a href="manage_projects.php" class="btn-back">&larr; Back to Projects</a>
-            </div>
         </div>
     </div>
 
@@ -1541,26 +1635,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="message error"><?php echo htmlspecialchars($errorMessage); ?></div>
     <?php endif; ?>
 
-    <!-- Step Indicator -->
-    <div class="step-indicator">
-        <div class="step active" data-step="1" onclick="goToStep(1)">
-            <div class="step-number">1</div>
-            <span class="step-label">Project Details</span>
-            <span class="step-tag required">Required</span>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step" data-step="2" onclick="goToStep(2)">
-            <div class="step-number">2</div>
-            <span class="step-label">Site Info</span>
-            <span class="step-tag optional">Optional</span>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step" data-step="3" onclick="goToStep(3)">
-            <div class="step-number">3</div>
-            <span class="step-label">Modules</span>
-            <span class="step-tag optional">Optional</span>
+    <!-- Step Indicator (Fixed when scrolled) -->
+    <div class="step-indicator-wrapper" id="stepIndicatorWrapper">
+        <div class="step-indicator">
+            <div class="step active" data-step="1" onclick="goToStep(1)">
+                <div class="step-number">1</div>
+                <span class="step-label">Project Details</span>
+                <span class="step-tag required">Required</span>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="2" onclick="goToStep(2)">
+                <div class="step-number">2</div>
+                <span class="step-label">Site Info</span>
+                <span class="step-tag optional">Optional</span>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="3" onclick="goToStep(3)">
+                <div class="step-number">3</div>
+                <span class="step-label">Modules</span>
+                <span class="step-tag optional">Optional</span>
+            </div>
+            <div class="current-step-label">
+                <span>Step <span id="currentStepNum">1</span> of 3:</span>
+                <span class="step-name" id="currentStepName">Project Details</span>
+            </div>
         </div>
     </div>
+    <!-- Placeholder to maintain layout when indicator is fixed -->
+    <div class="step-indicator-placeholder" id="stepIndicatorPlaceholder"></div>
 
     <form method="POST" action="" enctype="multipart/form-data" id="projectForm">
         <!-- Hidden fields -->
@@ -2204,6 +2306,8 @@ function removeUploadedDoc(index) {
     }
 }
 
+const stepNames = {1: 'Project Details', 2: 'Site Info', 3: 'Modules'};
+
 function goToStep(step) {
     // Validate current step before moving forward
     if (step > currentStep && !validateStep(currentStep)) {
@@ -2252,9 +2356,74 @@ function goToStep(step) {
 
     currentStep = step;
 
-    // Scroll to top of section
-    targetSection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Update current step label in sticky header
+    const stepNumEl = document.getElementById('currentStepNum');
+    const stepNameEl = document.getElementById('currentStepName');
+    if (stepNumEl) stepNumEl.textContent = step;
+    if (stepNameEl) stepNameEl.textContent = stepNames[step] || '';
+
+    // Scroll to top of section with offset for sticky header
+    if (targetSection) {
+        const wrapper = document.getElementById('stepIndicatorWrapper');
+        const offset = wrapper ? wrapper.offsetHeight + 20 : 100;
+        const y = targetSection.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+    }
 }
+
+// Fixed step indicator scroll handler
+(function() {
+    const wrapper = document.getElementById('stepIndicatorWrapper');
+    const placeholder = document.getElementById('stepIndicatorPlaceholder');
+    if (!wrapper || !placeholder) return;
+
+    let wrapperTop = 0;
+    let wrapperHeight = 0;
+
+    function updateMeasurements() {
+        // Only measure when not fixed to get accurate position
+        if (!wrapper.classList.contains('is-fixed')) {
+            wrapperTop = wrapper.getBoundingClientRect().top + window.pageYOffset;
+            wrapperHeight = wrapper.offsetHeight;
+        }
+    }
+
+    function handleScroll() {
+        const scrollY = window.pageYOffset;
+
+        if (scrollY > wrapperTop) {
+            if (!wrapper.classList.contains('is-fixed')) {
+                wrapper.classList.add('is-fixed');
+                placeholder.style.height = wrapperHeight + 'px';
+                placeholder.classList.add('active');
+            }
+        } else {
+            if (wrapper.classList.contains('is-fixed')) {
+                wrapper.classList.remove('is-fixed');
+                placeholder.classList.remove('active');
+                placeholder.style.height = '0';
+                // Re-measure after removing fixed
+                setTimeout(updateMeasurements, 10);
+            }
+        }
+    }
+
+    // Initial setup
+    window.addEventListener('load', function() {
+        updateMeasurements();
+        handleScroll();
+    });
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', function() {
+        if (!wrapper.classList.contains('is-fixed')) {
+            updateMeasurements();
+        }
+    });
+
+    // Run initial measurement
+    updateMeasurements();
+})()
 
 function toggleAccordion(section) {
     goToStep(section);
