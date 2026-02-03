@@ -3180,11 +3180,11 @@ window.onclick = function(event) {
     // Users must now use the "x" button to close modals
     
     // Close dropdowns when clicking outside
-    if (!event.target.closest('.project-actions-dropdown') && !event.target.closest('.project-header-settings')) {
+    if (!event.target.closest('.project-header-actions') && !event.target.closest('.project-settings-btn')) {
         const projectDropdown = document.getElementById('projectActionsDropdown');
         if (projectDropdown) {
             projectDropdown.classList.remove('show');
-            projectDropdown.style.display = 'none';
+            projectDropdown.style.display = '';
         }
     }
     const moduleDropdown = document.getElementById('moduleActionsDropdown');
@@ -3227,6 +3227,7 @@ document.addEventListener('click', function(event) {
 function toggleProjectActions() {
     const dropdown = document.getElementById('projectActionsDropdown');
     if (!dropdown) return;
+    dropdown.style.display = '';
     const isOpen = dropdown.classList.contains('show');
     // Close other dropdowns
     document.querySelectorAll('.project-settings-dropdown').forEach(d => d.classList.remove('show'));
