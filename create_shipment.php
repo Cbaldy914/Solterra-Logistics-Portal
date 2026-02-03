@@ -3723,6 +3723,17 @@ function toggleDestinationSelectSingle() {
     const defaultValue = (destType === 'project' && projectIdFromUrl > 0) ? projectIdFromUrl : null;
 
     populateDropdown(destSelect, destType, data, nameField, placeholder, defaultValue);
+
+    // Add "+ Add New Warehouse" option at the end for warehouse type
+    if (destType === 'warehouse') {
+        const addOption = document.createElement('option');
+        addOption.value = '__add_new__';
+        addOption.textContent = '+ Add New Warehouse...';
+        addOption.style.color = '#488C9A';
+        addOption.style.fontStyle = 'italic';
+        destSelect.appendChild(addOption);
+    }
+
     calculateDistance();
 }
 
@@ -3737,6 +3748,17 @@ function toggleDestinationSelectMulti() {
     const defaultValue = (destType === 'project' && projectIdFromUrl > 0) ? projectIdFromUrl : null;
 
     populateDropdown(destSelect, destType, data, nameField, placeholder, defaultValue);
+
+    // Add "+ Add New Warehouse" option at the end for warehouse type
+    if (destType === 'warehouse') {
+        const addOption = document.createElement('option');
+        addOption.value = '__add_new__';
+        addOption.textContent = '+ Add New Warehouse...';
+        addOption.style.color = '#488C9A';
+        addOption.style.fontStyle = 'italic';
+        destSelect.appendChild(addOption);
+    }
+
     calculateDistanceMulti();
 }
 
@@ -3747,6 +3769,13 @@ function calculateDistance() {
     const milesInput = document.getElementById('miles');
 
     if (!destSelect || !distanceDisplay) return;
+
+    // Handle "Add New Warehouse" option
+    if (destSelect.value === '__add_new__') {
+        window.open('add_warehouse.php', '_blank');
+        destSelect.value = ''; // Reset selection
+        return;
+    }
 
     const result = determineOriginFromSelectedPallets();
     if (!result.success) {
@@ -3824,6 +3853,13 @@ function calculateDistanceMulti() {
     const milesInput = document.getElementById('miles_multi');
 
     if (!destSelect || !distanceDisplay) return;
+
+    // Handle "Add New Warehouse" option
+    if (destSelect.value === '__add_new__') {
+        window.open('add_warehouse.php', '_blank');
+        destSelect.value = ''; // Reset selection
+        return;
+    }
 
     const result = determineOriginFromSelectedPallets();
     if (!result.success) {

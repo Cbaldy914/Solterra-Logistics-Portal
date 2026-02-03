@@ -234,28 +234,209 @@ $conn->close();
             font-weight: 500;
             margin: 0;
         }
-        .header-actions {
-            display: flex;
-            gap: 12px;
+
+        /* Step Indicator - Fixed when scrolled */
+        .step-indicator-wrapper {
+            position: relative;
+            z-index: 1000;
+            margin-bottom: 32px;
+            transition: all 0.3s ease;
         }
-        .btn-back {
-            display: inline-flex;
+        .step-indicator-wrapper.is-fixed {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 12px 20px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #e0e0e0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .step-indicator-wrapper.is-fixed .step-indicator {
+            max-width: 1200px;
+            margin: 0 auto;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+            padding: 12px 16px;
+        }
+        .step-indicator-wrapper.is-fixed .step-label {
+            display: none;
+        }
+        .step-indicator-wrapper.is-fixed .step-tag {
+            display: none;
+        }
+        .step-indicator-wrapper.is-fixed .step {
+            padding: 8px 12px;
+        }
+        .step-indicator-wrapper.is-fixed .step-number {
+            width: 32px;
+            height: 32px;
+            font-size: 0.85rem;
+        }
+        .step-indicator-wrapper.is-fixed .step-connector {
+            width: 40px;
+        }
+        .step-indicator-wrapper.is-fixed .current-step-label {
+            display: flex;
+        }
+        .step-indicator-placeholder {
+            display: none;
+        }
+        .step-indicator-placeholder.active {
+            display: block;
+        }
+        .current-step-label {
+            display: none;
             align-items: center;
             gap: 8px;
-            padding: 12px 24px;
-            background: #fff;
-            color: #488C9A;
-            border: 2px solid #488C9A;
-            border-radius: 12px;
+            margin-left: 16px;
+            padding-left: 16px;
+            border-left: 2px solid #e9ecef;
+            font-weight: 600;
+            color: #293E4C;
             font-size: 0.95rem;
-            font-weight: 500;
+        }
+        .current-step-label .step-name {
+            color: #488C9A;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0;
+            padding: 20px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            transition: all 0.3s ease;
+        }
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 20px;
             cursor: pointer;
             transition: all 0.3s ease;
-            text-decoration: none;
+            border-radius: 12px;
         }
-        .btn-back:hover {
+        .step:hover {
+            background: rgba(72, 140, 154, 0.06);
+        }
+        .step:hover .step-number {
+            transform: scale(1.05);
+        }
+        .step-number {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #e9ecef;
+            color: #6c757d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        .step.active .step-number {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4);
+            animation: pulse-ring 2s ease-in-out infinite;
+        }
+        .step.completed .step-number {
+            background: #28a745;
+            color: #fff;
+        }
+        .step.completed .step-number::after {
+            content: '\2713';
+        }
+        .step-label {
+            font-weight: 500;
+            color: #6c757d;
+            font-size: 0.95rem;
+            transition: color 0.2s ease;
+        }
+        .step.active .step-label {
+            color: #293E4C;
+            font-weight: 600;
+        }
+        .step.completed .step-label {
+            color: #28a745;
+        }
+        .step-connector {
+            width: 60px;
+            height: 3px;
+            background: #e9ecef;
+            margin: 0 5px;
+            border-radius: 2px;
+            transition: background 0.3s ease;
+        }
+        .step-connector.completed {
+            background: linear-gradient(90deg, #28a745, #34ce57);
+        }
+        .step-tag {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .step-tag.optional {
+            background: #e9ecef;
+            color: #6c757d;
+        }
+        .step.active .step-tag {
             background: #488C9A;
             color: #fff;
+        }
+        .step.completed .step-tag {
+            background: #d4edda;
+            color: #155724;
+        }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4); }
+            50% { box-shadow: 0 4px 20px rgba(72, 140, 154, 0.6); }
+            100% { box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4); }
+        }
+        @media (max-width: 768px) {
+            .step-indicator {
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 16px;
+            }
+            .step-connector {
+                display: none;
+            }
+            .step-label {
+                display: none;
+            }
+            .step-tag {
+                display: none;
+            }
+            .step {
+                padding: 10px 14px;
+            }
+            .current-step-label {
+                width: 100%;
+                margin: 12px 0 0 0;
+                padding: 12px 0 0 0;
+                border-left: none;
+                border-top: 1px solid #e9ecef;
+                justify-content: center;
+                display: flex !important;
+            }
+            .step-indicator-wrapper.is-stuck .step-indicator {
+                padding: 12px 16px;
+            }
+            .step-indicator-wrapper.is-stuck .current-step-label {
+                margin-top: 0;
+                padding-top: 0;
+                border-top: none;
+                width: auto;
+            }
         }
 
         /* Accordion Sections */
@@ -477,12 +658,96 @@ $conn->close();
             border-radius: 12px;
         }
 
-        /* Submit Button */
+        /* Form Actions & Buttons */
         .form-actions {
             display: flex;
             justify-content: flex-end;
             gap: 12px;
             margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e9ecef;
+        }
+        .btn-cancel {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            background: #fff;
+            color: #6c757d;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+        .btn-cancel:hover {
+            background: #f8f9fa;
+            border-color: #dee2e6;
+            color: #495057;
+        }
+        .btn-continue {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+        .btn-continue:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateX(4px);
+        }
+        .btn-continue svg {
+            transition: transform 0.2s ease;
+        }
+        .btn-continue:hover svg {
+            transform: translateX(4px);
+        }
+        .section-footer {
+            display: flex;
+            justify-content: flex-end;
+            padding-top: 16px;
+            margin-top: 16px;
+            border-top: 1px solid #e9ecef;
+        }
+        /* Validation error styles */
+        .form-group.has-error input,
+        .form-group.has-error select,
+        .form-group.has-error textarea {
+            border-color: #dc3545;
+            background-color: #fff8f8;
+        }
+        .form-group.has-error input:focus,
+        .form-group.has-error select:focus,
+        .form-group.has-error textarea:focus {
+            border-color: #dc3545;
+            box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.15);
+        }
+        .form-group .error-message {
+            color: #dc3545;
+            font-size: 0.85rem;
+            margin-top: 6px;
+            display: none;
+        }
+        .form-group.has-error .error-message {
+            display: block;
+        }
+        .validation-shake {
+            animation: shake 0.4s ease-in-out;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-5px); }
+            40%, 80% { transform: translateX(5px); }
         }
         .btn-submit {
             display: inline-flex;
@@ -620,11 +885,40 @@ $conn->close();
                 <h1>Add Warehouse</h1>
                 <p class="subtitle">Create a new warehouse or port facility</p>
             </div>
-            <div class="header-actions">
-                <a href="manage_warehouses.php" class="btn-back">Back to Warehouses</a>
+        </div>
+    </div>
+
+    <!-- Step Indicator (Fixed when scrolled) -->
+    <div class="step-indicator-wrapper" id="stepIndicatorWrapper">
+        <div class="step-indicator">
+            <div class="step active" data-step="1" onclick="goToStep(1)">
+                <div class="step-number">1</div>
+                <span class="step-label">Basic Info</span>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="2" onclick="goToStep(2)">
+                <div class="step-number">2</div>
+                <span class="step-label">Location</span>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="3" onclick="goToStep(3)">
+                <div class="step-number">3</div>
+                <span class="step-label">Costs</span>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="4" onclick="goToStep(4)">
+                <div class="step-number">4</div>
+                <span class="step-label">Image</span>
+                <span class="step-tag optional">Optional</span>
+            </div>
+            <div class="current-step-label">
+                <span>Step <span id="currentStepNum">1</span> of 4:</span>
+                <span class="step-name" id="currentStepName">Basic Info</span>
             </div>
         </div>
     </div>
+    <!-- Placeholder to maintain layout when indicator is fixed -->
+    <div class="step-indicator-placeholder" id="stepIndicatorPlaceholder"></div>
 
     <!-- Display success or error messages -->
     <?php if (!empty($successMessage)): ?>
@@ -663,9 +957,9 @@ $conn->close();
         <?php endif; ?>
 
         <!-- Section 1: Basic Information -->
-        <div class="accordion-section">
-            <div class="accordion-header active" onclick="toggleAccordion(this)">
-                <h2><span class="step-badge"><?php echo ($role === 'global_admin') ? '2' : '1'; ?></span> Basic Information</h2>
+        <div class="accordion-section" data-section="1">
+            <div class="accordion-header active" onclick="goToStep(1)">
+                <h2><span class="step-badge" id="badge-1">1</span> Basic Information</h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content open">
@@ -674,10 +968,11 @@ $conn->close();
                 </div>
 
                 <div class="form-row single">
-                    <div class="form-group">
+                    <div class="form-group" id="name-group">
                         <label for="name">Warehouse Name <span class="required-star">*</span></label>
                         <input type="text" id="name" name="name" required placeholder="e.g., Charlotte Distribution Center">
                         <span class="help-text">A unique, descriptive name for this facility</span>
+                        <span class="error-message">Please enter a warehouse name</span>
                     </div>
                 </div>
 
@@ -688,13 +983,20 @@ $conn->close();
                     </label>
                     <div class="help-text">Check this if this facility will receive overseas shipments and handle customs clearance</div>
                 </div>
+
+                <div class="section-footer">
+                    <button type="button" class="btn-continue" onclick="validateAndContinue(1, 2)">
+                        Continue to Location
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- Section 2: Location -->
-        <div class="accordion-section">
-            <div class="accordion-header" onclick="toggleAccordion(this)">
-                <h2><span class="step-badge">2</span> Location</h2>
+        <div class="accordion-section" data-section="2">
+            <div class="accordion-header" onclick="goToStep(2)">
+                <h2><span class="step-badge" id="badge-2">2</span> Location</h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content">
@@ -727,13 +1029,20 @@ $conn->close();
                         <input type="text" id="country" name="country" placeholder="USA" value="USA">
                     </div>
                 </div>
+
+                <div class="section-footer">
+                    <button type="button" class="btn-continue" onclick="validateAndContinue(2, 3)">
+                        Continue to Cost Structure
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- Section 3: Cost Structure -->
-        <div class="accordion-section">
-            <div class="accordion-header" onclick="toggleAccordion(this)">
-                <h2><span class="step-badge">3</span> Cost Structure</h2>
+        <div class="accordion-section" data-section="3">
+            <div class="accordion-header" onclick="goToStep(3)">
+                <h2><span class="step-badge" id="badge-3">3</span> Cost Structure</h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content">
@@ -750,13 +1059,20 @@ $conn->close();
                 <p class="help-text" style="margin-top: 16px;">
                     You can modify these costs anytime after creation. Leave amounts at $0.00 if not applicable.
                 </p>
+
+                <div class="section-footer">
+                    <button type="button" class="btn-continue" onclick="goToStep(4)">
+                        Continue to Image Upload
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- Section 4: Warehouse Image -->
-        <div class="accordion-section">
-            <div class="accordion-header" onclick="toggleAccordion(this)">
-                <h2><span class="step-badge">4</span> Warehouse Image <span class="optional-tag">(Optional)</span></h2>
+        <div class="accordion-section" data-section="4">
+            <div class="accordion-header" onclick="goToStep(4)">
+                <h2><span class="step-badge" id="badge-4">4</span> Warehouse Image <span class="optional-tag">(Optional)</span></h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content">
@@ -780,7 +1096,7 @@ $conn->close();
 
         <!-- Form Actions -->
         <div class="form-actions">
-            <a href="manage_warehouses.php" class="btn-back">Cancel</a>
+            <a href="manage_warehouses.php" class="btn-cancel">Cancel</a>
             <button type="submit" name="submit" class="btn-submit">Create Warehouse</button>
         </div>
     </form>
@@ -792,12 +1108,187 @@ $conn->close();
 <script src="components/warehouse-fee-manager.js"></script>
 
 <script>
-// Accordion toggle function
+let currentStep = 1;
+const stepNames = {1: 'Basic Info', 2: 'Location', 3: 'Costs', 4: 'Image'};
+
+function goToStep(step) {
+    // Close all accordions
+    document.querySelectorAll('.accordion-header').forEach(h => h.classList.remove('active'));
+    document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('open'));
+
+    // Open target accordion
+    const targetSection = document.querySelector(`[data-section="${step}"]`);
+    if (targetSection) {
+        targetSection.querySelector('.accordion-header').classList.add('active');
+        targetSection.querySelector('.accordion-content').classList.add('open');
+    }
+
+    // Update step indicator
+    document.querySelectorAll('.step').forEach(s => {
+        const stepNum = parseInt(s.dataset.step);
+        s.classList.remove('active', 'completed');
+        if (stepNum < step) {
+            s.classList.add('completed');
+        } else if (stepNum === step) {
+            s.classList.add('active');
+        }
+    });
+
+    // Update connectors
+    document.querySelectorAll('.step-connector').forEach((c, i) => {
+        if (i < step - 1) {
+            c.classList.add('completed');
+        } else {
+            c.classList.remove('completed');
+        }
+    });
+
+    // Update badges
+    for (let i = 1; i < step; i++) {
+        const badge = document.getElementById(`badge-${i}`);
+        if (badge) {
+            badge.classList.add('completed');
+            badge.innerHTML = '&#10003;';
+        }
+    }
+
+    currentStep = step;
+
+    // Update current step label in sticky header
+    const stepNumEl = document.getElementById('currentStepNum');
+    const stepNameEl = document.getElementById('currentStepName');
+    if (stepNumEl) stepNumEl.textContent = step;
+    if (stepNameEl) stepNameEl.textContent = stepNames[step] || '';
+
+    // Scroll to top of section with offset for sticky header
+    if (targetSection) {
+        const wrapper = document.getElementById('stepIndicatorWrapper');
+        const offset = wrapper ? wrapper.offsetHeight + 20 : 100;
+        const y = targetSection.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+    }
+}
+
+// Validation for required fields before continuing
+function validateAndContinue(currentSection, nextSection) {
+    let isValid = true;
+
+    // Clear previous errors
+    document.querySelectorAll('.form-group.has-error').forEach(group => {
+        group.classList.remove('has-error');
+    });
+
+    if (currentSection === 1) {
+        // Validate Section 1: Warehouse Name is required
+        const nameInput = document.getElementById('name');
+        const nameGroup = document.getElementById('name-group');
+
+        if (!nameInput.value.trim()) {
+            isValid = false;
+            nameGroup.classList.add('has-error');
+            nameInput.classList.add('validation-shake');
+            nameInput.focus();
+
+            // Remove shake animation after it completes
+            setTimeout(() => {
+                nameInput.classList.remove('validation-shake');
+            }, 400);
+        }
+    }
+
+    if (currentSection === 2) {
+        // Validate Section 2: At least one address field required
+        const streetAddress = document.getElementById('street_address').value.trim();
+        const city = document.getElementById('city').value.trim();
+        const state = document.getElementById('state').value.trim();
+        const zipCode = document.getElementById('zip_code').value.trim();
+
+        if (!streetAddress && !city && !state && !zipCode) {
+            isValid = false;
+            // Show a general message - highlight the street address field
+            const streetGroup = document.getElementById('street_address').closest('.form-group');
+            streetGroup.classList.add('has-error');
+
+            // Add error message if not exists
+            if (!streetGroup.querySelector('.error-message')) {
+                const errorSpan = document.createElement('span');
+                errorSpan.className = 'error-message';
+                errorSpan.textContent = 'Please enter at least one address field';
+                errorSpan.style.display = 'block';
+                streetGroup.appendChild(errorSpan);
+            } else {
+                streetGroup.querySelector('.error-message').style.display = 'block';
+            }
+
+            document.getElementById('street_address').focus();
+        }
+    }
+
+    if (isValid) {
+        goToStep(nextSection);
+    }
+
+    return isValid;
+}
+
+// Fixed step indicator scroll handler
+(function() {
+    const wrapper = document.getElementById('stepIndicatorWrapper');
+    const placeholder = document.getElementById('stepIndicatorPlaceholder');
+    if (!wrapper || !placeholder) return;
+
+    const header = document.querySelector('.add-warehouse-header');
+    let wrapperTop = 0;
+    let wrapperHeight = 0;
+
+    function updateMeasurements() {
+        // Only measure when not fixed to get accurate position
+        if (!wrapper.classList.contains('is-fixed')) {
+            wrapperTop = wrapper.getBoundingClientRect().top + window.pageYOffset;
+            wrapperHeight = wrapper.offsetHeight;
+        }
+    }
+
+    function handleScroll() {
+        const scrollY = window.pageYOffset;
+
+        if (scrollY > wrapperTop) {
+            if (!wrapper.classList.contains('is-fixed')) {
+                wrapper.classList.add('is-fixed');
+                placeholder.style.height = wrapperHeight + 'px';
+                placeholder.classList.add('active');
+            }
+        } else {
+            if (wrapper.classList.contains('is-fixed')) {
+                wrapper.classList.remove('is-fixed');
+                placeholder.classList.remove('active');
+                placeholder.style.height = '0';
+                // Re-measure after removing fixed
+                setTimeout(updateMeasurements, 10);
+            }
+        }
+    }
+
+    // Initial setup
+    window.addEventListener('load', function() {
+        updateMeasurements();
+        handleScroll();
+    });
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', function() {
+        if (!wrapper.classList.contains('is-fixed')) {
+            updateMeasurements();
+        }
+    });
+
+    // Run initial measurement
+    updateMeasurements();
+})()
+
+// Legacy accordion toggle (no longer used but kept for compatibility)
 function toggleAccordion(header) {
     const content = header.nextElementSibling;
-    const isActive = header.classList.contains('active');
-
-    // Toggle current section
     header.classList.toggle('active');
     content.classList.toggle('open');
 }
