@@ -427,6 +427,31 @@ document.addEventListener('keydown', function(e) {
                     </div>
                 </li>
 
+                <!-- Project Planning (Optional Step) -->
+                <li class="timeline-item timeline-planning-step<?php echo $has_legs_with_dates ? ' completed' : ($has_modules_only ? ' partial' : ''); ?>">
+                    <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="circle circle-planning clickable" title="<?php echo htmlspecialchars($planning_badge['title'] ?? ''); ?>">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                    </a>
+                    <span class="label">
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">Project Planning</a>
+                    </span>
+                    <div class="description">
+                        <?php if ($has_legs_with_dates): ?>
+                            <span style="color: #28a745;"><i class="fas fa-check-circle"></i> Plan Set</span>
+                        <?php elseif ($has_modules_only): ?>
+                            <span style="color: #ffc107;"><i class="fas fa-clock"></i> In Progress</span>
+                        <?php else: ?>
+                            <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A;"><i class="fas fa-plus-circle"></i> Add Plan</a>
+                        <?php endif; ?>
+                        <div style="font-size: 9px; color: #6c757d; margin-top: 2px;">Enables forecasting & analytics</div>
+                    </div>
+                </li>
+
                 <!-- Step 4: Shipping -->
                 <li class="timeline-item<?php echo $step4_completed ? ' completed' : ''; ?><?php echo $current_step == 4 ? ' current' : ''; ?>">
                     <div class="circle circle-map clickable" onclick="window.location.href='module_movements.php?project_id=<?php echo $project_id; ?>'">
@@ -1069,6 +1094,13 @@ document.addEventListener('keydown', function(e) {
             </div>
         </div>
 
+        <?php if (!$has_projection): ?>
+        <div class="analytics-note" style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(135deg, #fff8e1 0%, #fffde7 100%); border: 1px solid #ffe082; border-radius: 8px; margin-bottom: 16px; font-size: 0.9em;">
+            <i class="fas fa-info-circle" style="color: #f9a825;"></i>
+            <span style="color: #5d4037;">Delivery projections are set in <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A; font-weight: 500;">Project Planning</a>. Add a plan to see forecasted delivery data.</span>
+        </div>
+        <?php endif; ?>
+
         <div class="tables-and-charts">
                 <div class="left-side">
                     <div class="cashflow-header">
@@ -1211,6 +1243,13 @@ document.addEventListener('keydown', function(e) {
                 <button type="button" class="filter-chip cost-unit-chip" data-unit="pallet" title="Cost per Pallet">$/Plt</button>
             </div>
         </div>
+
+        <?php if (!$has_projection): ?>
+        <div class="analytics-note" style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(135deg, #fff8e1 0%, #fffde7 100%); border: 1px solid #ffe082; border-radius: 8px; margin-bottom: 16px; font-size: 0.9em;">
+            <i class="fas fa-info-circle" style="color: #f9a825;"></i>
+            <span style="color: #5d4037;">Cashflow forecasts are calculated from <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A; font-weight: 500;">Project Planning</a>. Add a plan to see forecasted financial data.</span>
+        </div>
+        <?php endif; ?>
 
         <style>
             .cashflow-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }

@@ -1611,6 +1611,60 @@
     stroke: #ffffff;
 }
 
+/* Planning step circle (optional step) */
+.timeline-planning-step {
+    opacity: 0.9;
+}
+.timeline-planning-step .circle.circle-planning {
+    width: 50px;
+    height: 50px;
+    margin-top: 10px; /* Align center with timeline line at 35px: (70-50)/2 = 10px */
+    margin-bottom: 30px; /* Compensate for smaller size + margin-top to align label */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border: 2px dashed #adb5bd;
+    text-decoration: none;
+    border-radius: 50%;
+}
+.timeline-planning-step .circle.circle-planning svg {
+    stroke: #6c757d;
+    transition: stroke 0.3s ease;
+}
+.timeline-planning-step.completed .circle.circle-planning {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    border: 2px solid #28a745;
+    box-shadow: 0 8px 25px rgba(40, 167, 69, 0.35);
+}
+.timeline-planning-step.completed .circle.circle-planning svg {
+    stroke: #ffffff;
+}
+.timeline-planning-step.partial .circle.circle-planning {
+    background: linear-gradient(135deg, #ffc107 0%, #ffca2c 100%);
+    border: 2px solid #ffc107;
+    box-shadow: 0 8px 25px rgba(255, 193, 7, 0.35);
+}
+.timeline-planning-step.partial .circle.circle-planning svg {
+    stroke: #ffffff;
+}
+.timeline-planning-step .circle.circle-planning:hover {
+    transform: scale(1.08);
+    border-style: solid;
+    border-color: #488C9A;
+}
+.timeline-planning-step .circle.circle-planning:hover svg {
+    stroke: #488C9A;
+}
+.timeline-planning-step.completed .circle.circle-planning:hover,
+.timeline-planning-step.partial .circle.circle-planning:hover {
+    transform: scale(1.08);
+}
+.timeline-planning-step.completed .circle.circle-planning:hover svg,
+.timeline-planning-step.partial .circle.circle-planning:hover svg {
+    stroke: #ffffff;
+}
+
 /* Clickable description link for map */
 .timeline-item .description-link {
     color: #488C9A;
@@ -2842,6 +2896,17 @@
         margin-bottom: 15px;
     }
 
+    /* Planning step mobile alignment */
+    .timeline-planning-step .circle.circle-planning {
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+        margin-top: 0;
+        margin-bottom: 12px;
+        position: absolute;
+        left: 0;
+        top: 0;
+    }
+
     .shipping-statuses {
         grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
         gap: 12px;
@@ -2929,6 +2994,13 @@
     .timeline-item .description, .timeline-content p { font-size: 11px; }
     .timeline::before { top: 30px; }
     .timeline::after { top: 30px; }
+    /* Planning step tablet alignment - 60px circles, line at 30px */
+    .timeline-planning-step .circle.circle-planning {
+        width: 44px;
+        height: 44px;
+        margin-top: 8px; /* (60-44)/2 = 8px to center on 30px line */
+        margin-bottom: 28px;
+    }
 }
 
 @media (max-width: 580px) {
