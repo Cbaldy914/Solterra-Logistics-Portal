@@ -2190,7 +2190,45 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     });
+
+    // Initialize module fields - since default mode is 'import', remove required from manual fields
+    // Use setTimeout to ensure the module_batch_section.php component has initialized its fields
+    setTimeout(function() {
+        updateModuleFieldsRequired();
+    }, 100);
+
+    // Watch for dynamically added wattage/quantity inputs and update their required attribute
+    const manualSection = document.getElementById('mode-manual');
+    if (manualSection) {
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    // Check if we're in import mode and need to remove required
+                    updateModuleFieldsRequired();
+                }
+            });
+        });
+
+        observer.observe(manualSection, { childList: true, subtree: true });
+    }
 });
+
+// Helper function to update required attributes on module fields based on current mode
+function updateModuleFieldsRequired() {
+    const manualSection = document.getElementById('mode-manual');
+    if (manualSection) {
+        const isManualMode = typeof currentModuleMode !== 'undefined' && currentModuleMode === 'manual';
+        const wattageInputs = manualSection.querySelectorAll('input[name="wattages[]"]');
+        const quantityInputs = manualSection.querySelectorAll('input[name="quantities[]"]');
+
+        wattageInputs.forEach(input => {
+            input.required = isManualMode;
+        });
+        quantityInputs.forEach(input => {
+            input.required = isManualMode;
+        });
+    }
+}
 
 let selectedSiteFiles = [];
 
@@ -2476,7 +2514,8 @@ function setModuleMode(mode) {
     document.getElementById('mode-import').classList.toggle('active', mode === 'import');
     document.getElementById('mode-manual').classList.toggle('active', mode === 'manual');
 
-    // The module_batch_section.php component already initializes a wattage field on DOMContentLoaded
+    // Toggle required attributes on module fields based on mode
+    updateModuleFieldsRequired();
 }
 
 // Photo upload handling
