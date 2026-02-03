@@ -402,8 +402,8 @@ $conn->close();
         .modal-ring { width: 70px; height: 70px; position: relative; flex-shrink: 0; }
         .modal-ring svg { transform: rotate(-90deg); }
         .modal-ring-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
-        .modal-ring-value { font-size: 1.2em; font-weight: 700; color: #293E4C; }
-        .modal-ring-label { font-size: 0.65em; color: #6c757d; }
+        .modal-ring-value { font-size: 0.9em; font-weight: 700; color: #293E4C; }
+        .modal-ring-label { font-size: 0.6em; color: #6c757d; }
         .modal-summary-info { flex: 1; }
         .modal-summary-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.85em; }
         .modal-summary-row span:first-child { color: #6c757d; }
@@ -501,7 +501,7 @@ $conn->close();
                         <div class="legend-item clickable-filter" data-health="on_track" onclick="filterByHealth('on_track')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#28a745"></span>On Track</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['on_track']; ?></span></div>
                         <div class="legend-item clickable-filter" data-health="at_risk" onclick="filterByHealth('at_risk')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#ffc107"></span>At Risk</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['at_risk']; ?></span></div>
                         <div class="legend-item clickable-filter" data-health="behind" onclick="filterByHealth('behind')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#dc3545"></span>Behind</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['behind']; ?></span></div>
-                        <div class="legend-item clickable-filter" data-health="completed" onclick="filterByHealth('completed')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#488C9A"></span>Done</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['completed']; ?></span></div>
+                        <div class="legend-item" onclick="window.location.href='archived_projects.php'" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#488C9A"></span>Completed</span><span class="legend-value"><?php echo $archived_count; ?></span></div>
                     </div>
                 </div>
             </div>
@@ -732,7 +732,7 @@ function openChartModal(type) {
                     <span style="width:12px;height:12px;border-radius:50%;background:#488C9A"></span>
                     <strong style="color:#004085">Completed</strong>
                 </div>
-                <p style="margin:0;font-size:0.85em;color:#495057">All modules have been delivered to the project site (100% delivery progress).</p>
+                <p style="margin:0;font-size:0.85em;color:#495057">Projects that have been archived. Click to view the archived projects page.</p>
             </div>
         `;
     } else if (type === 'distribution') {
@@ -847,7 +847,7 @@ function sortTable(col) {
 
 const pipelineChart = new Chart(document.getElementById('pipelineChart'), {
     type: 'doughnut',
-    data: { labels: ['On Track','At Risk','Behind','Completed'], datasets: [{ data: [<?php echo $dashboard_totals['health_counts']['on_track'].','.$dashboard_totals['health_counts']['at_risk'].','.$dashboard_totals['health_counts']['behind'].','.$dashboard_totals['health_counts']['completed']; ?>], backgroundColor: ['#28a745','#ffc107','#dc3545','#488C9A'], borderWidth: 0 }] },
+    data: { labels: ['On Track','At Risk','Behind','Completed'], datasets: [{ data: [<?php echo $dashboard_totals['health_counts']['on_track'].','.$dashboard_totals['health_counts']['at_risk'].','.$dashboard_totals['health_counts']['behind'].','.$archived_count; ?>], backgroundColor: ['#28a745','#ffc107','#dc3545','#488C9A'], borderWidth: 0 }] },
     options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -855,8 +855,13 @@ const pipelineChart = new Chart(document.getElementById('pipelineChart'), {
         cutout: '60%',
         onClick: (evt, elements) => {
             if (elements.length > 0) {
-                const healthMap = ['on_track', 'at_risk', 'behind', 'completed'];
-                filterByHealth(healthMap[elements[0].index]);
+                const idx = elements[0].index;
+                if (idx === 3) {
+                    window.location.href = 'archived_projects.php';
+                } else {
+                    const healthMap = ['on_track', 'at_risk', 'behind'];
+                    filterByHealth(healthMap[idx]);
+                }
             }
         }
     }

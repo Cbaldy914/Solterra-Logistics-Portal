@@ -13,6 +13,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 // Database connection
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -153,6 +154,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $module_docs_description   = trim($_POST['module_docs_description'] ?? '');
         $module_docs_url           = null; // Legacy column (now stored in project_documents)
         $cost_per_watt             = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
+        $po_execution_date         = isset($_POST['po_execution_date']) && $_POST['po_execution_date'] !== '' ? trim($_POST['po_execution_date']) : null;
+        $posted_milestones          = $_POST['milestones'] ?? [];
 
         if ($project_name === '') {
             throw new Exception("Project Name is required.");
@@ -168,6 +171,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($zip_code === '') {
             throw new Exception("Zip Code is required.");
+        }
+
+        if (milestone_requires_po_execution_date($posted_milestones) && empty($po_execution_date)) {
+            throw new Exception("PO Execution date is required when a PO Execution milestone is configured.");
         }
 
         // Default project image (can be set via Project Photos manager later)
@@ -521,14 +528,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     stacking_in_warehouse, stacking_during_transport,
                     forklift_truck_long_side_mm, forklift_truck_short_side_mm,
                     pallet_jack_long_side_mm, pallet_jack_short_side_mm,
-                    module_notes, module_docs_url, cost_per_watt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    module_notes, module_docs_url, cost_per_watt, po_execution_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             if (!$stmt_module) {
                 throw new Exception("Error preparing module batch insert: " . $conn->error);
             }
             $stmt_module->bind_param(
-                "issiiiiiiiissiiiissd",
+                "issiiiiiiiissiiiissds",
                 $account_id,
                 $default_vendor_name,
                 $default_initial_location,
@@ -548,7 +555,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pallet_jack_short_side_mm,
                 $module_notes,
                 $module_docs_url,
-                $cost_per_watt
+                $cost_per_watt,
+                $po_execution_date
             );
 
             if (!$stmt_module->execute()) {
@@ -576,6 +584,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $stmt_item->close();
+
+            save_module_milestones($module_batch_id, $posted_milestones, $conn, $user_id);
             } // End of if (count($valid_pairs) > 0)
         }
 
@@ -1200,36 +1210,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flex-shrink: 0;
             margin-top: 2px;
         }
-        .photo-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 10px;
-            margin-top: 16px;
-        }
-        .photo-grid-item {
-            position: relative;
-            border-radius: 8px;
-            overflow: hidden;
-            aspect-ratio: 1;
-            background: #f8f9fa;
-        }
-        .photo-grid-item img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .photo-grid-item .photo-loading {
-            position: absolute;
+        .photo-upload-overlay {
+            position: fixed;
             inset: 0;
-            display: flex;
+            background: rgba(0, 0, 0, 0.4);
+            display: none;
             align-items: center;
             justify-content: center;
-            background: #f8f9fa;
+            z-index: 2000;
         }
-        .photo-grid-item .photo-loading::after {
-            content: '';
-            width: 24px;
-            height: 24px;
+        .photo-upload-overlay.active {
+            display: flex;
+        }
+        .photo-upload-modal {
+            background: #fff;
+            padding: 24px 28px;
+            border-radius: 14px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-weight: 500;
+            color: #293E4C;
+        }
+        .photo-upload-spinner {
+            width: 28px;
+            height: 28px;
             border: 3px solid #e9ecef;
             border-top-color: #488C9A;
             border-radius: 50%;
@@ -1237,43 +1243,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         @keyframes spin {
             to { transform: rotate(360deg); }
-        }
-        .photo-grid-item .remove-photo-btn {
-            position: absolute;
-            top: 4px;
-            right: 4px;
-            background: rgba(0,0,0,0.6);
-            color: #fff;
-            border: none;
-            border-radius: 50%;
-            width: 22px;
-            height: 22px;
-            cursor: pointer;
-            font-size: 14px;
-            line-height: 1;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-        }
-        .photo-grid-item:hover .remove-photo-btn {
-            opacity: 1;
-        }
-        .add-more-photos-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            aspect-ratio: 1;
-            border: 2px dashed #dee2e6;
-            border-radius: 8px;
-            cursor: pointer;
-            color: #6c757d;
-            font-size: 1.5rem;
-            transition: all 0.2s ease;
-            background: #fafafa;
-        }
-        .add-more-photos-btn:hover {
-            border-color: #488C9A;
-            color: #488C9A;
-            background: rgba(72, 140, 154, 0.05);
         }
 
         /* Success/Error Messages */
@@ -1680,10 +1649,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </div>
                             </div>
                         </div>
-                        <input type="file" id="prePhotoInput" accept="image/*" style="display:none" multiple>
-                        <div class="photo-grid" id="prePhotoGrid">
-                            <!-- Additional photos will appear here -->
-                        </div>
+                        <input type="file" id="prePhotoInput" accept="image/*" style="display:none">
+                    </div>
+                </div>
+
+                <div class="photo-upload-overlay" id="photoUploadOverlay">
+                    <div class="photo-upload-modal">
+                        <div class="photo-upload-spinner"></div>
+                        <div>Uploading photo...</div>
                     </div>
                 </div>
 
@@ -2342,20 +2315,18 @@ function setModuleMode(mode) {
     const profilePreview = document.getElementById('profileImagePreview');
     const profileImg = document.getElementById('profileImageImg');
     const input = document.getElementById('prePhotoInput');
-    const grid = document.getElementById('prePhotoGrid');
     const token = document.getElementById('tempPhotoToken');
     const orderInput = document.getElementById('tempPhotoOrder');
+    const overlay = document.getElementById('photoUploadOverlay');
     const defaultImageSrc = 'pictures/project_default.png';
-    let uploadedPhotos = [];
-    let isFirstPhoto = true;
+    let currentPhoto = null;
+    let isUploading = false;
 
     if (!input) return;
 
     input.addEventListener('change', async () => {
         if (input.files?.length) {
-            for (const file of input.files) {
-                await uploadPhoto(file);
-            }
+            await uploadPhoto(input.files[0]);
             input.value = '';
         }
     });
@@ -2373,163 +2344,101 @@ function setModuleMode(mode) {
             e.preventDefault();
             profilePreview.style.borderColor = '';
             if (e.dataTransfer?.files?.length) {
-                for (const file of e.dataTransfer.files) {
-                    await uploadPhoto(file);
-                }
+                await uploadPhoto(e.dataTransfer.files[0]);
             }
         });
     }
 
     async function uploadPhoto(file) {
-        // Show loading state
-        const tileId = 'photo-' + Date.now();
-        const isFirst = uploadedPhotos.length === 0;
-
-        if (isFirst) {
-            // Show loading on profile preview
-            profileImg.style.opacity = '0.5';
-        }
-
-        // Add loading tile to grid for additional photos
-        if (!isFirst) {
-            addLoadingTile(tileId);
-        }
+        if (isUploading) return;
+        isUploading = true;
+        input.disabled = true;
+        if (overlay) overlay.classList.add('active');
+        profileImg.style.opacity = '0.5';
 
         const fd = new FormData();
         fd.append('file', file);
         fd.append('token', token.value);
+        const previousPhoto = currentPhoto;
 
         try {
             const res = await fetch('upload_temp_photo.php', { method: 'POST', body: fd });
             const data = await res.json();
-            if (data.success) {
-                uploadedPhotos.push({ name: data.name, path: data.path });
-
-                if (isFirst) {
-                    // Update profile preview with first photo
-                    updateProfileImage(data.path);
+            const payload = data.file || data;
+            if (data.success && payload && payload.path) {
+                const loaded = await updateProfileImage(payload.path);
+                if (loaded) {
+                    currentPhoto = { name: payload.name, path: payload.path };
+                    updatePhotoOrder();
+                    if (previousPhoto) {
+                        await deleteTempPhoto(previousPhoto.name);
+                    }
                 } else {
-                    // Replace loading tile with actual photo
-                    replaceLoadingTile(tileId, data);
+                    await deleteTempPhoto(payload.name);
+                    if (previousPhoto) {
+                        await updateProfileImage(previousPhoto.path);
+                        currentPhoto = previousPhoto;
+                    } else {
+                        currentPhoto = null;
+                        profileImg.src = defaultImageSrc;
+                    }
+                    updatePhotoOrder();
                 }
-
-                updatePhotoOrder();
-                updateAddMoreButton();
             } else {
-                // Remove loading tile on error
-                removeLoadingTile(tileId);
-                profileImg.style.opacity = '1';
+                if (previousPhoto) {
+                    await updateProfileImage(previousPhoto.path);
+                } else {
+                    profileImg.src = defaultImageSrc;
+                }
             }
         } catch (err) {
             console.error('Upload failed', err);
-            removeLoadingTile(tileId);
+            if (previousPhoto) {
+                await updateProfileImage(previousPhoto.path);
+            } else {
+                profileImg.src = defaultImageSrc;
+            }
+        } finally {
+            if (overlay) overlay.classList.remove('active');
+            input.disabled = false;
             profileImg.style.opacity = '1';
+            isUploading = false;
         }
     }
 
     function updateProfileImage(path) {
-        const tempImg = new Image();
-        tempImg.onload = function() {
-            profileImg.src = path;
-            profileImg.style.opacity = '1';
-        };
-        tempImg.onerror = function() {
-            profileImg.src = defaultImageSrc;
-            profileImg.style.opacity = '1';
-        };
-        tempImg.src = path;
-    }
-
-    function addLoadingTile(tileId) {
-        const tile = document.createElement('div');
-        tile.className = 'photo-grid-item';
-        tile.id = tileId;
-        tile.innerHTML = '<div class="photo-loading"></div>';
-
-        // Insert before the add more button if it exists
-        const addMoreBtn = grid.querySelector('.add-more-photos-btn');
-        if (addMoreBtn) {
-            grid.insertBefore(tile, addMoreBtn);
-        } else {
-            grid.appendChild(tile);
-        }
-    }
-
-    function replaceLoadingTile(tileId, data) {
-        const tile = document.getElementById(tileId);
-        if (!tile) return;
-
-        const img = document.createElement('img');
-        img.onload = function() {
-            tile.innerHTML = '';
-            tile.appendChild(img);
-            const removeBtn = document.createElement('button');
-            removeBtn.type = 'button';
-            removeBtn.className = 'remove-photo-btn';
-            removeBtn.innerHTML = '&times;';
-            removeBtn.onclick = () => removePhoto(data.name);
-            tile.appendChild(removeBtn);
-        };
-        img.onerror = function() {
-            tile.remove();
-        };
-        img.src = data.path;
-        tile.dataset.name = data.name;
-    }
-
-    function removeLoadingTile(tileId) {
-        const tile = document.getElementById(tileId);
-        if (tile) tile.remove();
-    }
-
-    function removePhoto(name) {
-        const index = uploadedPhotos.findIndex(p => p.name === name);
-        if (index === -1) return;
-
-        uploadedPhotos.splice(index, 1);
-
-        // Remove tile from grid
-        const tile = grid.querySelector(`[data-name="${name}"]`);
-        if (tile) tile.remove();
-
-        // If we removed the first photo, update profile preview
-        if (index === 0) {
-            if (uploadedPhotos.length > 0) {
-                // Move the next photo to be the profile
-                updateProfileImage(uploadedPhotos[0].path);
-                // Remove it from grid since it's now the profile
-                const nextTile = grid.querySelector(`[data-name="${uploadedPhotos[0].name}"]`);
-                if (nextTile) nextTile.remove();
-            } else {
-                // No more photos, show default
+        return new Promise((resolve) => {
+            const tempImg = new Image();
+            tempImg.onload = function() {
+                profileImg.src = path;
+                profileImg.style.opacity = '1';
+                resolve(true);
+            };
+            tempImg.onerror = function() {
                 profileImg.src = defaultImageSrc;
-            }
-        }
-
-        updatePhotoOrder();
-        updateAddMoreButton();
+                profileImg.style.opacity = '1';
+                resolve(false);
+            };
+            tempImg.src = path;
+        });
     }
 
-    function updateAddMoreButton() {
-        // Add the "add more" button if there are photos and no button exists
-        let addMoreBtn = grid.querySelector('.add-more-photos-btn');
-
-        if (uploadedPhotos.length > 0 && !addMoreBtn) {
-            addMoreBtn = document.createElement('div');
-            addMoreBtn.className = 'add-more-photos-btn';
-            addMoreBtn.innerHTML = '+';
-            addMoreBtn.onclick = () => input.click();
-            grid.appendChild(addMoreBtn);
-        } else if (uploadedPhotos.length === 0 && addMoreBtn) {
-            addMoreBtn.remove();
+    async function deleteTempPhoto(name) {
+        if (!name || !token?.value) return;
+        try {
+            await fetch('delete_temp_photo.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token.value, name })
+            });
+        } catch (err) {
+            console.warn('Failed to delete temp photo', err);
         }
     }
 
-    window.updatePhotoOrder = function() {
-        orderInput.value = uploadedPhotos.map(p => p.name).join(',');
-    };
-
-    window.removePhoto = removePhoto;
+    function updatePhotoOrder() {
+        orderInput.value = currentPhoto ? currentPhoto.name : '';
+    }
 })();
 
 // Google Places Address Autocomplete

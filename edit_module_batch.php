@@ -277,6 +277,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $posted_watts = $_POST['wattages'] ?? [];
     $posted_qtys = $_POST['quantities'] ?? [];
+    $posted_milestones = $_POST['milestones'] ?? [];
+
+    if (milestone_requires_po_execution_date($posted_milestones) && empty($po_execution_date)) {
+        $errors[] = 'PO Execution date is required when a PO Execution milestone is configured.';
+    }
 
     // Build vendor/location
     $vendor_name = $module['vendor_name'] ?: 'Unknown Manufacturer';
@@ -441,7 +446,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->commit();
 
             // Save milestones
-            $posted_milestones = $_POST['milestones'] ?? [];
             save_module_milestones($batch_id, $posted_milestones, $conn, $user_id);
 
             // Calculate total modules for response

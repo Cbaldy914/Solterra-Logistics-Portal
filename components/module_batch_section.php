@@ -337,7 +337,8 @@ if (!function_exists('mb_optional_number_value')) {
     </div>
     <div class="logistics-panel-body">
         <p style="margin: 0 0 20px 0; color: #6c757d; font-size: 13px;">
-            Optional specifications for pallet dimensions, truck loading, and handling requirements.
+            Optional specifications for pallet dimensions, truck loading, and handling requirements. These help
+            plan freight, warehouse handling, and site receiving without changing cost calculations.
         </p>
 
         <!-- Truck & Pallet Info -->
@@ -503,6 +504,9 @@ if (!function_exists('mb_optional_number_value')) {
         <button type="button" class="logistics-panel-close" id="mb_milestonePanelClose">&times;</button>
     </div>
     <div class="logistics-panel-body">
+        <p style="margin: 0 0 20px 0; color: #6c757d; font-size: 13px;">
+            Define module pricing and payment timing. A default Project Delivery milestone is set at 100% and can be adjusted.
+        </p>
         <!-- Cost Per Watt Section -->
         <div class="logistics-panel-section" style="margin-bottom: 24px;">
             <h5>Cost Per Watt</h5>
@@ -517,9 +521,10 @@ if (!function_exists('mb_optional_number_value')) {
         <div class="logistics-panel-section" style="margin-bottom: 24px;">
             <h5>PO Execution Date</h5>
             <div style="margin-top: 12px;">
-                <label for="po_execution_date" style="display: block; font-size: 12px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;">Date of PO Execution</label>
+                <label for="po_execution_date" style="display: block; font-size: 12px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;">Date of PO Execution <span id="mb_poExecutionRequiredTag" style="display: none; color: #dc3545;">*</span></label>
                 <input type="date" name="po_execution_date" id="po_execution_date" value="<?php echo htmlspecialchars($module['po_execution_date'] ?? ''); ?>" style="width: 100%; max-width: 200px; padding: 10px 12px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 14px;">
                 <small style="display: block; margin-top: 6px; color: #6c757d; font-size: 12px;">The date when the purchase order was executed. Used for milestone payment triggers.</small>
+                <small id="mb_poExecutionRequiredNote" style="display: none; margin-top: 6px; color: #dc3545; font-size: 12px;">Required when a PO Execution milestone is configured.</small>
             </div>
         </div>
 
@@ -845,10 +850,52 @@ const mb_triggerEventLabels = {
     'project_delivery': 'Project Delivery'
 };
 
+function mb_hasPoExecutionMilestone() {
+    return mb_milestones.some(m => m.trigger_event === 'po_execution' && parseFloat(m.percentage) > 0);
+}
+
+function mb_updatePoExecutionRequirement() {
+    const poInput = document.getElementById('po_execution_date');
+    const requiredNote = document.getElementById('mb_poExecutionRequiredNote');
+    const requiredTag = document.getElementById('mb_poExecutionRequiredTag');
+    const isRequired = mb_hasPoExecutionMilestone();
+
+    if (poInput) {
+        poInput.required = isRequired;
+    }
+    if (requiredNote) {
+        requiredNote.style.display = isRequired ? 'block' : 'none';
+    }
+    if (requiredTag) {
+        requiredTag.style.display = isRequired ? 'inline' : 'none';
+    }
+}
+
+function mb_validatePoExecutionDate() {
+    const poInput = document.getElementById('po_execution_date');
+    if (mb_hasPoExecutionMilestone() && poInput && !poInput.value) {
+        alert('PO Execution date is required when a PO Execution milestone is configured.');
+        poInput.focus();
+        return false;
+    }
+    return true;
+}
+
+function mb_ensureDefaultMilestone() {
+    const costInput = document.getElementById('cost_per_watt');
+    const hasCost = costInput && costInput.value && parseFloat(costInput.value) > 0;
+    if (!hasCost || mb_milestones.length > 0) {
+        return false;
+    }
+    mb_milestones.push({ trigger_event: 'project_delivery', percentage: 100 });
+    return true;
+}
+
 function mb_openMilestonePanel() {
     document.getElementById('mb_milestonePanel').classList.add('open');
     document.getElementById('mb_milestonePanelOverlay').classList.add('open');
     mb_updateMilestoneAvailability();
+    mb_ensureDefaultMilestone();
     mb_renderMilestones();
 }
 
@@ -866,6 +913,10 @@ function mb_updateMilestoneAvailability() {
         requiresCostMsg.style.display = 'none';
         configArea.style.display = 'block';
         if (totalArea) totalArea.style.display = 'flex';
+        const addedDefault = mb_ensureDefaultMilestone();
+        if (addedDefault) {
+            mb_renderMilestones();
+        }
     } else {
         requiresCostMsg.style.display = 'block';
         configArea.style.display = 'none';
@@ -874,6 +925,9 @@ function mb_updateMilestoneAvailability() {
 }
 
 function mb_closeMilestonePanel() {
+    if (!mb_validatePoExecutionDate()) {
+        return;
+    }
     document.getElementById('mb_milestonePanel').classList.remove('open');
     document.getElementById('mb_milestonePanelOverlay').classList.remove('open');
     mb_updateMilestoneButtonStatus();
@@ -914,7 +968,7 @@ function mb_renderMilestones() {
     if (!container) return;
 
     if (mb_milestones.length === 0) {
-        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #6c757d; background: #f8f9fa; border-radius: 8px; border: 2px dashed #dee2e6;">No milestones configured. Click "Add Milestone" to get started.</div>';
+        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #6c757d; background: #f8f9fa; border-radius: 8px; border: 2px dashed #dee2e6;">No milestones configured yet. Click "Add Milestone" to get started.</div>';
         mb_updateMilestoneTotal();
         return;
     }
@@ -951,12 +1005,14 @@ function mb_renderMilestones() {
 
     container.innerHTML = html;
     mb_updateMilestoneTotal();
+    mb_updatePoExecutionRequirement();
 }
 
 function mb_updateMilestoneData(index, field, value) {
     if (mb_milestones[index]) {
         mb_milestones[index][field] = value;
         mb_updateMilestoneTotal();
+        mb_updatePoExecutionRequirement();
     }
 }
 
@@ -1028,6 +1084,7 @@ function mb_syncMilestonesToHiddenInputs() {
 
 function mb_clearAllMilestones() {
     mb_milestones = [];
+    mb_ensureDefaultMilestone();
     mb_renderMilestones();
     mb_updateMilestoneButtonStatus();
     mb_syncMilestonesToHiddenInputs();
@@ -1041,6 +1098,7 @@ function mb_loadExistingMilestones(existingMilestones) {
         }));
         mb_updateMilestoneButtonStatus();
         mb_syncMilestonesToHiddenInputs();
+        mb_updatePoExecutionRequirement();
     }
 }
 
@@ -1216,5 +1274,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial milestone button status and availability
     mb_updateMilestoneButtonStatus();
     mb_updateMilestoneAvailability();
+    mb_updatePoExecutionRequirement();
 });
 </script>

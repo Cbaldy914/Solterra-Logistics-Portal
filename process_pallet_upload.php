@@ -27,6 +27,7 @@ if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
 require_once '../config.php';
 require_once 'schedule_parser.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 
 $conn = getDBConnection();
 if (!$conn) {
@@ -670,6 +671,7 @@ function handleImport($conn, $user_id) {
     try {
         // Find or create module batch for this manufacturer + project
         $moduleBatchId = findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location, $logistics);
+        ensure_default_module_milestone($moduleBatchId, $conn);
 
         $palletsCreated = 0;
         $palletsUpdated = 0;
