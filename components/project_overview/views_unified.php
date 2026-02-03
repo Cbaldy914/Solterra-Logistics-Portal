@@ -811,6 +811,71 @@ document.addEventListener('keydown', function(e) {
                 <?php endif; ?>
             </div>
 
+            <?php if ($has_milestone_data): ?>
+            <!-- Milestone Payment Progress Section -->
+            <div class="module-batch-section" style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); border: 1px solid #e9ecef;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 class="batch-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-coins" style="color: #17a2b8;"></i>
+                        Module Payment Milestones
+                    </h3>
+                    <?php
+                    $completion_percent = $milestone_completion['completion_percent'] ?? 0;
+                    $progress_color = '#17a2b8';
+                    if ($completion_percent >= 100) {
+                        $progress_color = '#28a745';
+                    } elseif ($completion_percent >= 75) {
+                        $progress_color = '#17a2b8';
+                    } elseif ($completion_percent >= 50) {
+                        $progress_color = '#ffc107';
+                    }
+                    ?>
+                    <span style="font-size: 1.25em; font-weight: 700; color: <?php echo $progress_color; ?>;">
+                        <?php echo number_format($completion_percent, 0); ?>% Triggered
+                    </span>
+                </div>
+
+                <!-- Progress Bar -->
+                <div style="background: #e9ecef; border-radius: 8px; height: 10px; overflow: hidden; margin-bottom: 16px;">
+                    <div style="background: linear-gradient(90deg, <?php echo $progress_color; ?> 0%, <?php echo $progress_color; ?>dd 100%); height: 100%; width: <?php echo min($completion_percent, 100); ?>%; border-radius: 8px; transition: width 0.5s ease;"></div>
+                </div>
+
+                <!-- Milestone Details -->
+                <div class="info-grid" style="margin-bottom: 16px;">
+                    <?php foreach ($module_milestone_rows as $msr): ?>
+                        <?php if ($msr['percentage'] <= 0) continue; ?>
+                        <div class="info-section" style="padding: 12px; background: #fff; border-radius: 8px; border: 1px solid #e9ecef;">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                                <div style="width: 10px; height: 10px; border-radius: 50%; background: <?php echo $msr['is_complete'] ? '#28a745' : '#e9ecef'; ?>; border: 2px solid <?php echo $msr['is_complete'] ? '#28a745' : '#adb5bd'; ?>;"></div>
+                                <span style="font-weight: 600; color: #293E4C;"><?php echo htmlspecialchars($msr['name']); ?></span>
+                                <span style="font-size: 0.85em; color: #6c757d;">(<?php echo $msr['percentage']; ?>%)</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.9em;">
+                                <span style="color: <?php echo $msr['is_complete'] ? '#28a745' : '#488C9A'; ?>; font-weight: 600;">$<?php echo number_format($msr['accrued_amount'], 0); ?></span>
+                                <span style="color: #6c757d;">of $<?php echo number_format($msr['target_amount'], 0); ?></span>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Summary Stats -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding-top: 16px; border-top: 1px solid #e9ecef;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Contract Value</div>
+                        <div style="font-size: 1.1em; font-weight: 600; color: #293E4C;">$<?php echo number_format($milestone_completion['total_contract_value'], 0); ?></div>
+                    </div>
+                    <div style="text-align: center; border-left: 1px solid #e9ecef; border-right: 1px solid #e9ecef;">
+                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Triggered</div>
+                        <div style="font-size: 1.1em; font-weight: 600; color: #28a745;">$<?php echo number_format($milestone_completion['total_triggered'], 0); ?></div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Remaining</div>
+                        <div style="font-size: 1.1em; font-weight: 600; color: #6c757d;">$<?php echo number_format($milestone_completion['total_remaining'], 0); ?></div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <?php if (!empty($module_batches)): ?>
                 <?php foreach ($module_batches as $batch): ?>
                     <div class="module-batch-section" style="position:relative;">
@@ -1006,7 +1071,10 @@ document.addEventListener('keydown', function(e) {
 
         <div class="tables-and-charts">
                 <div class="left-side">
-                    <h2>Next 5 Weeks of Deliveries</h2>
+                    <div class="cashflow-header">
+                        <h2>Next 5 Weeks of Deliveries</h2>
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
+                    </div>
                     <div class="table-responsive">
                         <table id="table1">
                             <thead>
@@ -1041,7 +1109,10 @@ document.addEventListener('keydown', function(e) {
                             </tbody>
                         </table>
                     </div>
-                    <h2>Anticipated vs Actual Deliveries</h2>
+                    <div class="cashflow-header">
+                        <h2>Anticipated vs Actual Deliveries</h2>
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
+                    </div>
                     <canvas id="lineChart"></canvas>
                 </div>
 
@@ -1200,7 +1271,10 @@ document.addEventListener('keydown', function(e) {
                             </tbody>
                         </table>
                     </div>
-                    <h2>Forecasted vs Actual Cost</h2>
+                    <div class="cashflow-header">
+                        <h2>Forecasted vs Actual Cost</h2>
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>&view=weekly-projections" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
+                    </div>
                     <canvas id="budgetLineChart"></canvas>
                 </div>
 
@@ -1289,7 +1363,10 @@ document.addEventListener('keydown', function(e) {
                         .cost-legend-pct-lg { font-weight: 700; color: #488C9A; font-size: 0.9em; }
                     </style>
 
-                    <h2>Project Cost Summary</h2>
+                    <div class="cashflow-header">
+                        <h2>Project Cost Summary</h2>
+                        <a href="project_cost_details.php?project_id=<?php echo $project_id; ?>" class="view-all-link">View Details</a>
+                    </div>
                     <div class="table-responsive">
                         <table class="cost-summary-table">
                             <thead>
@@ -1349,7 +1426,10 @@ document.addEventListener('keydown', function(e) {
                     $other_pct = $chart_total > 0 ? ($other_cost / $chart_total) * 100 : 0;
                     ?>
                     <div class="cost-chart-section">
-                        <h2>Project Cost Breakdown</h2>
+                        <div class="cashflow-header">
+                            <h2>Project Cost Breakdown</h2>
+                            <a href="project_cost_details.php?project_id=<?php echo $project_id; ?>" class="view-all-link">View Details</a>
+                        </div>
                         <div class="cost-chart-container">
                             <canvas id="costDonutMini" class="cost-chart-canvas-lg" width="220" height="220"></canvas>
                             <div class="cost-chart-legend-lg">
