@@ -347,7 +347,7 @@ document.addEventListener('keydown', function(e) {
         </div>
 
         <div class="timeline-container">
-            <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
+            <ul class="timeline<?php echo ($current_step >= 4) ? ' progress-past-planning' : ''; ?>" style="--progress-width: <?php echo $progress_percentage; ?>%">
 
                 <!-- Step 1: Project Created -->
                 <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
@@ -429,6 +429,7 @@ document.addEventListener('keydown', function(e) {
 
                 <!-- Project Planning (Optional Step) -->
                 <li class="timeline-item timeline-planning-step<?php echo $has_legs_with_dates ? ' completed' : ($has_modules_only ? ' partial' : ''); ?>">
+                    <div class="planning-wrap"></div>
                     <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="circle circle-planning clickable" title="<?php echo htmlspecialchars($planning_badge['title'] ?? ''); ?>">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
