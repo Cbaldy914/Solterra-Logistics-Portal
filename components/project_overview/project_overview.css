@@ -1614,6 +1614,8 @@
 /* Planning step circle (optional step) */
 .timeline-planning-step {
     opacity: 0.9;
+    position: relative;
+    z-index: 3; /* Establish stacking context above progress bar */
 }
 .timeline-planning-step .circle.circle-planning {
     width: 50px;
@@ -1627,6 +1629,8 @@
     border: 2px dashed #adb5bd;
     text-decoration: none;
     border-radius: 50%;
+    position: relative;
+    z-index: 3; /* Ensure circle appears above the progress bar line */
 }
 .timeline-planning-step .circle.circle-planning svg {
     stroke: #6c757d;
