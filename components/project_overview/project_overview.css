@@ -2960,7 +2960,7 @@
     /* Planning wrap mobile alignment - center on timeline line at 30px (circle center) */
     .timeline .timeline-planning-step .planning-wrap {
         position: absolute;
-        top: -3px;
+        top: -8px;
         left: calc((var(--timeline-circle-size) - 66px) / 2); /* Center 66px wrap on 60px circle */
         transform: none;
         width: 66px;
