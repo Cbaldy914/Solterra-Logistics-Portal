@@ -1613,7 +1613,6 @@
 
 /* Planning step circle (optional step) */
 .timeline-planning-step {
-    opacity: 0.9;
     position: relative;
     z-index: 3; /* Establish stacking context above progress bar */
 }
@@ -1625,12 +1624,60 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    background: #ffffff; /* Solid white background - no transparency */
     border: 2px dashed #adb5bd;
     text-decoration: none;
     border-radius: 50%;
     position: relative;
-    z-index: 3; /* Ensure circle appears above the progress bar line */
+    z-index: 5; /* Ensure circle appears above everything */
+}
+
+/* Wrap-around track container */
+.timeline-planning-step .planning-wrap {
+    position: absolute;
+    top: 4px; /* Center the 62px ring on the 35px line: 35 - 31 = 4px */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 62px; /* Circle width + wrap padding */
+    height: 62px;
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* Gray track wrap-around (background) */
+.timeline-planning-step .planning-wrap::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 6px solid #e9ecef;
+    border-radius: 50%;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    box-sizing: border-box;
+}
+
+/* Progress fill wrap-around (colored) */
+.timeline-planning-step .planning-wrap::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 6px solid transparent;
+    border-radius: 50%;
+    box-sizing: border-box;
+    transition: border-color 0.3s ease;
+}
+
+/* When progress has passed planning, fill the wrap-around */
+.timeline.progress-past-planning .timeline-planning-step .planning-wrap::after,
+.timeline-planning-step.completed .planning-wrap::after,
+.timeline-planning-step.partial .planning-wrap::after {
+    border-color: #488C9A;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
 }
 .timeline-planning-step .circle.circle-planning svg {
     stroke: #6c757d;
@@ -2910,6 +2957,15 @@
         left: 0;
         top: 0;
     }
+    /* Planning wrap mobile alignment */
+    .timeline-planning-step .planning-wrap {
+        position: absolute;
+        top: -6px; /* Center around 60px circle */
+        left: -6px;
+        transform: none;
+        width: 72px; /* 60px circle + 12px for wrap */
+        height: 72px;
+    }
 
     .shipping-statuses {
         grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -3004,6 +3060,12 @@
         height: 44px;
         margin-top: 8px; /* (60-44)/2 = 8px to center on 30px line */
         margin-bottom: 28px;
+    }
+    /* Planning wrap tablet alignment */
+    .timeline-planning-step .planning-wrap {
+        top: 2px; /* Center 56px ring on 30px line: 30 - 28 = 2px */
+        width: 56px;
+        height: 56px;
     }
 }
 
