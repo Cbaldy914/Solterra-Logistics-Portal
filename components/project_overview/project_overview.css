@@ -2957,13 +2957,13 @@
         left: 0;
         top: 0;
     }
-    /* Planning wrap mobile alignment */
-    .timeline-planning-step .planning-wrap {
+    /* Planning wrap mobile alignment - center on timeline line at 30px (circle center) */
+    .timeline .timeline-planning-step .planning-wrap {
         position: absolute;
-        top: -6px; /* Center around 60px circle */
-        left: -6px;
+        top: -6px;
+        left: calc((var(--timeline-circle-size) - 72px) / 2); /* Center 72px wrap on 60px circle */
         transform: none;
-        width: 72px; /* 60px circle + 12px for wrap */
+        width: 72px;
         height: 72px;
     }
 
