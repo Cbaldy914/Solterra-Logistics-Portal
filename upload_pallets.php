@@ -1169,8 +1169,9 @@ $conn->close();
                     <!-- Hidden fields container to store logistics values -->
                     <div class="optional-fields-content" id="optionalFieldsContent" style="display: none;">
                         <p style="margin: 0 0 16px 0; color: #6c757d; font-size: 0.9rem;">
-                            These fields are optional and will be applied to the module batch.
-                            <strong>Modules per Pallet</strong> will be automatically calculated from your file's Quantity column.
+                            These fields are optional and will be applied to the module batch for freight planning, warehouse handling,
+                            and site receiving. <strong>Modules per Pallet</strong> will be automatically calculated from your file's
+                            Quantity column.
                         </p>
 
                         <!-- Truck/Pallet Calculations -->
@@ -1258,7 +1259,7 @@ $conn->close();
                         <div class="form-group" style="margin-top: 12px;">
                             <label for="cost_per_watt">Cost Per Watt ($/W) <span style="color: #6c757d; font-weight: 400; font-size: 0.85em;">(optional)</span></label>
                             <input type="number" step="0.000001" min="0" id="cost_per_watt" name="cost_per_watt" placeholder="e.g. 0.25">
-                            <small style="color: #6c757d; font-size: 0.75rem;">Module cost in price per watt for reporting</small>
+                            <small style="color: #6c757d; font-size: 0.75rem;">Used for module cost reporting and milestone calculations. If no milestones are set, we assume 100% due on project delivery.</small>
                         </div>
                     </div>
 
@@ -1450,7 +1451,8 @@ $conn->close();
         </div>
         <div class="logistics-panel-body">
             <p style="margin: 0 0 20px 0; color: #6c757d; font-size: 13px;">
-                These specifications will be applied to the imported module batch. Edit values here or in Step 1.
+                These specifications are used for freight planning, warehouse handling, and site receiving. Edit
+                values here or in Step 1; they apply to the imported module batch.
             </p>
 
             <!-- Truck & Pallet Info -->

@@ -54,6 +54,24 @@ function get_module_milestones($module_id, $conn) {
 }
 
 /**
+ * Check if milestones include a PO Execution trigger.
+ *
+ * @param array $milestones Array of milestone data
+ * @return bool True if a PO execution milestone exists
+ */
+function milestone_requires_po_execution_date($milestones) {
+    if (!is_array($milestones)) {
+        return false;
+    }
+    foreach ($milestones as $milestone) {
+        if (($milestone['trigger_event'] ?? '') === 'po_execution' && floatval($milestone['percentage'] ?? 0) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Save milestones for a module batch.
  * Replaces all existing milestones with the new set.
  *
@@ -66,6 +84,10 @@ function get_module_milestones($module_id, $conn) {
 function save_module_milestones($module_id, $milestones, $conn, $user_id = null) {
     if (!$module_id || !$conn) {
         return false;
+    }
+
+    if (!is_array($milestones)) {
+        $milestones = [];
     }
 
     // Delete existing milestones
@@ -82,6 +104,13 @@ function save_module_milestones($module_id, $milestones, $conn, $user_id = null)
         return true; // No milestones to insert is valid
     }
 
+    $trigger_names = [
+        'po_execution' => 'PO Execution',
+        'shipping' => 'Shipping',
+        'customs_cleared' => 'Customs Clearance',
+        'project_delivery' => 'Project Delivery'
+    ];
+
     $stmt = $conn->prepare("
         INSERT INTO module_batch_milestones (module_id, milestone_name, trigger_event, percentage, display_order)
         VALUES (?, ?, ?, ?, ?)
@@ -91,14 +120,8 @@ function save_module_milestones($module_id, $milestones, $conn, $user_id = null)
         return false;
     }
 
-    $trigger_names = [
-        'po_execution' => 'PO Execution',
-        'shipping' => 'Shipping',
-        'customs_cleared' => 'Customs Clearance',
-        'project_delivery' => 'Project Delivery'
-    ];
-
     $order = 1;
+    $inserted_triggers = [];
     foreach ($milestones as $milestone) {
         $trigger = $milestone['trigger_event'] ?? '';
         $percentage = floatval($milestone['percentage'] ?? 0);
@@ -111,17 +134,92 @@ function save_module_milestones($module_id, $milestones, $conn, $user_id = null)
 
         $stmt->bind_param("issdi", $module_id, $name, $trigger, $percentage, $order);
         $stmt->execute();
+        $inserted_triggers[] = $trigger;
         $order++;
+    }
+
+    if (empty($inserted_triggers)) {
+        $costStmt = $conn->prepare("SELECT cost_per_watt FROM modules WHERE id = ?");
+        if ($costStmt) {
+            $costStmt->bind_param("i", $module_id);
+            $costStmt->execute();
+            $costStmt->bind_result($cost_per_watt);
+            $costStmt->fetch();
+            $costStmt->close();
+
+            if ($cost_per_watt !== null && $cost_per_watt > 0) {
+                $trigger = 'project_delivery';
+                $percentage = 100;
+                $name = $trigger_names[$trigger];
+                $stmt->bind_param("issdi", $module_id, $name, $trigger, $percentage, $order);
+                $stmt->execute();
+                $inserted_triggers[] = $trigger;
+            }
+        }
     }
 
     $stmt->close();
 
-    $trigger_events = array_values(array_unique(array_filter(array_column($milestones, 'trigger_event'))));
+    $trigger_events = array_values(array_unique($inserted_triggers));
     if (in_array('po_execution', $trigger_events, true)) {
         trigger_batch_milestone($module_id, 'po_execution', $conn, $user_id);
     }
 
     backfill_delivery_milestones_for_batch($module_id, $conn, $user_id);
+
+    return true;
+}
+
+/**
+ * Ensure a default 100% project delivery milestone exists when cost is set.
+ *
+ * @param int $module_id Module batch ID
+ * @param mysqli $conn Database connection
+ * @return bool Success status
+ */
+function ensure_default_module_milestone($module_id, $conn) {
+    if (!$module_id || !$conn) {
+        return false;
+    }
+
+    $stmt = $conn->prepare("SELECT COUNT(*) FROM module_batch_milestones WHERE module_id = ? AND is_active = 1");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param("i", $module_id);
+    $stmt->execute();
+    $stmt->bind_result($milestone_count);
+    $stmt->fetch();
+    $stmt->close();
+
+    if ($milestone_count > 0) {
+        return true;
+    }
+
+    $costStmt = $conn->prepare("SELECT cost_per_watt FROM modules WHERE id = ?");
+    if (!$costStmt) {
+        return false;
+    }
+    $costStmt->bind_param("i", $module_id);
+    $costStmt->execute();
+    $costStmt->bind_result($cost_per_watt);
+    $costStmt->fetch();
+    $costStmt->close();
+
+    if ($cost_per_watt === null || $cost_per_watt <= 0) {
+        return true;
+    }
+
+    $insertStmt = $conn->prepare("
+        INSERT INTO module_batch_milestones (module_id, milestone_name, trigger_event, percentage, display_order)
+        VALUES (?, 'Project Delivery', 'project_delivery', 100, 1)
+    ");
+    if (!$insertStmt) {
+        return false;
+    }
+    $insertStmt->bind_param("i", $module_id);
+    $insertStmt->execute();
+    $insertStmt->close();
 
     return true;
 }
