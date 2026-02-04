@@ -690,6 +690,10 @@ $conn->close();
             margin-bottom: 24px;
             flex-wrap: wrap;
             gap: 16px;
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 16px;
+            border: 1px solid rgba(72, 140, 154, 0.1);
         }
         .section-title {
             font-size: 1.5em;
@@ -711,26 +715,63 @@ $conn->close();
             font-size: 0.85em;
             font-weight: 600;
         }
-        .section-filters {
+        /* View Toggle */
+        .view-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 8px;
+            padding: 3px;
+            gap: 3px;
+        }
+        .view-toggle button {
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 1em;
+            border: none;
+            cursor: pointer;
+            color: #6c757d;
+            background: transparent;
+            transition: all 0.2s;
+        }
+        .view-toggle button:hover {
+            color: #293E4C;
+            background: rgba(255,255,255,0.5);
+        }
+        .view-toggle button.active {
+            background: #fff;
+            color: #293E4C;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        /* Section Header Filters (centered) */
+        .section-header-filters {
             display: flex;
-            gap: 16px;
             align-items: center;
+            gap: 12px;
             flex-wrap: wrap;
-            padding: 10px 12px;
-            border-radius: 12px;
-            border: 1px solid rgba(72, 140, 154, 0.12);
+            justify-content: center;
+        }
+        .filter-box {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
             background: #ffffff;
+            border: 1px solid rgba(72, 140, 154, 0.2);
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
         }
         .filter-group {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             flex-wrap: wrap;
         }
         .filter-label {
             font-size: 0.85rem;
-            font-weight: 500;
-            color: #6c757d;
+            font-weight: 600;
+            color: #495057;
         }
 
         /* Unit/Filter Chips (match Project Overview) */
@@ -1014,6 +1055,91 @@ $conn->close();
             box-shadow: 0 10px 20px rgba(72, 140, 154, 0.3);
         }
 
+        /* Warehouse List/Table View */
+        .wh-table-container {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            display: none;
+        }
+        .wh-table-container.active {
+            display: block;
+        }
+        .wh-overview-cards-container.active {
+            display: grid;
+        }
+        .wh-overview-cards-container:not(.active) {
+            display: none;
+        }
+        .wh-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .wh-table th {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            padding: 12px 14px;
+            text-align: left;
+            font-weight: 600;
+            color: #fff;
+            font-size: 0.8em;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
+        }
+        .wh-table td {
+            padding: 14px;
+            border-bottom: 1px solid #f1f3f4;
+            color: #495057;
+            font-size: 0.9em;
+            vertical-align: middle;
+        }
+        .wh-table tbody tr {
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .wh-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .wh-table tbody tr.no-inventory {
+            opacity: 0.7;
+        }
+        .wh-table tbody tr.no-inventory:hover {
+            opacity: 1;
+        }
+        .wh-table-name {
+            font-weight: 600;
+            color: #293E4C;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .wh-table-address {
+            color: #6c757d;
+            font-size: 0.85em;
+        }
+        .wh-table-stat {
+            font-weight: 600;
+            color: #488C9A;
+        }
+        .wh-table-stat.highlight {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 6px;
+            display: inline-block;
+        }
+        .wh-table-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .wh-table-actions .wh-action-btn {
+            padding: 6px 10px;
+            font-size: 0.8em;
+        }
+
         .alert {
             border-radius: 12px;
             padding: 12px 16px;
@@ -1213,7 +1339,14 @@ $conn->close();
             }
             .section-header {
                 flex-direction: column;
-                align-items: flex-start;
+                align-items: stretch;
+                gap: 12px;
+            }
+            .section-header .section-title {
+                text-align: center;
+            }
+            .section-header .view-toggle {
+                align-self: center;
             }
             .wh-overview-card-actions {
                 flex-direction: column;
@@ -1229,6 +1362,24 @@ $conn->close();
             }
             .filter-chips {
                 justify-content: center;
+            }
+            .section-header-filters {
+                width: 100%;
+                justify-content: flex-start;
+            }
+            .filter-box {
+                flex-direction: column;
+                align-items: flex-start;
+                width: 100%;
+            }
+            .filter-box .filter-chips {
+                width: 100%;
+            }
+            .wh-table-container {
+                overflow-x: auto;
+            }
+            .wh-table {
+                min-width: 800px;
             }
         }
     </style>
@@ -1404,17 +1555,17 @@ $conn->close();
             All Warehouses
             <span class="section-badge"><?php echo count($all_warehouses); ?> total</span>
         </h2>
-        <div class="section-filters">
-            <div class="filter-group">
-                <span class="filter-label">Inventory</span>
+        <div class="section-header-filters">
+            <div class="filter-box">
+                <span class="filter-label">Inventory:</span>
                 <div class="filter-chips">
                     <button class="filter-chip active" onclick="setInventoryFilter('all', this)">All</button>
                     <button class="filter-chip" onclick="setInventoryFilter('with-inventory', this)">With Inventory</button>
                     <button class="filter-chip" onclick="setInventoryFilter('empty', this)">Empty</button>
                 </div>
             </div>
-            <div class="filter-group">
-                <span class="filter-label">View As:</span>
+            <div class="filter-box">
+                <span class="filter-label">Type:</span>
                 <div class="filter-chips">
                     <button class="filter-chip active" onclick="setTypeFilter('all', this)">All</button>
                     <button class="filter-chip" onclick="setTypeFilter('warehouse', this)">Warehouses</button>
@@ -1422,9 +1573,13 @@ $conn->close();
                 </div>
             </div>
         </div>
+        <div class="view-toggle">
+            <button class="active" onclick="setViewMode('grid')" id="btn-grid" title="Grid View"><i class="fas fa-th-large"></i></button>
+            <button onclick="setViewMode('list')" id="btn-list" title="List View"><i class="fas fa-list"></i></button>
+        </div>
     </div>
 
-    <div class="wh-overview-cards-container" id="warehouseContainer">
+    <div class="wh-overview-cards-container active" id="warehouseContainer">
         <?php if (!empty($all_warehouses)): ?>
             <?php foreach ($all_warehouses as $wh):
                 $total_modules = ($wh['assigned_modules_stored'] ?? 0) + ($wh['unassigned_modules_stored'] ?? 0);
@@ -1543,6 +1698,106 @@ $conn->close();
         <?php endif; ?>
     </div>
 
+    <!-- Warehouse List/Table View -->
+    <div class="wh-table-container" id="warehouseTableContainer">
+        <table class="wh-table">
+            <thead>
+                <tr>
+                    <th>Warehouse</th>
+                    <th>Location</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Stored</th>
+                    <th>In Transit</th>
+                    <th>Monthly Cost</th>
+                    <?php if ($can_manage_warehouses): ?><th>Actions</th><?php endif; ?>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (!empty($all_warehouses)): ?>
+                    <?php foreach ($all_warehouses as $wh):
+                        $total_modules = ($wh['assigned_modules_stored'] ?? 0) + ($wh['unassigned_modules_stored'] ?? 0);
+                        $total_pallets = ($wh['assigned_pallets_stored'] ?? 0) + ($wh['unassigned_pallets_stored'] ?? 0);
+                        $total_wattage = ($wh['assigned_wattage_stored'] ?? 0) + ($wh['unassigned_wattage_stored'] ?? 0);
+                        $total_mw = $total_wattage > 0 ? $total_wattage / 1000000 : 0;
+                        $transit_modules = ($wh['modules_in_transit'] ?? 0);
+                        $transit_pallets = ($wh['pallets_in_transit'] ?? 0);
+                        $transit_wattage = ($wh['wattage_in_transit'] ?? 0);
+                        $transit_mw = $transit_wattage > 0 ? $transit_wattage / 1000000 : 0;
+                        $has_inventory = $total_modules > 0 || $total_pallets > 0;
+                        $has_transit = $transit_modules > 0 || $transit_pallets > 0;
+                        $warehouse_monthly_cost = $total_pallets * ($wh['monthly_storage_fee'] ?? 0);
+                        $warehouse_type = !empty($wh['is_port']) ? 'port' : 'warehouse';
+
+                        $address_parts = array_filter([
+                            $wh['street_address'] ?? '',
+                            $wh['city'] ?? '',
+                            $wh['state'] ?? ''
+                        ]);
+                        $display_address = !empty($address_parts) ? implode(', ', $address_parts) : ($wh['address'] ?? 'N/A');
+                    ?>
+                    <tr class="<?php echo !$has_inventory && !$has_transit ? 'no-inventory' : ''; ?>"
+                        data-has-inventory="<?php echo $has_inventory ? '1' : '0'; ?>"
+                        data-has-transit="<?php echo $has_transit ? '1' : '0'; ?>"
+                        data-type="<?php echo $warehouse_type; ?>"
+                        onclick="window.location.href='warehouse_info.php?warehouse_id=<?php echo $wh['id']; ?>'">
+                        <td>
+                            <span class="wh-table-name">
+                                <?php echo htmlspecialchars($wh['name']); ?>
+                            </span>
+                        </td>
+                        <td class="wh-table-address"><?php echo htmlspecialchars($display_address); ?></td>
+                        <td>
+                            <span class="wh-overview-type-badge <?php echo $warehouse_type; ?>">
+                                <?php echo $warehouse_type === 'port' ? 'Port' : 'Warehouse'; ?>
+                            </span>
+                        </td>
+                        <td>
+                            <?php if ($has_inventory): ?>
+                                <span class="wh-overview-status-badge has-inventory">Active</span>
+                            <?php elseif ($has_transit): ?>
+                                <span class="wh-overview-status-badge in-transit">Incoming</span>
+                            <?php else: ?>
+                                <span class="wh-overview-status-badge no-inventory">Empty</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <span class="wh-table-stat <?php echo $total_modules > 0 ? 'highlight' : ''; ?> js-unit-value"
+                                  data-modules="<?php echo (int)$total_modules; ?>"
+                                  data-pallets="<?php echo (int)$total_pallets; ?>"
+                                  data-mw="<?php echo number_format($total_mw, 2, '.', ''); ?>">
+                                <?php echo number_format($total_modules); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span class="js-unit-value"
+                                  data-modules="<?php echo (int)$transit_modules; ?>"
+                                  data-pallets="<?php echo (int)$transit_pallets; ?>"
+                                  data-mw="<?php echo number_format($transit_mw, 2, '.', ''); ?>">
+                                <?php echo number_format($transit_modules); ?>
+                            </span>
+                        </td>
+                        <td>$<?php echo number_format($warehouse_monthly_cost, 0); ?></td>
+                        <?php if ($can_manage_warehouses): ?>
+                        <td onclick="event.stopPropagation()">
+                            <div class="wh-table-actions">
+                                <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $wh['id']; ?>" class="wh-action-btn primary">Inventory</a>
+                                <button type="button" class="wh-action-btn" onclick="openFeeModal(<?php echo $wh['id']; ?>)">Fees</button>
+                                <a href="edit_warehouse.php?id=<?php echo $wh['id']; ?>" class="wh-action-btn">Edit</a>
+                            </div>
+                        </td>
+                        <?php endif; ?>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="<?php echo $can_manage_warehouses ? '8' : '7'; ?>" style="text-align: center; color: #6c757d; padding: 40px;">No warehouses available.</td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+
     <?php if ($can_manage_warehouses): ?>
     <!-- Fee Details Modal -->
     <div class="modal-overlay" id="feeModal">
@@ -1573,6 +1828,16 @@ function toggleFigure(element) {
 let currentInventoryFilter = 'all';
 let currentTypeFilter = 'all';
 let currentUnit = 'modules';
+let currentViewMode = 'grid';
+
+function setViewMode(mode) {
+    currentViewMode = mode;
+    document.getElementById('warehouseContainer').classList.toggle('active', mode === 'grid');
+    document.getElementById('warehouseTableContainer').classList.toggle('active', mode === 'list');
+    document.getElementById('btn-grid').classList.toggle('active', mode === 'grid');
+    document.getElementById('btn-list').classList.toggle('active', mode === 'list');
+    localStorage.setItem('warehouseViewMode', mode);
+}
 
 function setInventoryFilter(filter, btn) {
     currentInventoryFilter = filter;
@@ -1602,6 +1867,7 @@ function setUnitFilter(unit, btn) {
 }
 
 function applyWarehouseFilters() {
+    // Filter cards
     const cards = document.querySelectorAll('.wh-overview-card');
     cards.forEach(card => {
         const hasInventory = card.dataset.hasInventory === '1';
@@ -1621,6 +1887,28 @@ function applyWarehouseFilters() {
         }
 
         card.style.display = (matchesInventory && matchesType) ? '' : 'none';
+    });
+
+    // Filter table rows
+    const rows = document.querySelectorAll('.wh-table tbody tr[data-type]');
+    rows.forEach(row => {
+        const hasInventory = row.dataset.hasInventory === '1';
+        const hasTransit = row.dataset.hasTransit === '1';
+        const type = row.dataset.type || 'warehouse';
+
+        let matchesInventory = true;
+        if (currentInventoryFilter === 'with-inventory') {
+            matchesInventory = hasInventory || hasTransit;
+        } else if (currentInventoryFilter === 'empty') {
+            matchesInventory = !hasInventory && !hasTransit;
+        }
+
+        let matchesType = true;
+        if (currentTypeFilter !== 'all') {
+            matchesType = type === currentTypeFilter;
+        }
+
+        row.style.display = (matchesInventory && matchesType) ? '' : 'none';
     });
 }
 
@@ -1654,6 +1942,10 @@ function updateUnitDisplay() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Restore saved view mode
+    const savedViewMode = localStorage.getItem('warehouseViewMode') || 'grid';
+    setViewMode(savedViewMode);
+
     applyWarehouseFilters();
     updateUnitDisplay();
 });
