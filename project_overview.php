@@ -3157,49 +3157,6 @@ function toggleMainDeliveriesDropdown() {
     }
 }
 
-// Close dropdown when clicking outside
-window.onclick = function(event) {
-    if (!event.target.matches('.dropdown-btn') && !event.target.matches('.dropdown-arrow')) {
-        var dropdowns = document.getElementsByClassName("dropdown-content");
-        var dropdownBtns = document.getElementsByClassName("dropdown-btn");
-        
-        for (var i = 0; i < dropdowns.length; i++) {
-            var openDropdown = dropdowns[i];
-            if (openDropdown.classList.contains('show')) {
-                openDropdown.classList.remove('show');
-            }
-        }
-        
-        for (var i = 0; i < dropdownBtns.length; i++) {
-            dropdownBtns[i].classList.remove('active');
-        }
-    }
-    
-    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-    // NOTE: Removed modal closing on outside click to prevent glitches
-    // Users must now use the "x" button to close modals
-    
-    // Close dropdowns when clicking outside
-    if (!event.target.closest('.project-header-actions') && !event.target.closest('.project-settings-btn')) {
-        const projectDropdown = document.getElementById('projectActionsDropdown');
-        if (projectDropdown) {
-            projectDropdown.classList.remove('show');
-            projectDropdown.style.display = '';
-        }
-    }
-    const moduleDropdown = document.getElementById('moduleActionsDropdown');
-    if (moduleDropdown && !event.target.closest('.dropdown')) {
-        moduleDropdown.classList.remove('show');
-        moduleDropdown.style.display = '';
-    }
-    if (!event.target.closest('.batch-actions-dropdown')) {
-        document.querySelectorAll('.batch-actions-content').forEach(function(content) {
-            content.style.display = 'none';
-        });
-    }
-    <?php endif; ?>
-}
-
 // Wattage Breakdown Toggle (available for all users who can see module breakdown)
 function toggleWattageBreakdown(event) {
     event.stopPropagation();
@@ -3342,27 +3299,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
-
-// Module Actions Functions
-function toggleModuleActions() {
-    const dropdown = document.getElementById('moduleActionsDropdown');
-    if (!dropdown) return;
-    const isOpen = dropdown.style.display === 'block';
-    dropdown.style.display = isOpen ? 'none' : 'block';
-}
-
-// Batch Actions Functions
-function toggleBatchActions(batchId) {
-    const dropdown = document.getElementById('batchActionsDropdown_' + batchId);
-    if (!dropdown) return;
-    // Close all other batch dropdowns
-    document.querySelectorAll('.batch-actions-content').forEach(function(content) {
-        if (content.id !== 'batchActionsDropdown_' + batchId) {
-            content.style.display = 'none';
-        }
-    });
-    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-}
 
 // Close project settings dropdown when clicking outside
 document.addEventListener('click', function(event) {
