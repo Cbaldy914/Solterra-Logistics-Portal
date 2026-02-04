@@ -250,7 +250,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehouses</a>
             <div class="slp-submenu" role="menu">
               <a href="add_warehouse" role="menuitem">Add Warehouse</a>
-              <a href="manage_warehouses" role="menuitem">Manage Warehouses</a>
+              <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
               <a href="admin_warehouse_estimate" role="menuitem">Admin Warehouse Quote</a>
             </div>
           </li>
@@ -333,7 +333,6 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>
             <div class="slp-submenu" role="menu">
               <a href="add_warehouse" role="menuitem">Add Warehouse</a>
-              <a href="manage_warehouses" role="menuitem">Manage Warehouses</a>
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
               <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
               <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
@@ -414,7 +413,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
           <li class="slp-item slp-has-dropdown" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>
             <div class="slp-submenu" role="menu">
-              <a href="manage_warehouses" role="menuitem">Manage Warehouses</a>
+              <a href="add_warehouse" role="menuitem">Add Warehouse</a>
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
               <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
             </div>

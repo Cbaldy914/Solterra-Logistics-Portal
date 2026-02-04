@@ -1066,7 +1066,7 @@ if (!$warehouse && empty($successMessage)) {
         </div>
 
         <!-- Section 3: Cost Structure -->
-        <div class="accordion-section" data-section="3">
+        <div class="accordion-section" data-section="3" id="cost-structure">
             <div class="accordion-header" onclick="goToStep(3)">
                 <h2><span class="step-badge" id="badge-3">3</span> Cost Structure</h2>
                 <span class="accordion-toggle">&#9660;</span>
@@ -1312,6 +1312,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('is_port').addEventListener('change', function() {
         feeManager.setIsPort(this.checked);
     });
+
+    if (window.location.hash === '#cost-structure') {
+        goToStep(3);
+    }
 });
 
 function initializeAddressAutocomplete() {
