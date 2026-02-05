@@ -2175,7 +2175,7 @@ $conn->close();
         </div>
 
         <div class="summary-section">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+            <div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 15px;">
                 <h2 class="section-title" style="margin-bottom: 0; border-bottom: none; padding-bottom: 0;">Summary & Pallet Generation</h2>
                 <?php
                 $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
