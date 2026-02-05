@@ -2364,8 +2364,8 @@ $conn->close();
                     endforeach; // End foreach $wattage_summary
                     endif; // End if !empty($wattage_summary)
                 ?>
-            </div>
             <?php endif; ?>
+            </div>
         </div>
 
         </div><!-- End tab-overview -->

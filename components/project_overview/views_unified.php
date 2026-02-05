@@ -304,37 +304,17 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 
-<!-- Main Tabs -->
-<div class="main-tabs-container">
-    <div class="main-tabs">
-        <button class="main-tab-btn active" data-tab="project-overview" onclick="switchMainTab('project-overview')">
-            Project Overview
-        </button>
-        <button class="main-tab-btn" data-tab="analytics" onclick="switchMainTab('analytics')">
-            Analytics
-        </button>
-    </div>
+<!-- Single-level Tabs -->
+<div class="project-tabs">
+    <button class="tab-btn active" data-tab="tab-timeline">Timeline</button>
+    <button class="tab-btn" data-tab="tab-site">Site</button>
+    <button class="tab-btn" data-tab="tab-modules">Modules</button>
+    <button class="tab-btn" data-tab="tab-deliveries">Deliveries</button>
+    <button class="tab-btn" data-tab="tab-financial">Financial</button>
 </div>
 
-<!-- Project Overview Tab Content -->
-<div id="project-overview-tab" class="main-tab-content active">
-    <!-- Sub-tabs -->
-    <div class="sub-tabs-container">
-        <div class="sub-tabs">
-            <button class="sub-tab-btn active" data-subtab="timeline" onclick="switchSubTab('project-overview', 'timeline')">
-                Timeline
-            </button>
-            <button class="sub-tab-btn" data-subtab="site" onclick="switchSubTab('project-overview', 'site')">
-                Site
-            </button>
-            <button class="sub-tab-btn" data-subtab="modules" onclick="switchSubTab('project-overview', 'modules')">
-                Modules
-            </button>
-        </div>
-    </div>
-
-    <!-- Timeline Sub-tab -->
-    <div id="subtab-timeline" class="sub-tab-content active">
+<!-- Timeline Tab -->
+<div id="tab-timeline" class="tab-content active">
         <!-- Unit Filters (inside content) -->
         <div class="unit-filter-bar">
             <span class="filter-label">View as:</span>
@@ -628,8 +608,8 @@ document.addEventListener('keydown', function(e) {
         </div>
     </div>
 
-    <!-- Site Sub-tab -->
-    <div id="subtab-site" class="sub-tab-content" style="display:none;">
+<!-- Site Tab -->
+<div id="tab-site" class="tab-content">
         <div class="info-container">
             <div class="header-with-button">
                 <h2>Site Information</h2>
@@ -825,8 +805,8 @@ document.addEventListener('keydown', function(e) {
         </div>
     </div>
 
-    <!-- Modules Sub-tab -->
-    <div id="subtab-modules" class="sub-tab-content" style="display:none;">
+<!-- Modules Tab -->
+<div id="tab-modules" class="tab-content">
         <div class="info-container">
             <div class="header-with-button">
                 <h2>Module Information</h2>
@@ -1007,24 +987,9 @@ document.addEventListener('keydown', function(e) {
             <?php endif; ?>
         </div>
     </div>
-</div>
 
-<!-- Analytics Tab Content -->
-<div id="analytics-tab" class="main-tab-content" style="display:none;">
-    <!-- Sub-tabs -->
-    <div class="sub-tabs-container">
-        <div class="sub-tabs">
-            <button class="sub-tab-btn active" data-subtab="deliveries" onclick="switchSubTab('analytics', 'deliveries')">
-                Deliveries
-            </button>
-            <button class="sub-tab-btn" data-subtab="financial" onclick="switchSubTab('analytics', 'financial')">
-                Financial
-            </button>
-        </div>
-    </div>
-
-    <!-- Deliveries Sub-tab -->
-    <div id="subtab-deliveries" class="sub-tab-content active">
+<!-- Deliveries Tab -->
+<div id="tab-deliveries" class="tab-content">
         <!-- Unit Filters (inside content) -->
         <div class="unit-filter-bar">
             <span class="filter-label">View as:</span>
@@ -1173,8 +1138,8 @@ document.addEventListener('keydown', function(e) {
             </div>
     </div>
 
-    <!-- Financial Sub-tab -->
-    <div id="subtab-financial" class="sub-tab-content" style="display:none;">
+<!-- Financial Tab -->
+<div id="tab-financial" class="tab-content">
         <!-- Unit Filters (inside content) -->
         <div class="unit-filter-bar">
             <span class="filter-label">View as:</span>
@@ -1533,7 +1498,6 @@ document.addEventListener('keydown', function(e) {
                 </div>
             </div>
     </div>
-</div>
 
 <!-- ==================== MODALS ==================== -->
 <!-- Note: Logistics Breakdown Modal is in modals.php -->

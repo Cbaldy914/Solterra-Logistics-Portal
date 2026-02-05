@@ -441,48 +441,46 @@ document.addEventListener('click', function(event) {
 
 // ==================== TAB NAVIGATION ====================
 
-// Main tab switching
-function switchMainTab(tabId) {
-    // Update main tab button states
-    document.querySelectorAll('.main-tab-btn').forEach(btn => {
+function activateTab(tabId) {
+    // Update tab button states
+    document.querySelectorAll('.project-tabs .tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tabId);
     });
 
-    // Show/hide main tab content
-    document.querySelectorAll('.main-tab-content').forEach(content => {
-        const isTarget = content.id === tabId + '-tab';
+    // Show/hide tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        const isTarget = content.id === tabId;
         content.style.display = isTarget ? 'block' : 'none';
         content.classList.toggle('active', isTarget);
     });
 
-    // Initialize charts when switching to analytics
-    if (tabId === 'analytics') {
+    // Initialize charts when needed
+    if (tabId === 'tab-deliveries') {
         initializeDeliveryCharts();
-    }
-}
-
-// Sub-tab switching
-function switchSubTab(mainTab, subTabId) {
-    const mainTabContent = document.getElementById(mainTab + '-tab');
-    if (!mainTabContent) return;
-
-    // Update sub-tab button states within this main tab
-    mainTabContent.querySelectorAll('.sub-tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.subtab === subTabId);
-    });
-
-    // Show/hide sub-tab content within this main tab
-    mainTabContent.querySelectorAll('.sub-tab-content').forEach(content => {
-        const isTarget = content.id === 'subtab-' + subTabId;
-        content.style.display = isTarget ? 'block' : 'none';
-        content.classList.toggle('active', isTarget);
-    });
-
-    // Initialize financial charts when switching to financial sub-tab
-    if (subTabId === 'financial') {
+    } else if (tabId === 'tab-financial') {
         initializeFinancialCharts();
     }
+
+    history.replaceState(null, null, '#' + tabId);
 }
+
+// Hash-based tab routing
+function setActiveTabFromHash() {
+    const hash = window.location.hash.replace('#', '');
+    if (hash && document.getElementById(hash)) {
+        activateTab(hash);
+    }
+}
+
+// Initialize tab click listeners
+document.querySelectorAll('.project-tabs .tab-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        activateTab(this.dataset.tab);
+    });
+});
+
+setActiveTabFromHash();
+window.addEventListener('hashchange', setActiveTabFromHash);
 
 function toggleDropdown(dropdownId) {
     const dropdown = document.getElementById(dropdownId);
@@ -750,22 +748,16 @@ function initializeFinancialCharts() {
 
 // Legacy compatibility
 function showView(viewId) {
-    if (viewId === 'progress-info' || viewId === 'project-progress') {
-        switchMainTab('project-overview');
-        switchSubTab('project-overview', 'timeline');
-    } else if (viewId === 'site-info') {
-        switchMainTab('project-overview');
-        switchSubTab('project-overview', 'site');
-    } else if (viewId === 'module-info') {
-        switchMainTab('project-overview');
-        switchSubTab('project-overview', 'modules');
-    } else if (viewId === 'delivery-info') {
-        switchMainTab('analytics');
-        switchSubTab('analytics', 'deliveries');
-    } else if (viewId === 'financial-info') {
-        switchMainTab('analytics');
-        switchSubTab('analytics', 'financial');
-    }
+    const viewMap = {
+        'progress-info': 'tab-timeline',
+        'project-progress': 'tab-timeline',
+        'site-info': 'tab-site',
+        'module-info': 'tab-modules',
+        'delivery-info': 'tab-deliveries',
+        'financial-info': 'tab-financial'
+    };
+    const tabId = viewMap[viewId];
+    if (tabId) activateTab(tabId);
 }
 
 function toggleModulesDropdown() { toggleDropdown('modulesDropdown'); }

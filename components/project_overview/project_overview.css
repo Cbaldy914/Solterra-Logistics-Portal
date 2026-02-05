@@ -865,105 +865,45 @@
     }
 }
 
-/* ==================== MAIN TABS ==================== */
-.main-tabs-container {
-    margin: 20px 0 0 0;
-}
-
-.main-tabs {
+/* ==================== SINGLE-LEVEL TABS ==================== */
+.project-tabs {
     display: flex;
-    background: #ffffff;
-    padding: 6px;
-    border-radius: 14px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-    border: 1px solid #e9ecef;
-    gap: 4px;
+    gap: 0;
+    margin: 20px 0 24px 0;
+    border-bottom: 2px solid #e9ecef;
 }
 
-.main-tab-btn {
-    padding: 14px 32px;
-    border: none;
-    border-radius: 10px;
-    font-weight: 600;
-    font-size: 1rem;
-    color: #6c757d;
+.project-tabs .tab-btn {
     background: transparent;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-.main-tab-btn.active {
-    background: linear-gradient(135deg, #293E4C 0%, #1a2830 100%);
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(41, 62, 76, 0.3);
-}
-
-.main-tab-btn:not(.active):hover {
-    background: #f8f9fa;
-    color: #495057;
-}
-
-/* ==================== SUB-TABS ==================== */
-.sub-tabs-container {
-    text-align: center;
-    margin: 0 auto 20px auto;
-}
-
-.sub-tabs {
-    display: inline-flex;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    padding: 4px;
-    border-radius: 10px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-    border: 1px solid rgba(72, 140, 154, 0.15);
-    gap: 3px;
-}
-
-.sub-tab-btn {
-    padding: 8px 18px;
     border: none;
-    border-radius: 8px;
-    font-weight: 500;
-    font-size: 0.85rem;
-    color: #6c757d;
-    background: transparent;
+    padding: 14px 24px;
     cursor: pointer;
-    transition: all 0.25s ease;
-}
-
-.sub-tab-btn.active {
-    background: linear-gradient(135deg, #293E4C 0%, #1a2830 100%);
-    color: #fff;
-    box-shadow: 0 3px 10px rgba(41, 62, 76, 0.25);
     font-weight: 600;
+    font-size: 0.95em;
+    color: #6c757d;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s ease;
 }
 
-.sub-tab-btn:not(.active):hover {
-    background: rgba(72, 140, 154, 0.1);
+.project-tabs .tab-btn:hover {
     color: #488C9A;
+    background: rgba(72, 140, 154, 0.05);
+}
+
+.project-tabs .tab-btn.active {
+    color: #488C9A;
+    border-bottom-color: #488C9A;
 }
 
 /* ==================== TAB CONTENT ==================== */
-.main-tab-content {
-    animation: fadeIn 0.3s ease;
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-    border: 1px solid #e9ecef;
-    margin-top: 0;
-}
-
-.main-tab-content:not(.active) {
+.tab-content {
     display: none;
-}
-
-.sub-tab-content {
     animation: fadeIn 0.3s ease;
 }
 
-.sub-tab-content:not(.active) {
-    display: none;
+.tab-content.active {
+    display: block;
 }
 
 @keyframes fadeIn {
@@ -973,52 +913,22 @@
 
 /* ==================== RESPONSIVE TABS ==================== */
 @media (max-width: 768px) {
-    .main-tabs {
-        padding: 4px;
-        gap: 2px;
-    }
-
-    .main-tab-btn {
-        padding: 10px 20px;
-        font-size: 0.9rem;
-    }
-
-    .sub-tabs {
-        padding: 3px;
-        gap: 2px;
-    }
-
-    .sub-tab-btn {
-        padding: 6px 12px;
-        font-size: 0.8rem;
+    .project-tabs .tab-btn {
+        padding: 10px 14px;
+        font-size: 0.85rem;
     }
 }
 
 @media (max-width: 480px) {
-    .main-tabs {
-        flex-direction: row;
-        width: calc(100% - 30px);
-        margin: 0 15px;
+    .project-tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
-    .main-tab-btn {
-        flex: 1;
-        text-align: center;
-        padding: 10px 10px;
-        font-size: 0.85rem;
-    }
-
-    .sub-tabs {
-        flex-wrap: wrap;
-        justify-content: center;
-        width: calc(100% - 30px);
-        margin: 0 15px;
-    }
-
-    .sub-tab-btn {
-        flex: 1;
-        min-width: 80px;
-        text-align: center;
+    .project-tabs .tab-btn {
+        padding: 10px 12px;
+        font-size: 0.8rem;
+        white-space: nowrap;
     }
 }
 
