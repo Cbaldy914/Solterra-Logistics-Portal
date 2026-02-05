@@ -10,6 +10,8 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 // Database connection
 require_once '../config.php';
+require_once 'milestone_helpers.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -1029,6 +1031,167 @@ try {
         $stmtM->close();
     }
 
+    // =====================================================
+    // QUICK STATS CALCULATIONS
+    // =====================================================
+    $quick_stats = [
+        'total_mw' => 0,
+        'total_modules' => 0,
+        'cost_per_watt' => null,
+        'contract_value' => 0,
+        'milestones_triggered_percent' => 0,
+        'pallets_created' => 0
+    ];
+
+    // Calculate total MW and modules from wattage_summary
+    foreach ($wattage_summary as $wattage => $data) {
+        $quick_stats['total_mw'] += ($wattage * $data['ordered_quantity']) / 1000000;
+        $quick_stats['total_modules'] += $data['ordered_quantity'];
+    }
+
+    // Get cost_per_watt from first batch (or aggregate for project view)
+    if (!empty($module_batches)) {
+        $total_cost_weighted = 0;
+        $total_watts_for_cost = 0;
+        foreach ($module_batches as $batch) {
+            if (!empty($batch['cost_per_watt']) && $batch['cost_per_watt'] > 0) {
+                // Get watt-modules for this batch
+                if (isset($batch_wattage_summary[$batch['id']])) {
+                    foreach ($batch_wattage_summary[$batch['id']] as $w => $d) {
+                        $batch_watts = $w * $d['ordered_quantity'];
+                        $total_cost_weighted += $batch['cost_per_watt'] * $batch_watts;
+                        $total_watts_for_cost += $batch_watts;
+                    }
+                }
+            }
+        }
+        if ($total_watts_for_cost > 0) {
+            $quick_stats['cost_per_watt'] = $total_cost_weighted / $total_watts_for_cost;
+            $quick_stats['contract_value'] = $total_cost_weighted;
+        }
+    }
+
+    // Get milestone status
+    $milestone_status = null;
+    if ($view_mode === 'project' && $project_id > 0) {
+        $milestone_status = get_milestone_completion_status($project_id, $conn);
+        $quick_stats['milestones_triggered_percent'] = $milestone_status['completion_percent'];
+    }
+
+    // Count pallets created
+    $quick_stats['pallets_created'] = count($pallets);
+
+    // =====================================================
+    // ENHANCED BATCH DATA - Fetch additional fields for tabs
+    // =====================================================
+    $enhanced_batch_data = [];
+    if (!empty($module_batches)) {
+        $batch_ids_for_enhanced = array_column($module_batches, 'id');
+        if (!empty($batch_ids_for_enhanced)) {
+            $placeholders_enhanced = implode(',', array_fill(0, count($batch_ids_for_enhanced), '?'));
+            $types_enhanced = str_repeat('i', count($batch_ids_for_enhanced));
+
+            $stmtEnhanced = $conn->prepare("
+                SELECT id, cost_per_watt, po_execution_date,
+                       modules_per_pallet, pallets_per_truck,
+                       pallet_length_mm, pallet_depth_mm,
+                       pallet_double_stacked_height_mm, pallet_total_weight_kg,
+                       module_notes, module_docs_url
+                FROM modules
+                WHERE id IN ($placeholders_enhanced)
+            ");
+            if ($stmtEnhanced) {
+                $stmtEnhanced->bind_param($types_enhanced, ...$batch_ids_for_enhanced);
+                $stmtEnhanced->execute();
+                $resultEnhanced = $stmtEnhanced->get_result();
+                while ($row = $resultEnhanced->fetch_assoc()) {
+                    $enhanced_batch_data[$row['id']] = $row;
+                }
+                $stmtEnhanced->close();
+            }
+        }
+    }
+
+    // =====================================================
+    // DELIVERY SUMMARY DATA
+    // =====================================================
+    $delivery_summary = [];
+    if (!empty($batch_ids)) {
+        $placeholders_del = implode(',', array_fill(0, count($batch_ids), '?'));
+        $types_del = str_repeat('i', count($batch_ids));
+
+        $stmtDeliveries = $conn->prepare("
+            SELECT DISTINCT d.id, d.bol_number, d.status_of_delivery,
+                   d.is_overseas_shipment, d.customs_cleared_date,
+                   d.container_number, d.anticipated_delivery_date,
+                   d.actual_delivery_date
+            FROM deliveries d
+            JOIN delivery_pallets dp ON dp.delivery_id = d.id
+            JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            WHERE umi.unassigned_module_id IN ($placeholders_del)
+            GROUP BY d.id
+            ORDER BY d.created_at DESC
+        ");
+        if ($stmtDeliveries) {
+            $stmtDeliveries->bind_param($types_del, ...$batch_ids);
+            $stmtDeliveries->execute();
+            $resultDeliveries = $stmtDeliveries->get_result();
+            while ($del = $resultDeliveries->fetch_assoc()) {
+                $delivery_summary[] = $del;
+            }
+            $stmtDeliveries->close();
+        }
+    }
+
+    // =====================================================
+    // WAREHOUSE LOCATION DATA (where modules currently reside)
+    // =====================================================
+    $warehouse_locations = [];
+    if (!empty($item_ids)) {
+        $placeholders_wh = implode(',', array_fill(0, count($item_ids), '?'));
+        $types_wh = str_repeat('i', count($item_ids));
+
+        $stmtWhLoc = $conn->prepare("
+            SELECT w.id, w.name, w.city, w.state,
+                   COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
+            FROM inventory_pallets ip
+            JOIN warehouses w ON ip.current_warehouse_id = w.id
+            WHERE ip.unassigned_module_item_id IN ($placeholders_wh)
+              AND ip.status = 'In Warehouse'
+            GROUP BY w.id
+            ORDER BY module_count DESC
+        ");
+        if ($stmtWhLoc) {
+            $stmtWhLoc->bind_param($types_wh, ...$item_ids);
+            $stmtWhLoc->execute();
+            $resultWhLoc = $stmtWhLoc->get_result();
+            while ($wh = $resultWhLoc->fetch_assoc()) {
+                $warehouse_locations[] = $wh;
+            }
+            $stmtWhLoc->close();
+        }
+    }
+
+    // =====================================================
+    // MODULE DOCUMENTS
+    // =====================================================
+    $module_documents = [];
+    if ($project_id > 0) {
+        $module_documents = getProjectDocuments($conn, [
+            'project_id' => $project_id,
+            'document_type' => 'modules'
+        ]);
+    }
+
+    // =====================================================
+    // PAYMENT TIMELINE DATA
+    // =====================================================
+    $payment_timeline = [];
+    if ($view_mode === 'project' && $project_id > 0) {
+        $payment_timeline = get_milestone_payment_timeline($project_id, $conn);
+    }
+
 } catch (Exception $e) {
     $errorMessage = "Error loading data: " . $e->getMessage();
 }
@@ -1521,6 +1684,266 @@ $conn->close();
             justify-content: space-between;
             align-items: flex-start;
         }
+
+        /* =====================================================
+           QUICK STATS DASHBOARD
+           ===================================================== */
+        .quick-stats-dashboard {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        @media (max-width: 1200px) {
+            .quick-stats-dashboard {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        @media (max-width: 768px) {
+            .quick-stats-dashboard {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        }
+        .stat-card .stat-icon {
+            font-size: 1.5em;
+            margin-bottom: 8px;
+        }
+        .stat-card .stat-value {
+            font-size: 1.6em;
+            font-weight: 700;
+            color: #293E4C;
+            line-height: 1.2;
+        }
+        .stat-card .stat-label {
+            font-size: 0.75em;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+        }
+        .stat-card.highlight {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            border-color: #488C9A;
+        }
+        .stat-card.highlight .stat-value,
+        .stat-card.highlight .stat-label {
+            color: #fff;
+        }
+
+        /* =====================================================
+           MODULE TABS NAVIGATION
+           ===================================================== */
+        .module-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 24px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .module-tabs .tab-btn {
+            background: transparent;
+            border: none;
+            padding: 14px 24px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.95em;
+            color: #6c757d;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s ease;
+        }
+        .module-tabs .tab-btn:hover {
+            color: #488C9A;
+            background: rgba(72, 140, 154, 0.05);
+        }
+        .module-tabs .tab-btn.active {
+            color: #488C9A;
+            border-bottom-color: #488C9A;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* =====================================================
+           TAB PANEL CARDS
+           ===================================================== */
+        .info-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .info-card h4 {
+            margin: 0 0 16px 0;
+            color: #293E4C;
+            font-size: 1.1em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .info-card h4 .card-icon {
+            color: #488C9A;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .info-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .info-item .info-label {
+            font-size: 0.8em;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-bottom: 4px;
+        }
+        .info-item .info-value {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        /* Milestone table styles */
+        .milestone-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+        .milestone-table th,
+        .milestone-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .milestone-table th {
+            font-size: 0.8em;
+            text-transform: uppercase;
+            color: #6c757d;
+            font-weight: 600;
+            background: #f8f9fa;
+        }
+        .milestone-table td {
+            font-size: 0.95em;
+        }
+        .milestone-status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+        .milestone-status-badge.triggered {
+            background: #d4edda;
+            color: #155724;
+        }
+        .milestone-status-badge.pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Document list styles */
+        .document-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .document-list li {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .document-list li:last-child {
+            border-bottom: none;
+        }
+        .document-list .doc-icon {
+            color: #488C9A;
+            font-size: 1.2em;
+        }
+        .document-list .doc-name {
+            flex: 1;
+            color: #293E4C;
+            text-decoration: none;
+        }
+        .document-list .doc-name:hover {
+            color: #488C9A;
+        }
+        .document-list .doc-meta {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        /* Notes display */
+        .module-notes-display {
+            background: #f8f9fa;
+            border-left: 4px solid #488C9A;
+            padding: 16px 20px;
+            border-radius: 0 8px 8px 0;
+            white-space: pre-wrap;
+            font-size: 0.95em;
+            line-height: 1.6;
+            color: #495057;
+        }
+
+        /* Quick action buttons */
+        .quick-actions {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        .quick-action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.9em;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+        .quick-action-btn.primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+        }
+        .quick-action-btn.primary:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-1px);
+        }
+        .quick-action-btn.secondary {
+            background: #fff;
+            color: #488C9A;
+            border-color: #488C9A;
+        }
+        .quick-action-btn.secondary:hover {
+            background: #488C9A;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -1592,92 +2015,192 @@ $conn->close();
         
         <div class="overview-header">
             <?php if ($view_mode === 'project'): ?>
-                <h1>Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
-                <?php if (!empty($project_data)): ?>
-                    <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
-                <?php endif; ?>
-                <p><strong>Number of Module Batches:</strong> <?php echo count($module_batches); ?></p>
-                <?php if ($project_size_mw > 0): ?>
-                <div style="margin-top: 16px; padding: 20px; background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 12px;">
-                    <h3 style="margin: 0 0 12px 0; color: #0056b3; font-size: 1rem;">Project Capacity</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 12px;">
-                        <div style="background: white; border-radius: 8px; padding: 12px; text-align: center;">
-                            <div style="font-size: 1.4rem; font-weight: 700; color: #488C9A;"><?php echo number_format($ordered_mw, 2); ?> MW</div>
-                            <div style="font-size: 0.8rem; color: #6c757d;">Ordered</div>
-                        </div>
-                        <div style="background: white; border-radius: 8px; padding: 12px; text-align: center;">
-                            <div style="font-size: 1.4rem; font-weight: 700; color: #293E4C;"><?php echo number_format($project_size_mw, 2); ?> MW</div>
-                            <div style="font-size: 0.8rem; color: #6c757d;">Target</div>
-                        </div>
-                        <div style="background: white; border-radius: 8px; padding: 12px; text-align: center;">
-                            <?php $remaining_mw = max(0, $project_size_mw - $ordered_mw); ?>
-                            <div style="font-size: 1.4rem; font-weight: 700; color: <?php echo $remaining_mw > 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($remaining_mw, 2); ?> MW</div>
-                            <div style="font-size: 0.8rem; color: #6c757d;">Remaining</div>
-                        </div>
-                    </div>
-                    <?php $capacity_pct = $project_size_mw > 0 ? min(100, ($ordered_mw / $project_size_mw) * 100) : 0; ?>
-                    <div style="background: #e9ecef; border-radius: 8px; height: 16px; overflow: hidden;">
-                        <div style="background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%); height: 100%; width: <?php echo $capacity_pct; ?>%; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600;">
-                            <?php echo number_format($capacity_pct, 1); ?>%
-                        </div>
-                    </div>
-                </div>
-                <?php endif; ?>
                 <?php if (count($module_batches) === 0): ?>
+                    <h1>Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
                     <div style="margin-top: 16px; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center;">
                         <div style="font-size: 16px; color: #293E4C; font-weight: 600;">No modules found for this project</div>
                         <div style="font-size: 13px; color: #6b7280; margin-top: 6px;">Once you add a module batch, you can palletize and track them here.</div>
-                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']) && !empty($project_id)): ?>
+                        <?php if ($isAdmin && !empty($project_id)): ?>
                             <div style="margin-top: 16px;">
                                 <a href="add_module_batch.php?project_id=<?php echo (int)$project_id; ?>" style="display:inline-block; padding:10px 16px; background:#488C9A; color:#fff; border-radius:8px; text-decoration:none;">+ Add Module Batch</a>
                             </div>
                         <?php endif; ?>
                     </div>
+                <?php else: ?>
+                    <!-- Header with Title and Inline Stats -->
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+                        <h1 style="margin: 0;">Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
+
+                        <!-- Inline Stats on Right -->
+                        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                            <div onclick="showTotalMWModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                                <div style="font-size: 1.4rem; font-weight: 700; color: #488C9A;"><?php echo number_format($quick_stats['total_mw'], 2); ?> MW</div>
+                                <div style="font-size: 0.75rem; color: #6c757d;"><?php echo number_format($quick_stats['total_modules']); ?> modules / <?php echo number_format($quick_stats['pallets_created']); ?> pallets</div>
+                            </div>
+                            <div onclick="showContractValueModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                                <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
+                                <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prominent Action Buttons -->
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
+                        <?php
+                        $movement_url = "module_movements?batch_id=" . urlencode($batch_id ?: ($module_batches[0]['id'] ?? 0));
+                        if (!empty($project_id)) {
+                            $movement_url .= "&project_id=" . urlencode($project_id);
+                        }
+                        $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
+                        $pallets_url = $pallets_target . (!empty($project_id) ? '?project_id=' . urlencode($project_id) : '');
+                        ?>
+                        <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary">
+                            <span>&#128205;</span> View Module Movement Map
+                        </a>
+                        <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary">
+                            <span>&#128230;</span> View Pallets
+                        </a>
+                        <?php if ($isAdmin): ?>
+                        <a href="edit_project.php?id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary">
+                            <span>&#9998;</span> Edit Project
+                        </a>
+                        <?php endif; ?>
+                        <button onclick="exportModuleData()" class="quick-action-btn secondary">
+                            <span>&#8681;</span> Export
+                        </button>
+                    </div>
                 <?php endif; ?>
-                
+
+            <?php else: ?>
+                <!-- Single Batch View Header -->
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+                    <h1 style="margin: 0;">Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></h1>
+
+                    <!-- Inline Stats on Right -->
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                        <div onclick="showTotalMWModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #488C9A;"><?php echo number_format($quick_stats['total_mw'], 2); ?> MW</div>
+                            <div style="font-size: 0.75rem; color: #6c757d;"><?php echo number_format($quick_stats['total_modules']); ?> modules / <?php echo number_format($quick_stats['pallets_created']); ?> pallets</div>
+                        </div>
+                        <div onclick="showContractValueModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
+                            <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prominent Action Buttons -->
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
+                    <?php
+                    $movement_url = "module_movements?batch_id=" . urlencode($batch_id);
+                    if (!empty($batch_data['project_id'])) {
+                        $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
+                    }
+                    $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
+                    $pallets_url = $pallets_target . (!empty($batch_data['project_id']) ? '?project_id=' . urlencode($batch_data['project_id']) : '');
+                    ?>
+                    <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary">
+                        <span>&#128205;</span> View Module Movement Map
+                    </a>
+                    <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary">
+                        <span>&#128230;</span> View Pallets
+                    </a>
+                    <?php if ($isAdmin): ?>
+                    <a href="<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>" class="quick-action-btn secondary">
+                        <span>&#9998;</span> Edit Batch
+                    </a>
+                    <?php endif; ?>
+                    <button onclick="exportModuleData()" class="quick-action-btn secondary">
+                        <span>&#8681;</span> Export
+                    </button>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Module Tabs Navigation -->
+        <div class="module-tabs">
+            <button class="tab-btn active" data-tab="tab-overview">Overview & Palletization</button>
+            <button class="tab-btn" data-tab="tab-pricing">Pricing & Milestones</button>
+            <button class="tab-btn" data-tab="tab-logistics">Logistics & Specs</button>
+            <button class="tab-btn" data-tab="tab-docs">Documentation</button>
+        </div>
+
+        <!-- TAB 1: Overview & Palletization (Existing Content) -->
+        <div id="tab-overview" class="tab-content active">
+
+        <!-- Batch Details Section -->
+        <div class="info-card" style="margin-bottom: 24px;">
+            <h4><span class="card-icon">&#128196;</span> Batch Details</h4>
+            <?php if ($view_mode === 'project'): ?>
                 <?php if (count($module_batches) > 1): ?>
-                    <div style="margin-top: 15px; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">
-                        <h3 style="margin-top: 0; color: #293E4C;">Module Batch Details:</h3>
+                    <div class="info-grid">
                         <?php foreach ($module_batches as $batch): ?>
-                            <div style="margin-bottom: 10px; padding: 10px; background-color: white; border-left: 4px solid #488C9A; border-radius: 4px;">
-                                <strong>Batch:</strong> <?php echo htmlspecialchars($batch['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch['id']]) ? ' (replacements)' : ''; ?> 
-                                <span style="color: #666;">(ID: <?php echo $batch['id']; ?>)</span><br>
-                                <strong>Initial Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
-                                <strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch['created_at'])); ?>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
-                                    <br><a href="edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
+                        <div class="info-item" style="border-left: 3px solid #488C9A;">
+                            <div style="font-weight: 600; color: #293E4C; margin-bottom: 8px;">
+                                <?php echo htmlspecialchars($batch['vendor_name']); ?>
+                                <?php echo !empty($replacement_batch_set[$batch['id']]) ? '<span style="color: #6c757d; font-size: 0.85em;"> (replacements)</span>' : ''; ?>
+                            </div>
+                            <div style="font-size: 0.9em; color: #6c757d;">
+                                <strong>Manufacturer:</strong> <?php echo htmlspecialchars($batch['vendor_name']); ?><br>
+                                <strong>Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
+                                <strong>Added:</strong> <?php echo date('M j, Y', strtotime($batch['created_at'])); ?>
+                                <?php if ($isAdmin): ?>
+                                <br><a href="edit_module_batch.php?project_id=<?php echo (int)$project_id; ?>&batch_id=<?php echo (int)$batch['id']; ?>" style="color: #488C9A;">Edit Batch</a>
                                 <?php endif; ?>
                             </div>
+                        </div>
                         <?php endforeach; ?>
                     </div>
                 <?php elseif (count($module_batches) === 1): ?>
-                    <p><strong>Batch:</strong> <?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?><?php echo !empty($replacement_batch_set[$module_batches[0]['id']] ?? null) ? ' (replacements)' : ''; ?></p>
-                    <p><strong>Account:</strong> <?php echo htmlspecialchars($module_batches[0]['account_name']); ?></p>
-                    <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></p>
-                    <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($module_batches[0]['created_at'])); ?></p>
-                    <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
-                    <button class="edit-button" onclick="window.location.href='edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$module_batches[0]['id']; ?>'">Edit Batch Details</button>
-                    <?php endif; ?>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">Batch Name</div>
+                            <div class="info-value"><?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?><?php echo !empty($replacement_batch_set[$module_batches[0]['id']] ?? null) ? ' (replacements)' : ''; ?></div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Manufacturer</div>
+                            <div class="info-value"><?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?></div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Initial Location</div>
+                            <div class="info-value"><?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Date Added</div>
+                            <div class="info-value"><?php echo date('M j, Y', strtotime($module_batches[0]['created_at'])); ?></div>
+                        </div>
+                    </div>
                 <?php endif; ?>
-                
             <?php else: ?>
-                <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></h1>
-                <p><strong>Account:</strong> <?php echo htmlspecialchars($batch_data['account_name']); ?></p>
-                <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($batch_data['initial_location']); ?></p>
-                <p><strong>Assigned Project:</strong> 
-                    <?php 
-                    if (!empty($batch_data['project_id']) && !empty($batch_data['project_name'])) {
-                        echo htmlspecialchars($batch_data['project_name']); 
-                    } else {
-                        echo "<em>Unassigned</em>";
-                    }
-                    ?>
-                </p>
-                <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
-                <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
-                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
-                <button class="edit-button" onclick="window.location.href='<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>'">Edit Batch Details</button>
-                <?php endif; ?>
+                <!-- Single Batch View -->
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Manufacturer</div>
+                        <div class="info-value"><?php echo htmlspecialchars($batch_data['vendor_name']); ?></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Initial Location</div>
+                        <div class="info-value"><?php echo htmlspecialchars($batch_data['initial_location']); ?></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Assigned Project</div>
+                        <div class="info-value">
+                            <?php if (!empty($batch_data['project_id']) && !empty($batch_data['project_name'])): ?>
+                                <a href="view_project.php?id=<?php echo (int)$batch_data['project_id']; ?>" style="color: #488C9A;"><?php echo htmlspecialchars($batch_data['project_name']); ?></a>
+                            <?php else: ?>
+                                <em style="color: #6c757d;">Unassigned</em>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Batch ID</div>
+                        <div class="info-value"><?php echo $batch_data['id']; ?></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Date Added</div>
+                        <div class="info-value"><?php echo date('M j, Y', strtotime($batch_data['created_at'])); ?></div>
+                    </div>
+                </div>
             <?php endif; ?>
         </div>
 
@@ -1852,84 +2375,404 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- Separate Overall Pallet Status Breakdown section -->
-        <div class="pallet-status-section">
-            <h3 style="margin-top: 30px;">Overall Pallet Status Breakdown:</h3>
-            <?php if (!empty($summary_stats['detailed_breakdown'])): ?>
-                <div class="status-breakdown-detailed">
-                    <?php foreach ($summary_stats['detailed_breakdown'] as $status => $data): ?>
-                        <div class="status-item" style="margin-bottom: 15px; padding: 12px; background-color: #f8f9fa; border-left: 4px solid #488C9A; border-radius: 4px;">
-                            <div style="font-weight: 600; color: #293E4C; margin-bottom: 8px;">
-                                <?php echo htmlspecialchars($status); ?>: 
-                                <span style="color: #488C9A;"><?php echo $data['pallet_count']; ?> pallets, <?php echo number_format($data['total_modules']); ?> modules</span>
-                                <?php if ($status === 'Damaged'): ?>
-                                    <?php if (($replacement_totals['pallets'] ?? 0) > 0): ?>
-                                        <span style="margin-left: 10px; color: #2e7d32; font-weight: 600;">
-                                            (Replacements created: <?php echo (int)$replacement_totals['pallets']; ?> pallets, <?php echo number_format((int)$replacement_totals['modules']); ?> modules)
-                                        </span>
-                                    <?php else: ?>
-                                        <span style="margin-left: 10px; color: #d32f2f; font-weight: 600;">(No replacements created yet)</span>
+        </div><!-- End tab-overview -->
+
+        <!-- TAB 2: Pricing & Milestones -->
+        <div id="tab-pricing" class="tab-content">
+            <div class="info-card">
+                <h4><span class="card-icon">&#36;</span> Pricing Overview</h4>
+                <div class="info-grid">
+                    <?php
+                    $first_batch = $module_batches[0] ?? null;
+                    $enhanced_first = $first_batch ? ($enhanced_batch_data[$first_batch['id']] ?? null) : null;
+                    ?>
+                    <div class="info-item">
+                        <div class="info-label">Cost per Watt</div>
+                        <div class="info-value">
+                            <?php echo $quick_stats['cost_per_watt'] !== null ? '$' . number_format($quick_stats['cost_per_watt'], 4) : 'Not Set'; ?>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">PO Execution Date</div>
+                        <div class="info-value">
+                            <?php
+                            if ($enhanced_first && !empty($enhanced_first['po_execution_date'])) {
+                                echo date('M j, Y', strtotime($enhanced_first['po_execution_date']));
+                            } else {
+                                echo 'Not Set';
+                            }
+                            ?>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Total Contract Value</div>
+                        <div class="info-value" style="color: #28a745;">
+                            <?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 2) : 'N/A'; ?>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Total MW Ordered</div>
+                        <div class="info-value">
+                            <?php echo number_format($quick_stats['total_mw'], 3); ?> MW
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <?php if ($view_mode === 'project' && $project_id > 0 && !empty($milestone_status)): ?>
+            <!-- Milestone Summary Card -->
+            <div style="margin-bottom: 20px;">
+                <?php
+                $card_title = 'Module Payment Progress';
+                $show_batches = true;
+                $compact = false;
+                include 'components/milestone_summary_card.php';
+                ?>
+            </div>
+
+            <!-- Milestone Detail Table Component -->
+            <?php
+            // Include the full milestone detail table component (handles its own DB connection)
+            $section_title = 'Module Payment Milestones';
+            $collapsible = false;
+            include 'components/milestone_detail_table.php';
+            ?>
+
+            <!-- Payment Timeline -->
+            <?php if (!empty($payment_timeline)): ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#128197;</span> Payment Timeline</h4>
+                <table class="milestone-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Milestone</th>
+                            <th>Amount</th>
+                            <th>Cumulative</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($payment_timeline as $event): ?>
+                        <tr>
+                            <td><?php echo date('M j, Y', strtotime($event['date'])); ?></td>
+                            <td>
+                                <?php echo htmlspecialchars($event['description']); ?>
+                                <span class="milestone-status-badge triggered">Triggered</span>
+                            </td>
+                            <td style="color: #28a745; font-weight: 600;">+$<?php echo number_format($event['amount'], 2); ?></td>
+                            <td>$<?php echo number_format($event['cumulative'], 2); ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+
+            <?php else: ?>
+            <div class="info-card">
+                <p style="color: #6c757d; text-align: center; padding: 20px;">
+                    Milestone tracking is available for project-level views.
+                    <?php if (!$project_id): ?>
+                    <br><em>Assign this batch to a project to enable milestone tracking.</em>
+                    <?php endif; ?>
+                </p>
+            </div>
+            <?php endif; ?>
+        </div><!-- End tab-pricing -->
+
+        <!-- TAB 3: Logistics & Specifications -->
+        <div id="tab-logistics" class="tab-content">
+            <!-- Pallet Status Breakdown -->
+            <div class="info-card pallet-status-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h4 style="margin: 0;"><span class="card-icon">&#128230;</span> Pallet Status Breakdown</h4>
+                    <button onclick="exportPalletStatusCSV()" class="quick-action-btn secondary" style="padding: 6px 12px; font-size: 0.85em;">
+                        <span>&#8681;</span> Export CSV
+                    </button>
+                </div>
+                <?php if (!empty($summary_stats['detailed_breakdown'])): ?>
+                    <div class="status-breakdown-detailed">
+                        <?php foreach ($summary_stats['detailed_breakdown'] as $status => $data): ?>
+                            <div class="status-item" style="margin-bottom: 12px; padding: 12px; background-color: #f8f9fa; border-left: 4px solid #488C9A; border-radius: 4px;">
+                                <div style="font-weight: 600; color: #293E4C; margin-bottom: 6px;">
+                                    <?php echo htmlspecialchars($status); ?>:
+                                    <span style="color: #488C9A;"><?php echo $data['pallet_count']; ?> pallets, <?php echo number_format($data['total_modules']); ?> modules</span>
+                                    <?php if ($status === 'Damaged'): ?>
+                                        <?php if (($replacement_totals['pallets'] ?? 0) > 0): ?>
+                                            <span style="margin-left: 10px; color: #2e7d32; font-weight: 600;">
+                                                (Replacements: <?php echo (int)$replacement_totals['pallets']; ?> pallets)
+                                            </span>
+                                        <?php else: ?>
+                                            <span style="margin-left: 10px; color: #dc3545; font-size: 0.9em;">(No replacements yet)</span>
+                                        <?php endif; ?>
                                     <?php endif; ?>
+                                </div>
+                                <?php if (!empty($data['wattage_breakdown'])): ?>
+                                    <div style="margin-left: 16px; font-size: 0.9em; color: #666;">
+                                        <?php
+                                        $wattage_details = [];
+                                        foreach ($data['wattage_breakdown'] as $wattage => $watt_data) {
+                                            $wattage_details[] = "{$wattage}W: {$watt_data['pallets']} pallets (" . number_format($watt_data['modules']) . " modules)";
+                                        }
+                                        echo implode(' &bull; ', $wattage_details);
+                                        ?>
+                                    </div>
                                 <?php endif; ?>
                             </div>
-                            <?php if (!empty($data['wattage_breakdown'])): ?>
-                                <div style="margin-left: 20px; font-size: 0.9em; color: #666;">
-                                    <strong>Breakdown by Wattage:</strong>
-                                    <?php 
-                                    $wattage_details = [];
-                                    foreach ($data['wattage_breakdown'] as $wattage => $watt_data) {
-                                        $wattage_details[] = "{$wattage}W: {$watt_data['pallets']} pallets (" . number_format($watt_data['modules']) . " modules)";
-                                    }
-                                    echo implode(' • ', $wattage_details);
-                                    ?>
-                                </div>
-                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <p style="color: #6c757d; text-align: center; padding: 20px;">No pallets have been created yet.</p>
+                <?php endif; ?>
+            </div>
+
+            <!-- Physical Specifications -->
+            <div class="info-card">
+                <h4><span class="card-icon">&#128230;</span> Physical Specifications</h4>
+                <?php
+                // Aggregate specs from batches
+                $has_specs = false;
+                foreach ($enhanced_batch_data as $ebd) {
+                    if (!empty($ebd['modules_per_pallet']) || !empty($ebd['pallets_per_truck']) ||
+                        !empty($ebd['pallet_length_mm']) || !empty($ebd['pallet_total_weight_kg'])) {
+                        $has_specs = true;
+                        break;
+                    }
+                }
+                if ($has_specs):
+                ?>
+                <div class="info-grid">
+                    <?php
+                    $spec_batch = reset($enhanced_batch_data);
+                    ?>
+                    <div class="info-item">
+                        <div class="info-label">Modules per Pallet</div>
+                        <div class="info-value"><?php echo $spec_batch['modules_per_pallet'] ?? 'N/A'; ?></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Pallets per Truck</div>
+                        <div class="info-value"><?php echo $spec_batch['pallets_per_truck'] ?? 'N/A'; ?></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Pallet Dimensions</div>
+                        <div class="info-value">
+                            <?php
+                            if (!empty($spec_batch['pallet_length_mm']) && !empty($spec_batch['pallet_depth_mm'])) {
+                                echo $spec_batch['pallet_length_mm'] . ' x ' . $spec_batch['pallet_depth_mm'] . ' mm';
+                            } else {
+                                echo 'N/A';
+                            }
+                            ?>
                         </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Stack Height</div>
+                        <div class="info-value">
+                            <?php echo !empty($spec_batch['pallet_double_stacked_height_mm']) ? $spec_batch['pallet_double_stacked_height_mm'] . ' mm' : 'N/A'; ?>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Pallet Weight</div>
+                        <div class="info-value">
+                            <?php echo !empty($spec_batch['pallet_total_weight_kg']) ? $spec_batch['pallet_total_weight_kg'] . ' kg' : 'N/A'; ?>
+                        </div>
+                    </div>
+                </div>
+                <?php else: ?>
+                <p style="color: #6c757d; text-align: center; padding: 20px;">No physical specifications have been entered for these module batches.</p>
+                <?php endif; ?>
+            </div>
+
+            <!-- Active Deliveries Summary -->
+            <?php if (!empty($delivery_summary)): ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#128666;</span> Active Deliveries (<?php echo count($delivery_summary); ?>)</h4>
+                <table class="milestone-table">
+                    <thead>
+                        <tr>
+                            <th>BOL #</th>
+                            <th>Status</th>
+                            <th>Container</th>
+                            <th>Customs Cleared</th>
+                            <th>Expected Delivery</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach (array_slice($delivery_summary, 0, 5) as $del): ?>
+                        <tr>
+                            <td>
+                                <a href="delivery_details.php?delivery_id=<?php echo (int)$del['id']; ?>" style="color: #488C9A; text-decoration: none;">
+                                    <?php echo htmlspecialchars($del['bol_number'] ?: 'No BOL'); ?>
+                                </a>
+                            </td>
+                            <td>
+                                <span class="milestone-status-badge <?php echo $del['status_of_delivery'] === 'Delivered to Project' ? 'triggered' : 'pending'; ?>">
+                                    <?php echo htmlspecialchars($del['status_of_delivery'] ?? 'Unknown'); ?>
+                                </span>
+                            </td>
+                            <td><?php echo htmlspecialchars($del['container_number'] ?: '-'); ?></td>
+                            <td>
+                                <?php
+                                if (!empty($del['customs_cleared_date'])) {
+                                    echo date('M j, Y', strtotime($del['customs_cleared_date']));
+                                } elseif ($del['is_overseas_shipment']) {
+                                    echo '<span style="color: #dc3545;">Pending</span>';
+                                } else {
+                                    echo '-';
+                                }
+                                ?>
+                            </td>
+                            <td><?php echo !empty($del['anticipated_delivery_date']) ? date('M j, Y', strtotime($del['anticipated_delivery_date'])) : '-'; ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php if (count($delivery_summary) > 5): ?>
+                <p style="text-align: center; margin-top: 12px;">
+                    <a href="view_project.php?id=<?php echo (int)$project_id; ?>#deliveries" style="color: #488C9A;">View all <?php echo count($delivery_summary); ?> deliveries &rarr;</a>
+                </p>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+
+            <!-- Warehouse Locations -->
+            <?php if (!empty($warehouse_locations)): ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#127970;</span> Current Warehouse Locations</h4>
+                <div class="info-grid">
+                    <?php foreach ($warehouse_locations as $wh_loc): ?>
+                    <div class="info-item">
+                        <div class="info-label"><?php echo htmlspecialchars($wh_loc['name']); ?></div>
+                        <div class="info-value">
+                            <?php echo number_format($wh_loc['pallet_count']); ?> pallets
+                            <span style="font-size: 0.85em; color: #6c757d;">(<?php echo number_format($wh_loc['module_count']); ?> modules)</span>
+                        </div>
+                        <div style="font-size: 0.8em; color: #6c757d; margin-top: 4px;">
+                            <?php echo htmlspecialchars($wh_loc['city'] . ', ' . $wh_loc['state']); ?>
+                        </div>
+                    </div>
                     <?php endforeach; ?>
                 </div>
-                
-                <!-- Links to Movement view and consolidated Pallets view -->
-                <div style="margin-top: 20px; text-align: center; display:flex; flex-direction:column; align-items:center; gap:8px;">
-                    <?php 
-                    $movement_url = "module_movements?batch_id=" . urlencode($batch_id);
-                    if (!empty($batch_data['project_id'])) {
-                        $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
-                    }
-
-                    // Build deep-link for pallets created in this session (if any)
-                    $pallet_ids_query = '';
-                    if (!empty($_SESSION['recent_created_pallet_ids']['ids'])) {
-                        $ts_ok = !empty($_SESSION['recent_created_pallet_ids']['ts']) && (time() - intval($_SESSION['recent_created_pallet_ids']['ts']) < 600);
-                        $ids = array_filter(array_map('intval', $_SESSION['recent_created_pallet_ids']['ids']));
-                        if ($ts_ok && !empty($ids)) {
-                            $pallet_ids_query = 'pallet_ids=' . urlencode(implode(',', $ids));
-                        }
-                    }
-                    // Choose destination page based on role
-                    $pallets_target_base = (in_array($role, ['admin','global_admin','customer_admin'])) ? 'create_shipment.php' : 'manage_pallets.php';
-                    $pallets_url_parts = [];
-                    if (!empty($batch_data['project_id'])) { $pallets_url_parts[] = 'project_id=' . urlencode($batch_data['project_id']); }
-                    if (!empty($pallet_ids_query)) { $pallets_url_parts[] = $pallet_ids_query; }
-                    $pallets_url = $pallets_target_base . (empty($pallets_url_parts) ? '' : '?' . implode('&', $pallets_url_parts));
-                    ?>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
-                        <a href="<?php echo $movement_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
-                            <strong>📍 View Module Movement Map</strong>
-                        </a>
-                        <a href="<?php echo $pallets_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
-                            <strong>📦 View Pallets</strong>
-                        </a>
-                    </div>
-                    <p style="font-size: 0.9em; color: #666;">
-                        View and manage pallets in the consolidated table
-                    </p>
-                </div>
+            </div>
             <?php else: ?>
-                <p>No pallets have been created/recorded for this batch yet.</p>
+            <div class="info-card">
+                <h4><span class="card-icon">&#127970;</span> Warehouse Locations</h4>
+                <p style="color: #6c757d; text-align: center; padding: 20px;">No modules currently stored in warehouses.</p>
+            </div>
             <?php endif; ?>
-        </div>
+        </div><!-- End tab-logistics -->
 
-        <!-- Pallets table removed in favor of consolidated View Pallets page -->
+        <!-- TAB 4: Documentation -->
+        <div id="tab-docs" class="tab-content">
+            <!-- External Spec Sheet Links -->
+            <?php
+            $has_docs_url = false;
+            foreach ($enhanced_batch_data as $ebd) {
+                if (!empty($ebd['module_docs_url'])) {
+                    $has_docs_url = true;
+                    break;
+                }
+            }
+            if ($has_docs_url):
+            ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#128279;</span> External Spec Sheets</h4>
+                <ul class="document-list">
+                    <?php foreach ($module_batches as $batch):
+                        $ebd = $enhanced_batch_data[$batch['id']] ?? null;
+                        if ($ebd && !empty($ebd['module_docs_url'])):
+                    ?>
+                    <li>
+                        <span class="doc-icon">&#128196;</span>
+                        <a href="<?php echo htmlspecialchars($ebd['module_docs_url']); ?>" target="_blank" class="doc-name">
+                            <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?> - Spec Sheet
+                        </a>
+                        <span class="doc-meta">External Link</span>
+                    </li>
+                    <?php endif; endforeach; ?>
+                </ul>
+            </div>
+            <?php endif; ?>
+
+            <!-- Module Notes -->
+            <?php
+            $has_notes = false;
+            foreach ($enhanced_batch_data as $ebd) {
+                if (!empty($ebd['module_notes'])) {
+                    $has_notes = true;
+                    break;
+                }
+            }
+            if ($has_notes):
+            ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#128221;</span> Module Notes</h4>
+                <?php foreach ($module_batches as $batch):
+                    $ebd = $enhanced_batch_data[$batch['id']] ?? null;
+                    if ($ebd && !empty($ebd['module_notes'])):
+                ?>
+                <div style="margin-bottom: 16px;">
+                    <?php if (count($module_batches) > 1): ?>
+                    <div style="font-weight: 600; margin-bottom: 8px; color: #293E4C;">
+                        <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Batch #' . $batch['id']); ?>
+                    </div>
+                    <?php endif; ?>
+                    <div class="module-notes-display"><?php echo htmlspecialchars($ebd['module_notes']); ?></div>
+                </div>
+                <?php endif; endforeach; ?>
+            </div>
+            <?php endif; ?>
+
+            <!-- Uploaded Documents -->
+            <?php if (!empty($module_documents)): ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#128194;</span> Uploaded Documents</h4>
+                <ul class="document-list">
+                    <?php foreach ($module_documents as $doc): ?>
+                    <li>
+                        <span class="doc-icon">&#128196;</span>
+                        <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" class="doc-name">
+                            <?php echo htmlspecialchars($doc['original_file_name']); ?>
+                        </a>
+                        <span class="doc-meta"><?php echo $doc['formatted_size'] ?? ''; ?></span>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+            <?php endif; ?>
+
+            <!-- Document Upload (Admin Only) -->
+            <?php if ($isAdmin && $project_id > 0): ?>
+            <div class="info-card">
+                <h4><span class="card-icon">&#128228;</span> Upload Document</h4>
+                <form action="upload_document.php" method="POST" enctype="multipart/form-data" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                    <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
+                    <input type="hidden" name="document_type" value="modules">
+                    <input type="hidden" name="redirect_url" value="module_overview.php?project_id=<?php echo (int)$project_id; ?>#tab-docs">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label style="display: block; font-size: 0.85em; color: #6c757d; margin-bottom: 4px;">Select File</label>
+                        <input type="file" name="document_file" required style="width: 100%; padding: 8px; border: 1px solid #e9ecef; border-radius: 6px;">
+                    </div>
+                    <div style="min-width: 150px;">
+                        <label style="display: block; font-size: 0.85em; color: #6c757d; margin-bottom: 4px;">Description (optional)</label>
+                        <input type="text" name="description" placeholder="e.g., Datasheet" style="width: 100%; padding: 8px; border: 1px solid #e9ecef; border-radius: 6px;">
+                    </div>
+                    <button type="submit" class="quick-action-btn primary">Upload</button>
+                </form>
+            </div>
+            <?php endif; ?>
+
+            <?php if (!$has_docs_url && !$has_notes && empty($module_documents)): ?>
+            <div class="info-card">
+                <p style="color: #6c757d; text-align: center; padding: 40px;">
+                    No documentation available for these modules.
+                    <?php if ($isAdmin): ?>
+                    <br><br>Add spec sheet URLs or notes when editing a module batch, or upload documents above.
+                    <?php endif; ?>
+                </p>
+            </div>
+            <?php endif; ?>
+        </div><!-- End tab-docs -->
 
     <?php endif; ?>
     <?php if (empty($errorMessage) && empty($batch_data)): ?>
@@ -2001,8 +2844,112 @@ $conn->close();
     </div>
 </div>
 
+<!-- Total MW Details Modal -->
+<div id="totalMWModal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+        <span class="close-modal-btn" onclick="closeTotalMWModal()">&times;</span>
+        <h2 style="color: #488C9A; margin-bottom: 20px;">Total MWs Breakdown</h2>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;">
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: #488C9A;"><?php echo number_format($quick_stats['total_mw'], 3); ?></div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Total MW</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: #293E4C;"><?php echo number_format($quick_stats['total_modules']); ?></div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Total Modules</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: #17a2b8;"><?php echo number_format($quick_stats['pallets_created']); ?></div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Pallets Created</div>
+            </div>
+        </div>
+        <?php if (!empty($wattage_summary)): ?>
+        <h4 style="color: #293E4C; margin-bottom: 12px;">By Wattage</h4>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8f9fa;">
+                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e9ecef;">Wattage</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Modules</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">MW</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Palletized</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($wattage_summary as $wattage => $data): ?>
+                <tr>
+                    <td style="padding: 10px; border-bottom: 1px solid #e9ecef;"><?php echo $wattage; ?>W</td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format($data['ordered_quantity']); ?></td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format(($wattage * $data['ordered_quantity']) / 1000000, 3); ?></td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format($data['palletized_quantity']); ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
+    </div>
+</div>
 
-
+<!-- Contract Value Details Modal -->
+<div id="contractValueModal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+        <span class="close-modal-btn" onclick="closeContractValueModal()">&times;</span>
+        <h2 style="color: #28a745; margin-bottom: 20px;">Contract Value Breakdown</h2>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px;">
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: #28a745;">$<?php echo number_format($quick_stats['contract_value'], 2); ?></div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Total Contract Value</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 700; color: #293E4C;">$<?php echo $quick_stats['cost_per_watt'] !== null ? number_format($quick_stats['cost_per_watt'], 4) : 'N/A'; ?></div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Cost per Watt</div>
+            </div>
+        </div>
+        <?php if (!empty($module_batches) && count($module_batches) > 0): ?>
+        <h4 style="color: #293E4C; margin-bottom: 12px;">By Module Batch</h4>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8f9fa;">
+                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e9ecef;">Batch</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">$/Watt</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Total Watts</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($module_batches as $batch):
+                    $batch_enhanced = $enhanced_batch_data[$batch['id']] ?? [];
+                    $batch_cpw = $batch_enhanced['cost_per_watt'] ?? 0;
+                    $batch_watts = 0;
+                    if (isset($batch_wattage_summary[$batch['id']])) {
+                        foreach ($batch_wattage_summary[$batch['id']] as $w => $d) {
+                            $batch_watts += $w * $d['ordered_quantity'];
+                        }
+                    }
+                    $batch_value = $batch_cpw * $batch_watts;
+                ?>
+                <tr>
+                    <td style="padding: 10px; border-bottom: 1px solid #e9ecef;"><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;">$<?php echo number_format($batch_cpw, 4); ?></td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format($batch_watts); ?></td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef; color: #28a745; font-weight: 600;">$<?php echo number_format($batch_value, 2); ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
+        <?php if ($view_mode === 'project' && $milestone_status && $milestone_status['total_triggered'] > 0): ?>
+        <div style="margin-top: 20px; padding: 16px; background: #d4edda; border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-weight: 600; color: #155724;">Milestones Triggered</div>
+                    <div style="font-size: 0.85rem; color: #155724;"><?php echo number_format($milestone_status['completion_percent'], 1); ?>% of contract value</div>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: #155724;">$<?php echo number_format($milestone_status['total_triggered'], 2); ?></div>
+            </div>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
 
 
 <script>
@@ -2234,6 +3181,28 @@ function closeWarningModal() {
     modal.style.display = 'none';
 }
 
+// ----------------- TOTAL MW MODAL -----------------
+function showTotalMWModal() {
+    const modal = document.getElementById('totalMWModal');
+    if (modal) modal.style.display = 'block';
+}
+
+function closeTotalMWModal() {
+    const modal = document.getElementById('totalMWModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// ----------------- CONTRACT VALUE MODAL -----------------
+function showContractValueModal() {
+    const modal = document.getElementById('contractValueModal');
+    if (modal) modal.style.display = 'block';
+}
+
+function closeContractValueModal() {
+    const modal = document.getElementById('contractValueModal');
+    if (modal) modal.style.display = 'none';
+}
+
 function confirmPalletization() {
     if (currentForm) {
         const form = currentForm;
@@ -2299,11 +3268,17 @@ function confirmModulesPerPalletUpdate() {
 window.onclick = function(event) {
     const warningModal = document.getElementById('warningModal');
     const modulesPerPalletModal = document.getElementById('modulesPerPalletModal');
-    
+    const totalMWModal = document.getElementById('totalMWModal');
+    const contractValueModal = document.getElementById('contractValueModal');
+
     if (event.target === warningModal) {
         closeWarningModal();
     } else if (event.target === modulesPerPalletModal) {
         closeModulesPerPalletModal();
+    } else if (event.target === totalMWModal) {
+        closeTotalMWModal();
+    } else if (event.target === contractValueModal) {
+        closeContractValueModal();
     }
 }
 
@@ -2359,10 +3334,127 @@ document.addEventListener('click', function(event) {
 document.addEventListener('DOMContentLoaded', function() {
     // Hide loading modal if page loads (in case of refresh/back button)
     hideLoadingModal();
-    
+
     // Initialize pagination for pallets
     initializePalletPagination();
+
+    // ----------------- TAB FUNCTIONALITY -----------------
+    const tabBtns = document.querySelectorAll('.module-tabs .tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    // Check URL hash for active tab
+    function setActiveTabFromHash() {
+        const hash = window.location.hash.replace('#', '');
+        if (hash && document.getElementById(hash)) {
+            activateTab(hash);
+        }
+    }
+
+    function activateTab(tabId) {
+        // Remove active class from all tabs and content
+        tabBtns.forEach(btn => btn.classList.remove('active'));
+        tabContents.forEach(content => content.classList.remove('active'));
+
+        // Add active class to selected tab and content
+        const selectedBtn = document.querySelector(`[data-tab="${tabId}"]`);
+        const selectedContent = document.getElementById(tabId);
+        if (selectedBtn) selectedBtn.classList.add('active');
+        if (selectedContent) selectedContent.classList.add('active');
+
+        // Update URL hash without scrolling
+        history.replaceState(null, null, '#' + tabId);
+    }
+
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const tabId = this.getAttribute('data-tab');
+            activateTab(tabId);
+        });
+    });
+
+    // Set active tab from hash on page load
+    setActiveTabFromHash();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', setActiveTabFromHash);
 });
+
+// ----------------- EXPORT PALLET STATUS CSV -----------------
+function exportPalletStatusCSV() {
+    const statusItems = document.querySelectorAll('.pallet-status-section .status-item');
+    let csvContent = "Pallet Status Breakdown\n\n";
+    csvContent += "Status,Pallets,Modules,Wattage Breakdown\n";
+
+    statusItems.forEach(item => {
+        const headerDiv = item.querySelector('div:first-child');
+        const text = headerDiv?.textContent?.trim() || '';
+        // Parse "Status: X pallets, Y modules"
+        const match = text.match(/^([^:]+):\s*(\d+)\s*pallets?,\s*([\d,]+)\s*modules?/);
+        if (match) {
+            const status = match[1].trim().replace(/,/g, '');
+            const pallets = match[2];
+            const modules = match[3].replace(/,/g, '');
+            const breakdownDiv = item.querySelector('div:last-child');
+            let breakdown = '';
+            if (breakdownDiv && breakdownDiv.textContent.includes('Breakdown by Wattage:')) {
+                breakdown = breakdownDiv.textContent.replace('Breakdown by Wattage:', '').trim().replace(/,/g, ';');
+            }
+            csvContent += `"${status}",${pallets},${modules},"${breakdown}"\n`;
+        }
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.setAttribute('href', URL.createObjectURL(blob));
+    link.setAttribute('download', 'pallet_status_export.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// ----------------- EXPORT MODULE DATA -----------------
+function exportModuleData() {
+    // Gather data from the quick stats
+    const stats = document.querySelectorAll('.stat-card');
+    let csvContent = "Module Overview Export\n\n";
+    csvContent += "Quick Stats\n";
+    stats.forEach(stat => {
+        const value = stat.querySelector('.stat-value')?.textContent?.trim() || '';
+        const label = stat.querySelector('.stat-label')?.textContent?.trim() || '';
+        csvContent += `${label},${value}\n`;
+    });
+
+    // Add wattage breakdown if visible
+    const wattageBlocks = document.querySelectorAll('.wattage-summary-block');
+    if (wattageBlocks.length > 0) {
+        csvContent += "\nWattage Breakdown\n";
+        csvContent += "Wattage,Ordered,On Pallets,Remaining\n";
+        wattageBlocks.forEach(block => {
+            const title = block.querySelector('h4')?.textContent?.replace(' Modules', '') || '';
+            const paragraphs = block.querySelectorAll('p');
+            let ordered = '', palletized = '', remaining = '';
+            paragraphs.forEach(p => {
+                const text = p.textContent || '';
+                if (text.includes('Ordered:')) ordered = text.replace('Ordered:', '').trim().replace(/,/g, '');
+                if (text.includes('On Pallets:')) palletized = text.replace('On Pallets:', '').trim().replace(/,/g, '');
+                if (text.includes('Remaining:')) remaining = text.replace('Remaining:', '').trim().replace(/,/g, '');
+            });
+            if (title) csvContent += `${title},${ordered},${palletized},${remaining}\n`;
+        });
+    }
+
+    // Create and download the file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'module_overview_export.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
 </script>
 </body>
 </html>
