@@ -1963,10 +1963,19 @@ $conn->close();
             ]);
         } else {
             $label = 'Batch: '.($batch_data ? ($batch_data['vendor_name'] ?? 'Module Batch') : 'Module Batch');
-            echo slp_render_breadcrumbs([
-                'current_label' => $label,
-                'extra' => [ ['label' => 'Modules', 'url' => 'modules.php'] ]
-            ]);
+            $batch_project_id = (int)($batch_data['project_id'] ?? 0);
+            if ($batch_project_id > 0) {
+                // Link back to project overview when batch has a project
+                echo slp_render_breadcrumbs([
+                    'current_label' => $label,
+                    'project_id' => $batch_project_id
+                ]);
+            } else {
+                echo slp_render_breadcrumbs([
+                    'current_label' => $label,
+                    'extra' => [ ['label' => 'Modules', 'url' => 'modules.php'] ]
+                ]);
+            }
         }
     ?>
 
@@ -2186,7 +2195,7 @@ $conn->close();
                     $pallets_url .= '?project_id=' . urlencode($batch_data['project_id']);
                 }
                 ?>
-                <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary" style="padding: 4px 12px; font-size: 0.8em; border-radius: 6px;">
+                <a href="<?php echo $pallets_url; ?>" class="quick-action-btn secondary">
                     <span>&#128230;</span> View Pallets
                 </a>
             </div>
@@ -2439,7 +2448,7 @@ $conn->close();
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                     <div style="display: flex; align-items: center; gap: 12px;">
                         <h4 style="margin: 0;"><span class="card-icon">&#128230;</span> Pallet Status Breakdown</h4>
-                        <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary" style="padding: 6px 12px; font-size: 0.85em;">
+                        <a href="<?php echo $movement_url; ?>" class="quick-action-btn secondary">
                             <span>&#128205;</span> View Map
                         </a>
                     </div>

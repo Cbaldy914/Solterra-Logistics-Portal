@@ -903,157 +903,98 @@ document.addEventListener('keydown', function(e) {
             <?php endif; ?>
 
             <?php if (!empty($module_batches)): ?>
-                <?php foreach ($module_batches as $batch): ?>
-                    <div class="module-batch-section" style="position:relative;">
-                        <?php if ($isGlobalAdmin): ?>
-                        <a href="edit_module_batch.php?batch_id=<?php echo $batch['id']; ?>" class="batch-edit-btn" title="Edit <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Batch'); ?>" style="position:absolute; top:16px; right:16px; background:#488C9A; color:#fff; padding:6px 12px; border-radius:6px; font-size:0.85em; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
-                            <i class="fas fa-edit"></i> Edit
-                        </a>
-                        <?php endif; ?>
-                        <h3 class="batch-title">
-                            <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?>
-                            <?php if (!empty($batch['is_replacement_batch'])): ?>
-                                <span class="batch-badge">Replacement</span>
-                            <?php endif; ?>
-                        </h3>
-
-                        <div class="info-grid">
-                            <div class="info-section">
-                                <h3>Basic Information</h3>
-                                <div class="info-item">
-                                    <label>Price per Watt:</label>
-                                    <span>
-                                        <?php if (!empty($batch['cost_per_watt']) && (float)$batch['cost_per_watt'] > 0): ?>
-                                            $<?php echo number_format((float)$batch['cost_per_watt'], 4); ?> / W
-                                        <?php else: ?>
-                                            Not specified
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                                <?php if (!empty($batch['wattages'])): ?>
-                                    <div class="info-item">
-                                        <label>Wattages:</label>
-                                        <span>
-                                            <?php
-                                            $wattage_labels = array_map(function($w) {
-                                                return $w['wattage'] . 'W (' . number_format($w['quantity']) . ')';
-                                            }, $batch['wattages']);
-                                            echo implode(', ', $wattage_labels);
-                                            ?>
-                                        </span>
-                                    </div>
+                <?php foreach ($module_batches as $batch):
+                    // Calculate total modules for this batch
+                    $batch_total_modules = 0;
+                    if (!empty($batch['wattages'])) {
+                        foreach ($batch['wattages'] as $w) {
+                            $batch_total_modules += $w['quantity'];
+                        }
+                    }
+                    // Build wattage summary string
+                    $wattage_summary = '';
+                    if (!empty($batch['wattages'])) {
+                        $wattage_labels = array_map(function($w) {
+                            return $w['wattage'] . 'W';
+                        }, $batch['wattages']);
+                        $wattage_summary = implode(', ', $wattage_labels);
+                    }
+                ?>
+                    <div class="module-batch-section" style="padding: 16px 20px;">
+                        <!-- Row 1: Batch title + Edit button -->
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <h3 class="batch-title" style="margin: 0;">
+                                <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?>
+                                <?php if (!empty($batch['is_replacement_batch'])): ?>
+                                    <span class="batch-badge">Replacement</span>
                                 <?php endif; ?>
-                                <?php
-                                // Calculate total modules for this batch
-                                $batch_total_modules = 0;
-                                if (!empty($batch['wattages'])) {
-                                    foreach ($batch['wattages'] as $w) {
-                                        $batch_total_modules += $w['quantity'];
-                                    }
-                                }
-                                ?>
-                                <div class="info-item">
-                                    <label>Total Modules:</label>
-                                    <span><?php echo number_format($batch_total_modules); ?></span>
-                                </div>
-                            </div>
-
-                            <div class="info-section">
-                                <h3>Pallet Specifications</h3>
-                                <div class="info-item">
-                                    <label>Modules per Pallet:</label>
-                                    <span><?php echo $batch['modules_per_pallet'] ?? 'N/A'; ?></span>
-                                </div>
-                                <div class="info-item">
-                                    <label>Pallets per Truck:</label>
-                                    <span><?php echo $batch['pallets_per_truck'] ?? 'N/A'; ?></span>
-                                </div>
-                                <div class="info-item">
-                                    <label>Modules per Truck:</label>
-                                    <span><?php echo $batch['modules_per_truck'] ?? 'N/A'; ?></span>
-                                </div>
-                            </div>
+                            </h3>
+                            <?php if ($isGlobalAdmin): ?>
+                            <a href="edit_module_batch.php?batch_id=<?php echo $batch['id']; ?>" class="batch-edit-btn" title="Edit <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Batch'); ?>" style="background:#fff; color:#488C9A; border:1px solid #488C9A; padding:6px 12px; border-radius:6px; font-size:0.85em; text-decoration:none; display:inline-flex; align-items:center; gap:4px; transition: all 0.2s ease;" onmouseover="this.style.background='#488C9A';this.style.color='#fff';" onmouseout="this.style.background='#fff';this.style.color='#488C9A';">
+                                <i class="fas fa-edit"></i> Edit
+                            </a>
+                            <?php endif; ?>
                         </div>
 
-                        <!-- Module Documents Section - Inside Batch Card, own grid row -->
-                        <div class="info-grid">
-                            <div class="info-section" style="grid-column: 1 / -1;">
-                                <h3>
-                                    Documents
-                                    <a href="project_documents.php?project_id=<?php echo $project_id; ?>&filter_type=modules&module_id=<?php echo $batch['id']; ?>" id="module-docs-count-link-<?php echo $batch['id']; ?>" class="docs-count-link" style="display: none;"></a>
-                                </h3>
-                                <div id="module-docs-list-<?php echo $batch['id']; ?>" class="docs-grid">
-                                    <div class="docs-loading"><i class="fas fa-spinner fa-spin"></i> Loading documents...</div>
-                                </div>
-                            </div>
+                        <!-- Row 2: Compact stat pills -->
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;">
+                            <span style="display: inline-flex; align-items: center; gap: 5px; background: #f0f7f8; color: #293E4C; padding: 5px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 500;">
+                                <i class="fas fa-solar-panel" style="color: #488C9A; font-size: 0.85em;"></i>
+                                <?php echo number_format($batch_total_modules); ?> Modules
+                            </span>
+                            <?php if ($wattage_summary): ?>
+                            <span style="display: inline-flex; align-items: center; gap: 5px; background: #f0f7f8; color: #293E4C; padding: 5px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 500;">
+                                <i class="fas fa-bolt" style="color: #f0ad4e; font-size: 0.85em;"></i>
+                                <?php echo $wattage_summary; ?>
+                            </span>
+                            <?php endif; ?>
+                            <?php if (!empty($batch['modules_per_pallet'])): ?>
+                            <span style="display: inline-flex; align-items: center; gap: 5px; background: #f0f7f8; color: #293E4C; padding: 5px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 500;">
+                                <i class="fas fa-boxes" style="color: #6c757d; font-size: 0.85em;"></i>
+                                <?php echo $batch['modules_per_pallet']; ?>/pallet
+                            </span>
+                            <?php endif; ?>
+                            <span id="batch-doc-pill-<?php echo $batch['id']; ?>" style="display: none; align-items: center; gap: 5px; background: #f0f7f8; color: #293E4C; padding: 5px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 500;">
+                                <i class="fas fa-file-alt" style="color: #488C9A; font-size: 0.85em;"></i>
+                                <span class="doc-count-text"></span>
+                            </span>
                         </div>
 
-                        <div class="batch-actions">
-                            <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
-                                View Pallets & Module Status
+                        <!-- Row 3: View Details button -->
+                        <div>
+                            <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 0.9em;">
+                                View Details <i class="fas fa-arrow-right" style="font-size: 0.8em;"></i>
                             </a>
                         </div>
-
-                        <script>
-                        (function() {
-                            const projectId = <?php echo $project_id; ?>;
-                            const batchId = <?php echo $batch['id']; ?>;
-                            // Fetch all module documents, then filter to show those matching this batch OR unassigned (no module_id)
-                            fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=modules`)
-                                .then(r => r.json())
-                                .then(data => {
-                                    const container = document.getElementById('module-docs-list-' + batchId);
-                                    const countLink = document.getElementById('module-docs-count-link-' + batchId);
-
-                                    if (!data.success || !data.documents || data.documents.length === 0) {
-                                        container.innerHTML = '<div class="docs-empty"><i class="fas fa-folder-open"></i><span>No documents uploaded yet</span></div>';
-                                        return;
-                                    }
-
-                                    // Filter: show documents that match this batch's module_id OR have no module_id (legacy/unassigned)
-                                    const filteredDocs = data.documents.filter(doc =>
-                                        doc.module_id == batchId || !doc.module_id
-                                    );
-
-                                    if (filteredDocs.length === 0) {
-                                        container.innerHTML = '<div class="docs-empty"><i class="fas fa-folder-open"></i><span>No documents uploaded yet</span></div>';
-                                        return;
-                                    }
-
-                                    countLink.textContent = `(${filteredDocs.length})`;
-                                    countLink.style.display = 'inline';
-
-                                    let html = '';
-                                    filteredDocs.forEach(doc => {
-                                        const ext = (doc.original_name || '').split('.').pop().toLowerCase();
-                                        let iconClass = 'fas fa-file';
-                                        let iconColor = '#6c757d';
-                                        if (['pdf'].includes(ext)) { iconClass = 'fas fa-file-pdf'; iconColor = '#dc3545'; }
-                                        else if (['doc', 'docx'].includes(ext)) { iconClass = 'fas fa-file-word'; iconColor = '#2b579a'; }
-                                        else if (['xls', 'xlsx'].includes(ext)) { iconClass = 'fas fa-file-excel'; iconColor = '#217346'; }
-                                        else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) { iconClass = 'fas fa-file-image'; iconColor = '#488C9A'; }
-
-                                        let subtype = doc.document_sub_type || 'Module Document';
-
-                                        html += `
-                                            <div class="doc-item" onclick="openDocPreview('${doc.file_path}', '${(doc.original_name || 'Document').replace(/'/g, "\\'")}', '${ext}')" style="cursor: pointer;">
-                                                <i class="${iconClass}" style="color: ${iconColor};"></i>
-                                                <div class="doc-details">
-                                                    <span class="doc-name" title="${doc.original_name || 'Document'}">${doc.original_name || 'Document'}</span>
-                                                    <span class="doc-subtype">${subtype}</span>
-                                                </div>
-                                            </div>
-                                        `;
-                                    });
-                                    container.innerHTML = html;
-                                })
-                                .catch(err => {
-                                    document.getElementById('module-docs-list-' + batchId).innerHTML = '<div class="docs-error"><i class="fas fa-exclamation-triangle"></i> Error loading documents</div>';
-                                });
-                        })();
-                        </script>
                     </div>
                 <?php endforeach; ?>
+
+                <!-- Single script to fetch doc counts for all batches -->
+                <script>
+                (function() {
+                    const projectId = <?php echo $project_id; ?>;
+                    const batchIds = <?php echo json_encode(array_column($module_batches, 'id')); ?>;
+
+                    fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=modules`)
+                        .then(r => r.json())
+                        .then(data => {
+                            if (!data.success || !data.documents) return;
+
+                            batchIds.forEach(batchId => {
+                                const count = data.documents.filter(doc =>
+                                    doc.module_id == batchId || !doc.module_id
+                                ).length;
+
+                                const pill = document.getElementById('batch-doc-pill-' + batchId);
+                                if (pill && count > 0) {
+                                    pill.querySelector('.doc-count-text').textContent = count + ' Doc' + (count !== 1 ? 's' : '');
+                                    pill.style.display = 'inline-flex';
+                                }
+                            });
+                        })
+                        .catch(() => {});
+                })();
+                </script>
             <?php else: ?>
                 <div class="no-data-message">
                     <p>No module batches have been added to this project yet.</p>
