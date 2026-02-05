@@ -2021,7 +2021,8 @@ $conn->close();
         <div class="overview-header">
             <?php if ($view_mode === 'project'): ?>
                 <?php if (count($module_batches) === 0): ?>
-                    <h1>Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
+                    <h1>Module Overview</h1>
+                    <p style="margin: 4px 0 0 0; color: #6c757d; font-size: 1.1em; font-weight: 500;"><?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></p>
                     <div style="margin-top: 16px; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center;">
                         <div style="font-size: 16px; color: #293E4C; font-weight: 600;">No modules found for this project</div>
                         <div style="font-size: 13px; color: #6b7280; margin-top: 6px;">Once you add a module batch, you can palletize and track them here.</div>
@@ -2034,7 +2035,10 @@ $conn->close();
                 <?php else: ?>
                     <!-- Header with Title and Inline Stats -->
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
-                        <h1 style="margin: 0;">Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
+                        <div>
+                            <h1 style="margin: 0;">Module Overview</h1>
+                            <p style="margin: 4px 0 0 0; color: #6c757d; font-size: 1.1em; font-weight: 500;"><?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></p>
+                        </div>
 
                         <!-- Inline Stats and Edit Button on Right -->
                         <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center;">
@@ -2058,7 +2062,10 @@ $conn->close();
             <?php else: ?>
                 <!-- Single Batch View Header -->
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
-                    <h1 style="margin: 0;">Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></h1>
+                    <div>
+                        <h1 style="margin: 0;">Module Overview</h1>
+                        <p style="margin: 4px 0 0 0; color: #6c757d; font-size: 1.1em; font-weight: 500;"><?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></p>
+                    </div>
 
                     <!-- Inline Stats and Edit Button on Right -->
                     <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center;">
@@ -2179,7 +2186,7 @@ $conn->close();
                     $pallets_url .= '?project_id=' . urlencode($batch_data['project_id']);
                 }
                 ?>
-                <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary" style="padding: 8px 16px; font-size: 0.9em;">
+                <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary" style="padding: 4px 12px; font-size: 0.8em; border-radius: 6px;">
                     <span>&#128230;</span> View Pallets
                 </a>
             </div>
@@ -2697,20 +2704,38 @@ $conn->close();
             <?php if ($isAdmin && $project_id > 0): ?>
             <div class="info-card">
                 <h4><span class="card-icon">&#128228;</span> Upload Document</h4>
-                <form action="upload_document.php" method="POST" enctype="multipart/form-data" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
-                    <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
-                    <input type="hidden" name="document_type" value="modules">
-                    <input type="hidden" name="redirect_url" value="module_overview.php?project_id=<?php echo (int)$project_id; ?>#tab-docs">
-                    <div style="flex: 1; min-width: 200px;">
-                        <label style="display: block; font-size: 0.85em; color: #6c757d; margin-bottom: 4px;">Select File</label>
-                        <input type="file" name="document_file" required style="width: 100%; padding: 8px; border: 1px solid #e9ecef; border-radius: 6px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+                    <div>
+                        <label for="moduleOverviewDocSubType" style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.9em;">Document Sub-Type</label>
+                        <select id="moduleOverviewDocSubType" style="width: 100%; padding: 10px 12px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 0.9em; box-sizing: border-box;">
+                            <option value="">Choose sub-type...</option>
+                            <option value="Module Invoice">Module Invoice</option>
+                            <option value="Flash Test Data">Flash Test Data</option>
+                            <option value="Spec Sheets">Spec Sheets</option>
+                            <option value="Other">Other</option>
+                        </select>
                     </div>
-                    <div style="min-width: 150px;">
-                        <label style="display: block; font-size: 0.85em; color: #6c757d; margin-bottom: 4px;">Description (optional)</label>
-                        <input type="text" name="description" placeholder="e.g., Datasheet" style="width: 100%; padding: 8px; border: 1px solid #e9ecef; border-radius: 6px;">
+                    <div>
+                        <label for="moduleOverviewDocDesc" style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.9em;">Description (Optional)</label>
+                        <input type="text" id="moduleOverviewDocDesc" placeholder="Short description" style="width: 100%; padding: 10px 12px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 0.9em; box-sizing: border-box;">
                     </div>
-                    <button type="submit" class="quick-action-btn primary">Upload</button>
-                </form>
+                </div>
+                <div id="moduleOverviewDropZone" style="border: 2px dashed #488C9A; border-radius: 12px; padding: 32px; text-align: center; cursor: pointer; background: #f8f9fa; transition: all 0.3s ease;" onclick="document.getElementById('moduleOverviewFileInput').click()">
+                    <div style="font-size: 36px; color: #488C9A; margin-bottom: 12px;">&#128228;</div>
+                    <div style="font-size: 1.05em; font-weight: 600; color: #293E4C; margin-bottom: 6px;">Drop files here or click to browse</div>
+                    <div style="color: #6c757d; font-size: 0.85em;">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB each)</div>
+                </div>
+                <input type="file" id="moduleOverviewFileInput" multiple style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
+                <div id="moduleOverviewFileList" style="margin-top: 12px;"></div>
+                <div id="moduleOverviewUploadProgress" style="display: none; margin-top: 12px;">
+                    <div style="background: #e9ecef; border-radius: 8px; height: 8px; overflow: hidden;">
+                        <div id="moduleOverviewProgressFill" style="background: #488C9A; height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+                    </div>
+                    <div id="moduleOverviewProgressText" style="font-size: 0.85em; color: #6c757d; margin-top: 6px; text-align: center;"></div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
+                    <button type="button" onclick="uploadModuleOverviewDocs()" class="quick-action-btn primary" style="padding: 10px 24px;">Upload</button>
+                </div>
             </div>
             <?php endif; ?>
 
@@ -3192,6 +3217,109 @@ function loadModuleDocuments() {
         .catch(err => {
             container.innerHTML = '<div style="text-align: center; padding: 20px; color: #dc3545;">Error loading documents</div>';
         });
+}
+
+// ----------------- MODULE OVERVIEW DOCUMENT UPLOAD -----------------
+(function() {
+    const dropZone = document.getElementById('moduleOverviewDropZone');
+    const fileInput = document.getElementById('moduleOverviewFileInput');
+    const fileList = document.getElementById('moduleOverviewFileList');
+    if (!dropZone || !fileInput) return;
+
+    ['dragenter', 'dragover'].forEach(evt => {
+        dropZone.addEventListener(evt, function(e) {
+            e.preventDefault();
+            dropZone.style.background = '#e8f4f8';
+            dropZone.style.borderColor = '#3a7a87';
+        });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+        dropZone.addEventListener(evt, function(e) {
+            e.preventDefault();
+            dropZone.style.background = '#f8f9fa';
+            dropZone.style.borderColor = '#488C9A';
+        });
+    });
+    dropZone.addEventListener('drop', function(e) {
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            renderModuleOverviewFileList();
+        }
+    });
+    fileInput.addEventListener('change', renderModuleOverviewFileList);
+
+    function renderModuleOverviewFileList() {
+        if (!fileList) return;
+        const files = fileInput.files;
+        if (!files || files.length === 0) { fileList.innerHTML = ''; return; }
+        let html = '';
+        for (let i = 0; i < files.length; i++) {
+            html += '<div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:#f0f7f9; border-radius:6px; margin-bottom:6px; font-size:0.9em;">'
+                + '<span style="color:#488C9A;">&#128196;</span>'
+                + '<span style="flex:1; color:#293E4C;">' + files[i].name + '</span>'
+                + '<span style="color:#6c757d; font-size:0.85em;">' + (files[i].size / 1024).toFixed(1) + ' KB</span>'
+                + '</div>';
+        }
+        fileList.innerHTML = html;
+    }
+})();
+
+async function uploadModuleOverviewDocs() {
+    const fileInput = document.getElementById('moduleOverviewFileInput');
+    const subType = document.getElementById('moduleOverviewDocSubType');
+    const desc = document.getElementById('moduleOverviewDocDesc');
+    const progress = document.getElementById('moduleOverviewUploadProgress');
+    const fill = document.getElementById('moduleOverviewProgressFill');
+    const text = document.getElementById('moduleOverviewProgressText');
+    const files = fileInput ? fileInput.files : null;
+
+    if (!files || files.length === 0) { alert('Please select at least one file.'); return; }
+
+    progress.style.display = 'block';
+    fill.style.width = '0%';
+    text.textContent = 'Uploading...';
+
+    try {
+        for (let i = 0; i < files.length; i++) {
+            const fd = new FormData();
+            fd.append('document', files[i]);
+            fd.append('project_id', '<?php echo (int)$project_id; ?>');
+            fd.append('document_type', 'modules');
+            if (subType && subType.value) fd.append('document_sub_type', subType.value);
+            if (desc && desc.value) fd.append('description', desc.value);
+
+            await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.upload.onprogress = function(e) {
+                    if (e.lengthComputable) {
+                        const pct = Math.round(((i + e.loaded / e.total) / files.length) * 100);
+                        fill.style.width = pct + '%';
+                        text.textContent = 'Uploading ' + (i + 1) + '/' + files.length + '...';
+                    }
+                };
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        try { const r = JSON.parse(xhr.responseText); r.success ? resolve() : reject(new Error(r.message || 'Upload failed')); }
+                        catch(e) { reject(new Error('Upload failed')); }
+                    } else reject(new Error('Upload failed'));
+                };
+                xhr.onerror = function() { reject(new Error('Network error')); };
+                xhr.open('POST', 'upload_project_document.php');
+                xhr.send(fd);
+            });
+        }
+        fill.style.width = '100%';
+        text.textContent = 'Upload complete!';
+        fileInput.value = '';
+        document.getElementById('moduleOverviewFileList').innerHTML = '';
+        if (subType) subType.value = '';
+        if (desc) desc.value = '';
+        loadModuleDocuments();
+        setTimeout(function() { progress.style.display = 'none'; }, 2000);
+    } catch (err) {
+        text.textContent = 'Error: ' + err.message;
+        fill.style.background = '#dc3545';
+    }
 }
 
 function confirmPalletization() {
