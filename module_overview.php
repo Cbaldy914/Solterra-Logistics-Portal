@@ -2031,8 +2031,8 @@ $conn->close();
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
                         <h1 style="margin: 0;">Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
 
-                        <!-- Inline Stats on Right -->
-                        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                        <!-- Inline Stats and Edit Button on Right -->
+                        <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center;">
                             <div onclick="showTotalMWModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
                                 <div style="font-size: 1.4rem; font-weight: 700; color: #488C9A;"><?php echo number_format($quick_stats['total_mw'], 2); ?> MW</div>
                                 <div style="font-size: 0.75rem; color: #6c757d;"><?php echo number_format($quick_stats['total_modules']); ?> modules / <?php echo number_format($quick_stats['pallets_created']); ?> pallets</div>
@@ -2041,33 +2041,12 @@ $conn->close();
                                 <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
                                 <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
                             </div>
+                            <?php if ($isAdmin): ?>
+                            <a href="edit_project.php?id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
+                                <span>&#9998;</span> Edit
+                            </a>
+                            <?php endif; ?>
                         </div>
-                    </div>
-
-                    <!-- Prominent Action Buttons -->
-                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
-                        <?php
-                        $movement_url = "module_movements?batch_id=" . urlencode($batch_id ?: ($module_batches[0]['id'] ?? 0));
-                        if (!empty($project_id)) {
-                            $movement_url .= "&project_id=" . urlencode($project_id);
-                        }
-                        $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
-                        $pallets_url = $pallets_target . (!empty($project_id) ? '?project_id=' . urlencode($project_id) : '');
-                        ?>
-                        <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary">
-                            <span>&#128205;</span> View Module Movement Map
-                        </a>
-                        <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary">
-                            <span>&#128230;</span> View Pallets
-                        </a>
-                        <?php if ($isAdmin): ?>
-                        <a href="edit_project.php?id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary">
-                            <span>&#9998;</span> Edit Project
-                        </a>
-                        <?php endif; ?>
-                        <button onclick="exportModuleData()" class="quick-action-btn secondary">
-                            <span>&#8681;</span> Export
-                        </button>
                     </div>
                 <?php endif; ?>
 
@@ -2076,8 +2055,8 @@ $conn->close();
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
                     <h1 style="margin: 0;">Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></h1>
 
-                    <!-- Inline Stats on Right -->
-                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    <!-- Inline Stats and Edit Button on Right -->
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center;">
                         <div onclick="showTotalMWModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
                             <div style="font-size: 1.4rem; font-weight: 700; color: #488C9A;"><?php echo number_format($quick_stats['total_mw'], 2); ?> MW</div>
                             <div style="font-size: 0.75rem; color: #6c757d;"><?php echo number_format($quick_stats['total_modules']); ?> modules / <?php echo number_format($quick_stats['pallets_created']); ?> pallets</div>
@@ -2086,33 +2065,12 @@ $conn->close();
                             <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
                             <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
                         </div>
+                        <?php if ($isAdmin): ?>
+                        <a href="<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
+                            <span>&#9998;</span> Edit
+                        </a>
+                        <?php endif; ?>
                     </div>
-                </div>
-
-                <!-- Prominent Action Buttons -->
-                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
-                    <?php
-                    $movement_url = "module_movements?batch_id=" . urlencode($batch_id);
-                    if (!empty($batch_data['project_id'])) {
-                        $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
-                    }
-                    $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
-                    $pallets_url = $pallets_target . (!empty($batch_data['project_id']) ? '?project_id=' . urlencode($batch_data['project_id']) : '');
-                    ?>
-                    <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary">
-                        <span>&#128205;</span> View Module Movement Map
-                    </a>
-                    <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary">
-                        <span>&#128230;</span> View Pallets
-                    </a>
-                    <?php if ($isAdmin): ?>
-                    <a href="<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>" class="quick-action-btn secondary">
-                        <span>&#9998;</span> Edit Batch
-                    </a>
-                    <?php endif; ?>
-                    <button onclick="exportModuleData()" class="quick-action-btn secondary">
-                        <span>&#8681;</span> Export
-                    </button>
                 </div>
             <?php endif; ?>
         </div>
@@ -2205,8 +2163,22 @@ $conn->close();
         </div>
 
         <div class="summary-section">
-            <h2 class="section-title">Summary & Pallet Generation</h2>
-            
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
+                <h2 class="section-title" style="margin-bottom: 0; border-bottom: none; padding-bottom: 0;">Summary & Pallet Generation</h2>
+                <?php
+                $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
+                $pallets_url = $pallets_target;
+                if ($view_mode === 'project' && !empty($project_id)) {
+                    $pallets_url .= '?project_id=' . urlencode($project_id);
+                } elseif (!empty($batch_data['project_id'])) {
+                    $pallets_url .= '?project_id=' . urlencode($batch_data['project_id']);
+                }
+                ?>
+                <a href="<?php echo $pallets_url; ?>" class="quick-action-btn primary" style="padding: 8px 16px; font-size: 0.9em;">
+                    <span>&#128230;</span> View Pallets
+                </a>
+            </div>
+
             <!-- Container for wattage blocks -->
             <div class="wattage-blocks-container">
                 <?php if ($view_mode === 'project' && !empty($batch_wattage_summary)): ?>
@@ -2419,54 +2391,13 @@ $conn->close();
                 </div>
             </div>
 
-            <?php if ($view_mode === 'project' && $project_id > 0 && !empty($milestone_status)): ?>
-            <!-- Milestone Summary Card -->
-            <div style="margin-bottom: 20px;">
-                <?php
-                $card_title = 'Module Payment Progress';
-                $show_batches = true;
-                $compact = false;
-                include 'components/milestone_summary_card.php';
-                ?>
-            </div>
-
-            <!-- Milestone Detail Table Component -->
+            <?php if ($view_mode === 'project' && $project_id > 0): ?>
+            <!-- Milestone Detail Table Component (handles its own DB connection) -->
             <?php
-            // Include the full milestone detail table component (handles its own DB connection)
             $section_title = 'Module Payment Milestones';
             $collapsible = false;
             include 'components/milestone_detail_table.php';
             ?>
-
-            <!-- Payment Timeline -->
-            <?php if (!empty($payment_timeline)): ?>
-            <div class="info-card">
-                <h4><span class="card-icon">&#128197;</span> Payment Timeline</h4>
-                <table class="milestone-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Milestone</th>
-                            <th>Amount</th>
-                            <th>Cumulative</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($payment_timeline as $event): ?>
-                        <tr>
-                            <td><?php echo date('M j, Y', strtotime($event['date'])); ?></td>
-                            <td>
-                                <?php echo htmlspecialchars($event['description']); ?>
-                                <span class="milestone-status-badge triggered">Triggered</span>
-                            </td>
-                            <td style="color: #28a745; font-weight: 600;">+$<?php echo number_format($event['amount'], 2); ?></td>
-                            <td>$<?php echo number_format($event['cumulative'], 2); ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-            <?php endif; ?>
 
             <?php else: ?>
             <div class="info-card">
@@ -2482,6 +2413,21 @@ $conn->close();
 
         <!-- TAB 3: Logistics & Specifications -->
         <div id="tab-logistics" class="tab-content">
+            <!-- View Map Button -->
+            <div style="margin-bottom: 20px;">
+                <?php
+                $movement_url = "module_movements?batch_id=" . urlencode($batch_id ?: ($module_batches[0]['id'] ?? 0));
+                if ($view_mode === 'project' && !empty($project_id)) {
+                    $movement_url .= "&project_id=" . urlencode($project_id);
+                } elseif (!empty($batch_data['project_id'])) {
+                    $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
+                }
+                ?>
+                <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary">
+                    <span>&#128205;</span> View Map
+                </a>
+            </div>
+
             <!-- Pallet Status Breakdown -->
             <div class="info-card pallet-status-section">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
@@ -2640,9 +2586,16 @@ $conn->close();
             <div class="info-card">
                 <h4><span class="card-icon">&#127970;</span> Current Warehouse Locations</h4>
                 <div class="info-grid">
-                    <?php foreach ($warehouse_locations as $wh_loc): ?>
-                    <div class="info-item">
-                        <div class="info-label"><?php echo htmlspecialchars($wh_loc['name']); ?></div>
+                    <?php foreach ($warehouse_locations as $wh_loc):
+                        $inventory_url = 'manage_warehouse_inventory.php?warehouse_id=' . (int)$wh_loc['id'];
+                        if ($view_mode === 'project' && !empty($project_id)) {
+                            $inventory_url .= '&project_id=' . (int)$project_id;
+                        }
+                    ?>
+                    <div class="info-item" style="cursor: pointer; transition: all 0.2s ease;" onclick="window.location.href='<?php echo $inventory_url; ?>'" onmouseover="this.style.background='#e9ecef'" onmouseout="this.style.background='#f8f9fa'">
+                        <div class="info-label" style="display: flex; justify-content: space-between; align-items: center;">
+                            <span><?php echo htmlspecialchars($wh_loc['name']); ?></span>
+                        </div>
                         <div class="info-value">
                             <?php echo number_format($wh_loc['pallet_count']); ?> pallets
                             <span style="font-size: 0.85em; color: #6c757d;">(<?php echo number_format($wh_loc['module_count']); ?> modules)</span>
@@ -2650,6 +2603,9 @@ $conn->close();
                         <div style="font-size: 0.8em; color: #6c757d; margin-top: 4px;">
                             <?php echo htmlspecialchars($wh_loc['city'] . ', ' . $wh_loc['state']); ?>
                         </div>
+                        <a href="<?php echo $inventory_url; ?>" style="display: inline-block; margin-top: 8px; font-size: 0.85em; color: #488C9A; text-decoration: none;" onclick="event.stopPropagation();">
+                            View Inventory &rarr;
+                        </a>
                     </div>
                     <?php endforeach; ?>
                 </div>
@@ -2723,21 +2679,13 @@ $conn->close();
             </div>
             <?php endif; ?>
 
-            <!-- Uploaded Documents -->
-            <?php if (!empty($module_documents)): ?>
+            <!-- Uploaded Documents (loaded via JavaScript) -->
+            <?php if ($project_id > 0): ?>
             <div class="info-card">
                 <h4><span class="card-icon">&#128194;</span> Uploaded Documents</h4>
-                <ul class="document-list">
-                    <?php foreach ($module_documents as $doc): ?>
-                    <li>
-                        <span class="doc-icon">&#128196;</span>
-                        <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" class="doc-name">
-                            <?php echo htmlspecialchars($doc['original_file_name']); ?>
-                        </a>
-                        <span class="doc-meta"><?php echo $doc['formatted_size'] ?? ''; ?></span>
-                    </li>
-                    <?php endforeach; ?>
-                </ul>
+                <div id="module-docs-list" style="min-height: 60px;">
+                    <div style="text-align: center; padding: 20px; color: #6c757d;">Loading documents...</div>
+                </div>
             </div>
             <?php endif; ?>
 
@@ -2762,7 +2710,7 @@ $conn->close();
             </div>
             <?php endif; ?>
 
-            <?php if (!$has_docs_url && !$has_notes && empty($module_documents)): ?>
+            <?php if (!$has_docs_url && !$has_notes && $project_id <= 0): ?>
             <div class="info-card">
                 <p style="color: #6c757d; text-align: center; padding: 40px;">
                     No documentation available for these modules.
@@ -3203,6 +3151,45 @@ function closeContractValueModal() {
     if (modal) modal.style.display = 'none';
 }
 
+// ----------------- LOAD MODULE DOCUMENTS VIA AJAX -----------------
+function loadModuleDocuments() {
+    const projectId = <?php echo (int)$project_id; ?>;
+    const container = document.getElementById('module-docs-list');
+    if (!container || !projectId) return;
+
+    fetch(`get_project_documents.php?project_id=${projectId}&document_type=modules`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success || !data.documents || data.documents.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6c757d; font-style: italic;">No module documentation uploaded yet</div>';
+                return;
+            }
+
+            let html = '<ul class="document-list" style="margin: 0; padding: 0;">';
+            data.documents.forEach(doc => {
+                const ext = (doc.original_name || '').split('.').pop().toLowerCase();
+                let icon = '&#128196;';
+                if (['pdf'].includes(ext)) icon = '&#128213;';
+                else if (['doc', 'docx'].includes(ext)) icon = '&#128212;';
+                else if (['xls', 'xlsx', 'csv'].includes(ext)) icon = '&#128215;';
+                else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) icon = '&#128444;';
+
+                html += `
+                    <li>
+                        <span class="doc-icon">${icon}</span>
+                        <a href="${doc.file_path}" target="_blank" class="doc-name">${doc.original_name || 'Document'}</a>
+                        <span class="doc-meta">${doc.document_sub_type || ''}</span>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            container.innerHTML = '<div style="text-align: center; padding: 20px; color: #dc3545;">Error loading documents</div>';
+        });
+}
+
 function confirmPalletization() {
     if (currentForm) {
         const form = currentForm;
@@ -3337,6 +3324,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize pagination for pallets
     initializePalletPagination();
+
+    // Load module documents via AJAX
+    loadModuleDocuments();
 
     // ----------------- TAB FUNCTIONALITY -----------------
     const tabBtns = document.querySelectorAll('.module-tabs .tab-btn');
