@@ -579,6 +579,11 @@ try {
         }
     }
 
+    // For batch view, inherit project_id from the batch data for milestone/doc loading
+    if ($view_mode === 'batch' && !empty($batch_data['project_id'])) {
+        $project_id = (int)$batch_data['project_id'];
+    }
+
     // Access Control for Admin role
     if (in_array($role, ['admin', 'customer_admin'], true) && !empty($module_batches)) {
         $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
@@ -1073,7 +1078,7 @@ try {
 
     // Get milestone status
     $milestone_status = null;
-    if ($view_mode === 'project' && $project_id > 0) {
+    if ($project_id > 0) {
         $milestone_status = get_milestone_completion_status($project_id, $conn);
         $quick_stats['milestones_triggered_percent'] = $milestone_status['completion_percent'];
     }
@@ -1188,7 +1193,7 @@ try {
     // PAYMENT TIMELINE DATA
     // =====================================================
     $payment_timeline = [];
-    if ($view_mode === 'project' && $project_id > 0) {
+    if ($project_id > 0) {
         $payment_timeline = get_milestone_payment_timeline($project_id, $conn);
     }
 
@@ -2028,7 +2033,7 @@ $conn->close();
                     </div>
                 <?php else: ?>
                     <!-- Header with Title and Inline Stats -->
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
                         <h1 style="margin: 0;">Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
 
                         <!-- Inline Stats and Edit Button on Right -->
@@ -2052,7 +2057,7 @@ $conn->close();
 
             <?php else: ?>
                 <!-- Single Batch View Header -->
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
                     <h1 style="margin: 0;">Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></h1>
 
                     <!-- Inline Stats and Edit Button on Right -->
@@ -2163,7 +2168,7 @@ $conn->close();
         </div>
 
         <div class="summary-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 15px;">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
                 <h2 class="section-title" style="margin-bottom: 0; border-bottom: none; padding-bottom: 0;">Summary & Pallet Generation</h2>
                 <?php
                 $pallets_target = $isAdmin ? 'create_shipment.php' : 'manage_pallets.php';
@@ -2391,7 +2396,7 @@ $conn->close();
                 </div>
             </div>
 
-            <?php if ($view_mode === 'project' && $project_id > 0): ?>
+            <?php if ($project_id > 0): ?>
             <!-- Milestone Detail Table Component (handles its own DB connection) -->
             <?php
             $section_title = 'Module Payment Milestones';
@@ -2413,25 +2418,24 @@ $conn->close();
 
         <!-- TAB 3: Logistics & Specifications -->
         <div id="tab-logistics" class="tab-content">
-            <!-- View Map Button -->
-            <div style="margin-bottom: 20px;">
-                <?php
-                $movement_url = "module_movements?batch_id=" . urlencode($batch_id ?: ($module_batches[0]['id'] ?? 0));
-                if ($view_mode === 'project' && !empty($project_id)) {
-                    $movement_url .= "&project_id=" . urlencode($project_id);
-                } elseif (!empty($batch_data['project_id'])) {
-                    $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
-                }
-                ?>
-                <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary">
-                    <span>&#128205;</span> View Map
-                </a>
-            </div>
+            <?php
+            $movement_url = "module_movements?batch_id=" . urlencode($batch_id ?: ($module_batches[0]['id'] ?? 0));
+            if ($view_mode === 'project' && !empty($project_id)) {
+                $movement_url .= "&project_id=" . urlencode($project_id);
+            } elseif (!empty($batch_data['project_id'])) {
+                $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
+            }
+            ?>
 
             <!-- Pallet Status Breakdown -->
             <div class="info-card pallet-status-section">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                    <h4 style="margin: 0;"><span class="card-icon">&#128230;</span> Pallet Status Breakdown</h4>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <h4 style="margin: 0;"><span class="card-icon">&#128230;</span> Pallet Status Breakdown</h4>
+                        <a href="<?php echo $movement_url; ?>" class="quick-action-btn primary" style="padding: 6px 12px; font-size: 0.85em;">
+                            <span>&#128205;</span> View Map
+                        </a>
+                    </div>
                     <button onclick="exportPalletStatusCSV()" class="quick-action-btn secondary" style="padding: 6px 12px; font-size: 0.85em;">
                         <span>&#8681;</span> Export CSV
                     </button>
@@ -2885,7 +2889,7 @@ $conn->close();
             </tbody>
         </table>
         <?php endif; ?>
-        <?php if ($view_mode === 'project' && $milestone_status && $milestone_status['total_triggered'] > 0): ?>
+        <?php if ($milestone_status && $milestone_status['total_triggered'] > 0): ?>
         <div style="margin-top: 20px; padding: 16px; background: #d4edda; border-radius: 8px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
