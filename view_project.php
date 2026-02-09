@@ -17,16 +17,209 @@ if (!$project_id && !$origin_batch_id) die("Project ID or Origin Batch ID is mis
 
 // ---------- DB ------------------------------------------------------------
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
 $page_title_info  = "Delivery Tracker";
 // (Use shared breadcrumbs in template)
 $source_vendor_name_for_batch = null;
+$batch_account_id = null;
+$is_global_admin = ($role === 'global_admin');
+$is_account_admin = in_array($role, ['admin', 'customer_admin'], true);
+$can_manage_deliveries = in_array($role, ['admin', 'customer_admin', 'global_admin'], true);
+$account_id_for_admin = null;
+
+if ($is_account_admin) {
+    $stmtAdminAcc = $conn->prepare("
+        SELECT account_id
+        FROM customer_account_users
+        WHERE user_id = ?
+          AND role IN ('admin', 'customer_admin')
+        LIMIT 1
+    ");
+    if ($stmtAdminAcc) {
+        $stmtAdminAcc->bind_param("i", $user_id);
+        $stmtAdminAcc->execute();
+        $stmtAdminAcc->bind_result($acctID);
+        if ($stmtAdminAcc->fetch()) {
+            $account_id_for_admin = (int)$acctID;
+        }
+        $stmtAdminAcc->close();
+    }
+}
+
+function summarizeGroupedDate(array $dates): string
+{
+    $clean = array_values(array_unique(array_filter($dates)));
+    if (empty($clean)) {
+        return '—';
+    }
+    sort($clean);
+    $first = $clean[0];
+    $last = $clean[count($clean) - 1];
+    if ($first === $last) {
+        return date('m/d/Y', strtotime($first));
+    }
+    return date('m/d/Y', strtotime($first)) . ' - ' . date('m/d/Y', strtotime($last));
+}
+
+function getAuthorizedDeliveryIds(
+    mysqli $conn,
+    array $selected_ids,
+    ?int $project_id,
+    ?string $source_vendor_name_for_batch,
+    bool $is_global_admin,
+    ?int $account_id_for_admin
+): array {
+    $selected_ids = array_values(array_unique(array_filter(array_map('intval', $selected_ids), static fn($id) => $id > 0)));
+    if (empty($selected_ids)) {
+        return [];
+    }
+    if (!$is_global_admin && $account_id_for_admin === null) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+    $sql = "SELECT d.id FROM deliveries d LEFT JOIN projects p ON d.project_id = p.id WHERE d.id IN ($placeholders)";
+    $types = str_repeat('i', count($selected_ids));
+    $params = $selected_ids;
+
+    if ($project_id) {
+        $sql .= " AND d.project_id = ?";
+        $types .= "i";
+        $params[] = $project_id;
+        if (!$is_global_admin && $account_id_for_admin !== null) {
+            $sql .= " AND p.account_id = ?";
+            $types .= "i";
+            $params[] = $account_id_for_admin;
+        }
+    } else {
+        $sql .= " AND d.project_id IS NULL AND d.supplier = ?";
+        $types .= "s";
+        $params[] = (string)$source_vendor_name_for_batch;
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $authorized = [];
+    while ($row = $res->fetch_assoc()) {
+        $authorized[] = (int)$row['id'];
+    }
+    $stmt->close();
+
+    return $authorized;
+}
+
+function returnPalletsToOrigin(mysqli $conn, array $delivery_ids): array
+{
+    if (empty($delivery_ids)) {
+        return ['success' => false, 'message' => 'No delivery IDs provided', 'returned_count' => 0];
+    }
+
+    $returned_pallets = 0;
+    try {
+        $placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
+        $types = str_repeat('i', count($delivery_ids));
+
+        $stmt = $conn->prepare("
+            SELECT dp.inventory_pallet_id, d.origin_type, d.origin_id
+            FROM delivery_pallets dp
+            JOIN deliveries d ON dp.delivery_id = d.id
+            WHERE dp.delivery_id IN ($placeholders)
+        ");
+        if (!$stmt) {
+            throw new Exception("Failed to prepare origin query: " . $conn->error);
+        }
+        $stmt->bind_param($types, ...$delivery_ids);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $stmt->close();
+
+        $pallets_by_origin = [];
+        while ($row = $result->fetch_assoc()) {
+            $origin_key = ($row['origin_type'] ?? 'manufacturer') . '_' . ($row['origin_id'] ?? 'null');
+            if (!isset($pallets_by_origin[$origin_key])) {
+                $pallets_by_origin[$origin_key] = [
+                    'type' => $row['origin_type'] ?? 'manufacturer',
+                    'id' => $row['origin_id'],
+                    'pallets' => []
+                ];
+            }
+            $pallets_by_origin[$origin_key]['pallets'][] = (int)$row['inventory_pallet_id'];
+        }
+
+        foreach ($pallets_by_origin as $origin_data) {
+            $pallet_ids = array_values(array_unique(array_filter($origin_data['pallets'])));
+            if (empty($pallet_ids)) {
+                continue;
+            }
+
+            $status = 'At Manufacturer';
+            $warehouse_id = null;
+            $project_ref_id = null;
+            if ($origin_data['type'] === 'warehouse') {
+                $status = 'In Warehouse';
+                $warehouse_id = $origin_data['id'];
+            } elseif ($origin_data['type'] === 'project') {
+                $status = 'Delivered to Project';
+                $project_ref_id = $origin_data['id'];
+            }
+
+            $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+            $update_sql = "UPDATE inventory_pallets SET status = ?";
+            $update_params = [$status];
+            $update_types = 's';
+
+            if ($warehouse_id) {
+                $update_sql .= ", current_warehouse_id = ?";
+                $update_types .= 'i';
+                $update_params[] = (int)$warehouse_id;
+            } else {
+                $update_sql .= ", current_warehouse_id = NULL";
+            }
+
+            if ($project_ref_id) {
+                $update_sql .= ", current_project_id = ?";
+                $update_types .= 'i';
+                $update_params[] = (int)$project_ref_id;
+            } else {
+                $update_sql .= ", current_project_id = NULL";
+            }
+
+            $update_sql .= " WHERE id IN ($pallet_placeholders)";
+            $update_types .= str_repeat('i', count($pallet_ids));
+            $update_params = array_merge($update_params, $pallet_ids);
+
+            $stmt_update = $conn->prepare($update_sql);
+            if (!$stmt_update) {
+                continue;
+            }
+            $stmt_update->bind_param($update_types, ...$update_params);
+            if ($stmt_update->execute()) {
+                $returned_pallets += (int)$stmt_update->affected_rows;
+            }
+            $stmt_update->close();
+        }
+
+        return [
+            'success' => true,
+            'message' => "Successfully returned {$returned_pallets} pallet(s) to origin.",
+            'returned_count' => $returned_pallets
+        ];
+    } catch (Throwable $e) {
+        return ['success' => false, 'message' => $e->getMessage(), 'returned_count' => 0];
+    }
+}
 
 /* -------------------- context by project_id -----------------------------*/
 if ($project_id) {
-    if ($role === 'admin' || $role === 'global_admin') {
+    if ($is_global_admin) {
         $stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
         $stmt->bind_param("i", $project_id);
     } else {
@@ -57,7 +250,7 @@ if ($project_id) {
     $source_vendor_name_for_batch = $batch['vendor_name'];
     $batch_account_id             = $batch['account_id'];
 
-    if ($role === 'user') {
+    if (!$is_global_admin) {
         $stmt = $conn->prepare("SELECT 1 FROM customer_account_users WHERE user_id=? AND account_id=? LIMIT 1");
         $stmt->bind_param("ii", $user_id, $batch_account_id);
         $stmt->execute();
@@ -149,6 +342,359 @@ if ($search_query !== '') {
 }
 $whereClause="WHERE 1=1".($baseWhere?" AND ".implode(" AND ",$baseWhere):"");
 
+if (!isset($_SESSION['messages'])) {
+    $_SESSION['messages'] = [];
+}
+
+$redirect_params = [];
+if ($project_id) {
+    $redirect_params['project_id'] = $project_id;
+} elseif ($origin_batch_id) {
+    $redirect_params['origin_batch_id'] = $origin_batch_id;
+}
+if ($highlight_delivery_id) {
+    $redirect_params['delivery_id'] = $highlight_delivery_id;
+}
+if ($start_date !== '') {
+    $redirect_params['start_date'] = $start_date;
+}
+if ($end_date !== '') {
+    $redirect_params['end_date'] = $end_date;
+}
+if ($wattage_filter !== '') {
+    $redirect_params['wattage'] = $wattage_filter;
+}
+if ($status_filter !== '') {
+    $redirect_params['status'] = $status_filter;
+}
+if ($supplier_filter !== '') {
+    $redirect_params['supplier'] = $supplier_filter;
+}
+if ($search_query !== '') {
+    $redirect_params['search'] = $search_query;
+}
+$redirect_url = 'view_project.php' . (empty($redirect_params) ? '' : ('?' . http_build_query($redirect_params)));
+
+if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['bulk_edit_submit'])) {
+        $selected_ids = $_POST['selected_deliveries'] ?? [];
+        $selected_ids = getAuthorizedDeliveryIds(
+            $conn,
+            $selected_ids,
+            $project_id,
+            $source_vendor_name_for_batch,
+            $is_global_admin,
+            $account_id_for_admin
+        );
+
+        if (empty($selected_ids)) {
+            $_SESSION['messages'][] = "<p class='error-message'>Bulk edit failed: no valid deliveries were selected.</p>";
+            header("Location: $redirect_url");
+            exit();
+        }
+
+        $updates = [];
+        $types = '';
+        $values = [];
+
+        $editable_fields = [
+            'manufacturer' => 's',
+            'wattage' => 's',
+            'quantity' => 'i',
+            'status_of_delivery' => 's',
+            'anticipated_delivery_date' => 's',
+            'actual_delivery_date' => 's'
+        ];
+
+        foreach ($editable_fields as $field => $bind_type) {
+            if (!isset($_POST[$field]) || $_POST[$field] === '') {
+                continue;
+            }
+
+            $db_field = ($field === 'manufacturer') ? 'supplier' : $field;
+            $updates[] = "$db_field = ?";
+            $types .= $bind_type;
+            if ($bind_type === 'i') {
+                $values[] = (int)$_POST[$field];
+            } else {
+                $values[] = trim((string)$_POST[$field]);
+            }
+        }
+
+        if (empty($updates)) {
+            $_SESSION['messages'][] = "<p>No fields were provided for bulk edit.</p>";
+            header("Location: $redirect_url");
+            exit();
+        }
+
+        $new_delivery_status = $_POST['status_of_delivery'] ?? null;
+        $actual_delivery_date = $_POST['actual_delivery_date'] ?? null;
+
+        $conn->begin_transaction();
+        try {
+            $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $sql = "UPDATE deliveries SET " . implode(', ', $updates) . " WHERE id IN ($placeholders)";
+            $stmt = $conn->prepare($sql);
+            $all_types = $types . str_repeat('i', count($selected_ids));
+            $all_values = array_merge($values, $selected_ids);
+            $stmt->bind_param($all_types, ...$all_values);
+            if (!$stmt->execute()) {
+                throw new Exception("Bulk update failed: " . $stmt->error);
+            }
+            $stmt->close();
+
+            if ($new_delivery_status) {
+                $status_mapping = [
+                    'Delivered to Project' => 'Delivered to Project',
+                    'Delivered to Warehouse' => 'In Warehouse',
+                    'In Transit to Project' => 'In Transit to Project',
+                    'In Transit to Warehouse' => 'In Transit to Warehouse',
+                    'Pending' => 'At Manufacturer',
+                    'Canceled' => 'At Manufacturer',
+                    'Cancelled' => 'At Manufacturer'
+                ];
+                if (isset($status_mapping[$new_delivery_status])) {
+                    $new_pallet_status = $status_mapping[$new_delivery_status];
+                    $dp_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+                    $stmtPalletIds = $conn->prepare("
+                        SELECT DISTINCT inventory_pallet_id
+                        FROM delivery_pallets
+                        WHERE delivery_id IN ($dp_placeholders)
+                    ");
+                    $stmtPalletIds->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+                    $stmtPalletIds->execute();
+                    $resPallets = $stmtPalletIds->get_result();
+                    $pallet_ids = [];
+                    while ($row = $resPallets->fetch_assoc()) {
+                        $pallet_ids[] = (int)$row['inventory_pallet_id'];
+                    }
+                    $stmtPalletIds->close();
+
+                    if (!empty($pallet_ids)) {
+                        $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+                        $stmtPalletUpdate = $conn->prepare("
+                            UPDATE inventory_pallets
+                            SET status = ?
+                            WHERE id IN ($pallet_placeholders)
+                        ");
+                        $stmtPalletUpdate->bind_param('s' . str_repeat('i', count($pallet_ids)), $new_pallet_status, ...$pallet_ids);
+                        $stmtPalletUpdate->execute();
+                        $stmtPalletUpdate->close();
+                    }
+                }
+
+                if ($new_delivery_status === 'Delivered to Project') {
+                    $date_for_schedule = $actual_delivery_date ?: date('Y-m-d');
+                    $arrival_time = $date_for_schedule . ' 08:00:00';
+                    $departure_time = $date_for_schedule . ' 16:00:00';
+                    $sched_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+                    $stmtSched = $conn->prepare("
+                        UPDATE site_scheduling
+                        SET arrival_time = ?, departure_time = ?, is_closed = 1
+                        WHERE delivery_id IN ($sched_placeholders)
+                    ");
+                    $sched_types = 'ss' . str_repeat('i', count($selected_ids));
+                    $sched_values = array_merge([$arrival_time, $departure_time], $selected_ids);
+                    $stmtSched->bind_param($sched_types, ...$sched_values);
+                    $stmtSched->execute();
+                    $stmtSched->close();
+                }
+
+                if (function_exists('trigger_delivery_milestones_for_status')) {
+                    foreach ($selected_ids as $delivery_id) {
+                        trigger_delivery_milestones_for_status(
+                            $delivery_id,
+                            $new_delivery_status,
+                            $conn,
+                            $user_id,
+                            null,
+                            $actual_delivery_date ?: null
+                        );
+                    }
+                }
+            }
+
+            $conn->commit();
+            $_SESSION['messages'][] = "<p>Bulk update successful.</p>";
+        } catch (Throwable $e) {
+            $conn->rollback();
+            $_SESSION['messages'][] = "<p class='error-message'>Error during bulk update: " . htmlspecialchars($e->getMessage()) . "</p>";
+        }
+
+        header("Location: $redirect_url");
+        exit();
+    }
+
+    if (isset($_POST['receive_to_project_submit'])) {
+        $selected_ids = $_POST['selected_deliveries'] ?? [];
+        $selected_ids = getAuthorizedDeliveryIds(
+            $conn,
+            $selected_ids,
+            $project_id,
+            $source_vendor_name_for_batch,
+            $is_global_admin,
+            $account_id_for_admin
+        );
+        $actual_delivery_date = trim((string)($_POST['actual_delivery_date'] ?? date('Y-m-d')));
+
+        if (empty($selected_ids)) {
+            $_SESSION['messages'][] = "<p class='error-message'>Receive to project failed: no valid deliveries were selected.</p>";
+            header("Location: $redirect_url");
+            exit();
+        }
+
+        $conn->begin_transaction();
+        try {
+            $pod_path = null;
+            if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] === UPLOAD_ERR_OK) {
+                $upload_dir = 'uploads/pods/';
+                if (!is_dir($upload_dir)) {
+                    mkdir($upload_dir, 0755, true);
+                }
+                $file_ext = strtolower(pathinfo($_FILES['proof_of_delivery']['name'], PATHINFO_EXTENSION));
+                $allowed_exts = ['jpg', 'jpeg', 'png', 'pdf'];
+                if (in_array($file_ext, $allowed_exts, true)) {
+                    $filename = 'bulk_pod_' . time() . '_' . mt_rand(1000, 9999) . '.' . $file_ext;
+                    $pod_path = $upload_dir . $filename;
+                    if (!move_uploaded_file($_FILES['proof_of_delivery']['tmp_name'], $pod_path)) {
+                        $pod_path = null;
+                    }
+                }
+            }
+
+            $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $update_sql = "UPDATE deliveries SET status_of_delivery = 'Delivered to Project', actual_delivery_date = ?";
+            $update_types = 's';
+            $update_values = [$actual_delivery_date];
+            if ($pod_path) {
+                $update_sql .= ", proof_of_delivery = ?";
+                $update_types .= 's';
+                $update_values[] = $pod_path;
+            }
+            $update_sql .= " WHERE id IN ($placeholders)";
+            $update_types .= str_repeat('i', count($selected_ids));
+            $update_values = array_merge($update_values, $selected_ids);
+
+            $stmt = $conn->prepare($update_sql);
+            $stmt->bind_param($update_types, ...$update_values);
+            if (!$stmt->execute()) {
+                throw new Exception("Delivery update failed: " . $stmt->error);
+            }
+            $stmt->close();
+
+            $dp_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $stmtPalletIds = $conn->prepare("
+                SELECT DISTINCT inventory_pallet_id
+                FROM delivery_pallets
+                WHERE delivery_id IN ($dp_placeholders)
+            ");
+            $stmtPalletIds->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+            $stmtPalletIds->execute();
+            $resPalletIds = $stmtPalletIds->get_result();
+            $pallet_ids = [];
+            while ($row = $resPalletIds->fetch_assoc()) {
+                $pallet_ids[] = (int)$row['inventory_pallet_id'];
+            }
+            $stmtPalletIds->close();
+
+            if (!empty($pallet_ids)) {
+                $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+                $stmtPalletUpdate = $conn->prepare("
+                    UPDATE inventory_pallets
+                    SET status = 'Delivered to Project'
+                    WHERE id IN ($pallet_placeholders)
+                ");
+                $stmtPalletUpdate->bind_param(str_repeat('i', count($pallet_ids)), ...$pallet_ids);
+                $stmtPalletUpdate->execute();
+                $stmtPalletUpdate->close();
+            }
+
+            $arrival_time = $actual_delivery_date . ' 08:00:00';
+            $departure_time = $actual_delivery_date . ' 16:00:00';
+            $sched_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $stmtSched = $conn->prepare("
+                UPDATE site_scheduling
+                SET arrival_time = ?, departure_time = ?, is_closed = 1
+                WHERE delivery_id IN ($sched_placeholders)
+            ");
+            $sched_types = 'ss' . str_repeat('i', count($selected_ids));
+            $sched_values = array_merge([$arrival_time, $departure_time], $selected_ids);
+            $stmtSched->bind_param($sched_types, ...$sched_values);
+            $stmtSched->execute();
+            $stmtSched->close();
+
+            if (function_exists('trigger_delivery_milestones_for_status')) {
+                foreach ($selected_ids as $delivery_id) {
+                    trigger_delivery_milestones_for_status(
+                        $delivery_id,
+                        'Delivered to Project',
+                        $conn,
+                        $user_id,
+                        null,
+                        $actual_delivery_date
+                    );
+                }
+            }
+
+            $conn->commit();
+            $_SESSION['messages'][] = "<p>Successfully marked selected deliveries as Delivered to Project.</p>";
+        } catch (Throwable $e) {
+            $conn->rollback();
+            $_SESSION['messages'][] = "<p class='error-message'>Receive to project failed: " . htmlspecialchars($e->getMessage()) . "</p>";
+        }
+
+        header("Location: $redirect_url");
+        exit();
+    }
+
+    if (isset($_POST['delete_selected'])) {
+        $selected_ids = $_POST['selected_deliveries'] ?? [];
+        $selected_ids = getAuthorizedDeliveryIds(
+            $conn,
+            $selected_ids,
+            $project_id,
+            $source_vendor_name_for_batch,
+            $is_global_admin,
+            $account_id_for_admin
+        );
+
+        if (empty($selected_ids)) {
+            $_SESSION['messages'][] = "<p class='error-message'>Bulk delete failed: no valid deliveries were selected.</p>";
+            header("Location: $redirect_url");
+            exit();
+        }
+
+        $conn->begin_transaction();
+        try {
+            returnPalletsToOrigin($conn, $selected_ids);
+
+            $dp_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $stmtLinks = $conn->prepare("DELETE FROM delivery_pallets WHERE delivery_id IN ($dp_placeholders)");
+            $stmtLinks->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+            $stmtLinks->execute();
+            $stmtLinks->close();
+
+            $d_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $stmtDelete = $conn->prepare("DELETE FROM deliveries WHERE id IN ($d_placeholders)");
+            $stmtDelete->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+            if (!$stmtDelete->execute()) {
+                throw new Exception("Delete failed: " . $stmtDelete->error);
+            }
+            $deleted = (int)$stmtDelete->affected_rows;
+            $stmtDelete->close();
+
+            $conn->commit();
+            $_SESSION['messages'][] = "<p>Successfully deleted {$deleted} delivery record(s).</p>";
+        } catch (Throwable $e) {
+            $conn->rollback();
+            $_SESSION['messages'][] = "<p class='error-message'>Bulk delete failed: " . htmlspecialchars($e->getMessage()) . "</p>";
+        }
+
+        header("Location: $redirect_url");
+        exit();
+    }
+}
+
 /* ---------- CSV EXPORT ---------------------------------------------------*/
 if(isset($_GET['export']) && $_GET['export']==1){
     header('Content-Type:text/csv; charset=utf-8');
@@ -187,6 +733,7 @@ $stmt->close();
 // Calculate stats for each actual status
 $total_deliveries = count($deliveries);
 $status_counts = [
+    'Pending' => 0,
     'On Water' => 0,
     'Cleared Customs' => 0,
     'In Transit to Warehouse' => 0,
@@ -206,10 +753,67 @@ foreach ($deliveries as $delivery) {
 // Filter out zero counts
 $active_status_counts = array_filter($status_counts, fn($count) => $count > 0);
 
+// Group deliveries by BOL so mixed wattages appear on a single line
+$grouped_deliveries = [];
+$bol_groups = [];
+foreach ($deliveries as $delivery) {
+    $bol_number = trim((string)($delivery['bol_number'] ?? ''));
+    $group_key = ($bol_number !== '') ? ('bol:' . $bol_number) : ('single:' . (int)$delivery['id']);
+    if (!isset($bol_groups[$group_key])) {
+        $bol_groups[$group_key] = [];
+    }
+    $bol_groups[$group_key][] = $delivery;
+}
+
+foreach ($bol_groups as $group_key => $group_rows) {
+    $master = $group_rows[0];
+    $group_ids = array_map('intval', array_column($group_rows, 'id'));
+    $wattage_values = [];
+    $supplier_values = [];
+    $status_values = [];
+
+    foreach ($group_rows as $row) {
+        $wattage_label = trim((string)($row['wattage'] ?? ''));
+        if ($wattage_label !== '') {
+            $wattage_values[] = $wattage_label;
+        }
+
+        $supplier_values[] = (string)($row['supplier'] ?? '');
+        $status_values[] = (string)($row['status_of_delivery'] ?? '');
+    }
+
+    $supplier_values = array_values(array_filter(array_unique($supplier_values)));
+    $status_values = array_values(array_filter(array_unique($status_values)));
+    $unique_wattages_for_group = array_values(array_unique($wattage_values));
+
+    $master['is_grouped'] = (count($group_rows) > 1);
+    $master['group_key'] = $group_key;
+    $master['group_count'] = count($group_rows);
+    $master['group_delivery_ids'] = $group_ids;
+    $master['grouped_deliveries'] = $group_rows;
+    $master['total_quantity'] = array_sum(array_map(static fn($r) => (int)($r['quantity'] ?? 0), $group_rows));
+    $master['is_mixed_wattage'] = (count($unique_wattages_for_group) > 1);
+    $master['display_wattage'] = '—';
+    if ($master['is_mixed_wattage']) {
+        $master['display_wattage'] = 'Mixed';
+    } elseif (!empty($unique_wattages_for_group)) {
+        $master['display_wattage'] = $unique_wattages_for_group[0] . 'W';
+    }
+    $master['supplier_display'] = (count($supplier_values) <= 1) ? ($supplier_values[0] ?? '—') : ('Multiple (' . count($supplier_values) . ')');
+    $master['supplier_list'] = $supplier_values;
+    $master['status_values'] = $status_values;
+    $master['status_of_delivery'] = (count($status_values) <= 1) ? ($status_values[0] ?? '—') : 'Mixed Status';
+    $master['anticipated_display'] = summarizeGroupedDate(array_column($group_rows, 'anticipated_delivery_date'));
+    $master['actual_display'] = summarizeGroupedDate(array_column($group_rows, 'actual_delivery_date'));
+    $master['contains_highlight'] = $highlight_delivery_id ? in_array($highlight_delivery_id, $group_ids, true) : false;
+
+    $grouped_deliveries[] = $master;
+}
+
 // Get unique wattages and suppliers for filters
-$unique_wattages = array_unique(array_column($deliveries, 'wattage'));
+$unique_wattages = array_values(array_filter(array_unique(array_column($deliveries, 'wattage')), static fn($w) => $w !== null && $w !== ''));
 sort($unique_wattages);
-$unique_suppliers = array_unique(array_column($deliveries, 'supplier'));
+$unique_suppliers = array_values(array_filter(array_unique(array_column($deliveries, 'supplier')), static fn($s) => $s !== null && $s !== ''));
 sort($unique_suppliers);
 ?>
 <!DOCTYPE html>
@@ -1139,6 +1743,213 @@ sort($unique_suppliers);
             font-weight: 600;
             padding: 0 8px;
         }
+
+        .flash-messages {
+            margin-bottom: 20px;
+        }
+
+        .flash-messages p {
+            margin: 0 0 10px 0;
+            padding: 12px 16px;
+            border-radius: 10px;
+            background: #e8f7ec;
+            color: #146c2e;
+            border: 1px solid #c9e9d3;
+            font-weight: 500;
+        }
+
+        .flash-messages .error-message {
+            background: #ffeaea;
+            color: #9f1d1d;
+            border-color: #f7c8c8;
+        }
+
+        .bulk-actions-bar {
+            background: linear-gradient(135deg, #ffffff 0%, #f4fbfd 100%);
+            border-radius: 16px;
+            border: 1px solid rgba(72, 140, 154, 0.14);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .bulk-actions-title {
+            color: #293E4C;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .bulk-actions-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .bulk-btn {
+            border: none;
+            border-radius: 10px;
+            padding: 8px 14px;
+            font-weight: 600;
+            cursor: pointer;
+            color: white;
+            font-family: 'Poppins', sans-serif;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .bulk-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .bulk-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+        }
+
+        .bulk-btn-edit {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+        }
+
+        .bulk-btn-receive {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+        }
+
+        .bulk-btn-delete {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        }
+
+        .select-column {
+            width: 52px;
+            text-align: center;
+        }
+
+        .actions-column {
+            min-width: 140px;
+        }
+
+        .select-column input[type="checkbox"] {
+            width: 17px;
+            height: 17px;
+            accent-color: #488C9A;
+            cursor: pointer;
+        }
+
+        tr.grouped-main-row {
+            cursor: pointer;
+        }
+
+        tr.grouped-main-row td {
+            background: rgba(72, 140, 154, 0.04);
+        }
+
+        tr.delivery-detail-row td {
+            background: #fcfeff;
+            border-bottom: 1px dashed rgba(72, 140, 154, 0.2);
+        }
+
+        .delivery-detail-indent {
+            padding-left: 28px;
+            color: #4b5563;
+        }
+
+        .wattage-summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .wattage-pill {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 0.8em;
+            font-weight: 600;
+            color: #293E4C;
+            background: rgba(72, 140, 154, 0.12);
+            border: 1px solid rgba(72, 140, 154, 0.2);
+        }
+
+        .group-helper-text {
+            display: block;
+            margin-top: 6px;
+            color: #6b7280;
+            font-size: 0.78em;
+            font-weight: 500;
+        }
+
+        .modal-body form {
+            padding: 20px;
+        }
+
+        .modal-form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .modal-form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .modal-form-group label {
+            color: #293E4C;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .modal-form-group input,
+        .modal-form-group select {
+            border: 2px solid rgba(72, 140, 154, 0.14);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .modal-form-actions {
+            margin-top: 18px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .modal-form-actions button {
+            border: none;
+            border-radius: 10px;
+            padding: 9px 14px;
+            cursor: pointer;
+            font-weight: 600;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .modal-btn-secondary {
+            background: #e5e7eb;
+            color: #1f2937;
+        }
+
+        .modal-btn-primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+        }
+
+        @media (max-width: 768px) {
+            .modal-form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .bulk-actions-bar {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1157,6 +1968,15 @@ sort($unique_suppliers);
         }
     ?>
 
+    <?php if (!empty($_SESSION['messages'])): ?>
+    <div class="flash-messages">
+        <?php foreach ($_SESSION['messages'] as $message): ?>
+            <?php echo $message; ?>
+        <?php endforeach; ?>
+    </div>
+    <?php $_SESSION['messages'] = []; ?>
+    <?php endif; ?>
+
     <!-- Header Section -->
     <div class="delivery-tracker-header">
         <div class="header-content">
@@ -1168,7 +1988,7 @@ sort($unique_suppliers);
                 <div class="stat-item stat-item-total">
                     <p class="stat-number"><?php echo $total_deliveries; ?></p>
                     <p class="stat-label">Total Deliveries</p>
-            </div>
+                </div>
                 <?php foreach ($active_status_counts as $status => $count): ?>
                     <?php
                     // Determine status badge color class
@@ -1245,6 +2065,7 @@ sort($unique_suppliers);
                     <label class="filter-label" for="statusFilter">Status</label>
                     <select name="status" id="statusFilter" class="filter-select">
                         <option value="">All Statuses</option>
+                        <option value="Pending" <?php echo $status_filter == 'Pending' ? 'selected' : ''; ?>>Pending</option>
                         <option value="On Water" <?php echo $status_filter == 'On Water' ? 'selected' : ''; ?>>On Water</option>
                         <option value="Cleared Customs" <?php echo $status_filter == 'Cleared Customs' ? 'selected' : ''; ?>>Cleared Customs</option>
                         <option value="In Transit to Warehouse" <?php echo $status_filter == 'In Transit to Warehouse' ? 'selected' : ''; ?>>In Transit to Warehouse</option>
@@ -1277,8 +2098,19 @@ sort($unique_suppliers);
     </form>
 </div>
 
+    <?php if ($can_manage_deliveries && $grouped_deliveries): ?>
+    <div class="bulk-actions-bar">
+        <p class="bulk-actions-title">Admin Tools: <span id="selectedDeliveryCount">0 selected</span></p>
+        <div class="bulk-actions-buttons">
+            <button type="button" class="bulk-btn bulk-btn-edit" id="bulkEditBtn" onclick="openBulkEditModal()" disabled>Bulk Edit</button>
+            <button type="button" class="bulk-btn bulk-btn-receive" id="receiveToProjectBtn" onclick="openReceiveToProjectModal()" disabled>Receive to Project</button>
+            <button type="submit" form="deliveriesForm" name="delete_selected" class="bulk-btn bulk-btn-delete" id="bulkDeleteBtn" disabled onclick="return confirm('Delete selected deliveries? This cannot be undone.');">Bulk Delete</button>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Pagination Controls -->
-    <?php if ($deliveries): ?>
+    <?php if ($grouped_deliveries): ?>
     <div class="pagination-container">
         <div class="pagination-info">
             <span id="paginationInfo">Showing 0 of 0 deliveries</span>
@@ -1320,13 +2152,19 @@ sort($unique_suppliers);
                     <div id="columnChooserDropdown" class="column-chooser-dropdown" style="display:none;">
                         <div class="column-chooser-header">Select Columns to Show:</div>
                         <div class="column-chooser-options">
+                            <?php if ($can_manage_deliveries): ?>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="select-column" checked>
+                                Select
+                            </label>
+                            <?php endif; ?>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="supplier-column" checked>
                                 Supplier
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
-                                Wattage
+                                Wattage Summary
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="status-column" checked>
@@ -1360,145 +2198,276 @@ sort($unique_suppliers);
                                 <input type="checkbox" class="column-toggle" data-column="pod-column" checked>
                                 Proof of Delivery
                             </label>
+                            <?php if ($can_manage_deliveries): ?>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="actions-column" checked>
+                                Actions
+                            </label>
+                            <?php endif; ?>
                         </div>
                         <div class="column-chooser-footer">
-                            <button type="button" onclick="resetColumns()" class="btn-clear" style="width: 100%;">
-                                Reset to Default
-                            </button>
+                            <button type="button" onclick="resetColumns()" class="btn-clear" style="width: 100%;">Reset to Default</button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="table-responsive">
-            <?php if ($deliveries): ?>
-            <table id="deliveriesTable">
-                <thead>
-                    <tr>
-                        <th class="supplier-column">Supplier</th>
-                        <th class="wattage-column">Wattage</th>
-                        <th class="status-column">Status</th>
-                        <th class="quantity-column">Quantity</th>
-                        <th class="bol-column">BOL Number</th>
-                        <th class="anticipated-column">Anticipated Date</th>
-                        <th class="actual-column">Actual Date</th>
-                        <th class="pallets-column">Pallets</th>
-                        <th class="scheduled-column">Scheduled</th>
-                        <th class="pod-column">Proof of Delivery</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php
-                    $palletConn=getDBConnection();
-                    $stmtPallets=$palletConn->prepare("
-                        SELECT ip.id,ip.pallet_identifier,ip.wattage,ip.quantity
-                        FROM delivery_pallets dp
-                        JOIN inventory_pallets ip ON dp.inventory_pallet_id=ip.id
-                        WHERE dp.delivery_id = ?
-                        ORDER BY ip.id");
-                    ?>
-                <?php foreach ($deliveries as $delivery): ?>
-                        <?php
-                    $stmtPallets->bind_param("i", $delivery['id']);
-                        $stmtPallets->execute();
-                    $palletRows = $stmtPallets->get_result()->fetch_all(MYSQLI_ASSOC);
-                    $count = count($palletRows);
-                    $palletData = json_encode($palletRows, JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE);
-                    
-                    // Determine status class
-                    $status_class = 'status-badge ';
-                    if ($delivery['status_of_delivery'] === 'On Water') {
-                        $status_class .= 'status-transit';
-                    } elseif ($delivery['status_of_delivery'] === 'Cleared Customs') {
-                        $status_class .= 'status-pending';
-                    } elseif (strpos($delivery['status_of_delivery'], 'In Transit') !== false) {
-                        $status_class .= 'status-transit';
-                    } elseif (strpos($delivery['status_of_delivery'], 'Delivered') !== false) {
-                        $status_class .= 'status-delivered';
-                    } elseif ($delivery['status_of_delivery'] === 'Canceled') {
-                        $status_class .= 'status-canceled';
-                    }
-                    ?>
-                    <tr <?php if ($highlight_delivery_id == $delivery['id']) echo 'class="highlighted-delivery" id="highlighted-delivery"'; ?> data-delivery-id="<?php echo $delivery['id']; ?>">
-                            <td class="supplier-column"><?php echo htmlspecialchars($delivery['supplier']); ?></td>
-                        <td class="wattage-column"><?php echo htmlspecialchars($delivery['wattage']); ?>W</td>
-                        <td class="status-column">
-                            <span class="<?php echo $status_class; ?>">
-                                <?php echo htmlspecialchars($delivery['status_of_delivery']); ?>
-                            </span>
-                        </td>
-                            <td class="quantity-column"><?php echo htmlspecialchars($delivery['quantity']); ?></td>
-                            <td class="bol-column"><?php echo htmlspecialchars($delivery['bol_number']); ?></td>
-                        <td class="anticipated-column"><?php echo $delivery['anticipated_delivery_date'] ? date('m/d/Y', strtotime($delivery['anticipated_delivery_date'])) : '—'; ?></td>
-                        <td class="actual-column"><?php echo $delivery['actual_delivery_date'] ? date('m/d/Y', strtotime($delivery['actual_delivery_date'])) : '—'; ?></td>
-                            <td class="pallets-column">
-                            <?php if ($count): ?>
-                                <button type="button" class="action-btn action-btn-primary view-pallets-btn"
-                                        data-pallets='<?php echo htmlspecialchars($palletData, ENT_QUOTES); ?>'>
-                                    <i class="fas fa-boxes"></i>
-                                        View Pallets (<?php echo $count; ?>)
-                                    </button>
-                            <?php else: ?>
-                                —
+        <form id="deliveriesForm" method="post">
+            <div class="table-responsive">
+                <?php if ($grouped_deliveries): ?>
+                <table id="deliveriesTable">
+                    <thead>
+                        <tr>
+                            <?php if ($can_manage_deliveries): ?>
+                            <th class="select-column"><input type="checkbox" id="selectAllDeliveries"></th>
                             <?php endif; ?>
-                            </td>
-                            <td class="scheduled-column">
-                                <?php if ($delivery['scheduled'] == 1): ?>
-                                    <?php if (!empty($delivery['project_id']) && !empty($delivery['appointment_id'])): ?>
-                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>&appointment_id=<?php echo $delivery['appointment_id']; ?>&auto_edit=1" 
-                                       class="action-btn action-btn-success">
-                                        <i class="fas fa-calendar-check"></i>
-                                        View Appointment
-                                    </a>
-                                    <?php else: ?>
-                                    <span class="status-badge status-delivered">
-                                        <i class="fas fa-check-circle"></i>
-                                        Scheduled
-                                    </span>
-                                    <?php endif; ?>
-                                <?php else: ?>
-                                    <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
-                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" 
-                                       class="action-btn action-btn-warning">
-                                        <i class="fas fa-calendar-plus"></i>
-                                        Schedule
-                                    </a>
-                                    <?php else: ?>
-                                    —
-                                    <?php endif; ?>
-                                <?php endif; ?>
-                            </td>
-                            <td class="pod-column">
-                                <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
-                                <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="action-btn action-btn-primary">
-                                    <i class="fas fa-file-pdf"></i>
-                                    View POD
-                                </a>
-                                <?php else: ?>
-                                    <?php if (in_array($_SESSION['role'], ['global_admin', 'admin'])): ?>
-                                    <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="action-btn action-btn-outline">
-                                        <i class="fas fa-upload"></i>
-                                        Upload POD
-                                    </a>
-                                    <?php else: ?>
-                                    —
-                                    <?php endif; ?>
-                                <?php endif; ?>
-                            </td>
+                            <th class="supplier-column">Supplier</th>
+                            <th class="wattage-column">Wattage</th>
+                            <th class="status-column">Status</th>
+                            <th class="quantity-column">Quantity</th>
+                            <th class="bol-column">BOL Number</th>
+                            <th class="anticipated-column">Anticipated Date</th>
+                            <th class="actual-column">Actual Date</th>
+                            <th class="pallets-column">Pallets</th>
+                            <th class="scheduled-column">Scheduled</th>
+                            <th class="pod-column">Proof of Delivery</th>
+                            <?php if ($can_manage_deliveries): ?>
+                            <th class="actions-column">Actions</th>
+                            <?php endif; ?>
                         </tr>
-                    <?php endforeach; ?>
-                    <?php $stmtPallets->close(); $palletConn->close(); ?>
-                </tbody>
-            </table>
-            <?php else: ?>
-            <div class="empty-state">
-                <i class="fas fa-inbox"></i>
-                <h3>No Deliveries Found</h3>
-                <p>No deliveries match your current filter criteria. Try adjusting your filters.</p>
+                    </thead>
+                    <tbody>
+                        <?php
+                        $palletConn = getDBConnection();
+                        $stmtPallets = null;
+                        if ($palletConn && !$palletConn->connect_errno) {
+                            $stmtPallets = $palletConn->prepare("
+                                SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity
+                                FROM delivery_pallets dp
+                                JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+                                WHERE dp.delivery_id = ?
+                                ORDER BY ip.id
+                            ");
+                        }
+                        ?>
+                        <?php foreach ($grouped_deliveries as $groupIndex => $delivery): ?>
+                            <?php
+                            $groupedRows = $delivery['grouped_deliveries'];
+                            $deliveryIdsForPallets = $delivery['is_grouped'] ? $delivery['group_delivery_ids'] : [(int)$delivery['id']];
+                            $associatedPallets = [];
+                            if ($stmtPallets) {
+                                foreach ($deliveryIdsForPallets as $deliveryForPallet) {
+                                    $stmtPallets->bind_param("i", $deliveryForPallet);
+                                    $stmtPallets->execute();
+                                    $palletRes = $stmtPallets->get_result();
+                                    while ($pRow = $palletRes->fetch_assoc()) {
+                                        $associatedPallets[(int)$pRow['id']] = $pRow;
+                                    }
+                                }
+                            }
+                            $associatedPallets = array_values($associatedPallets);
+                            $palletCount = count($associatedPallets);
+                            $palletData = json_encode($associatedPallets, JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE);
+
+                            $statusLabel = $delivery['status_of_delivery'];
+                            $statusClass = 'status-badge ';
+                            if ($statusLabel === 'On Water' || strpos((string)$statusLabel, 'In Transit') !== false) {
+                                $statusClass .= 'status-transit';
+                            } elseif ($statusLabel === 'Cleared Customs' || $statusLabel === 'Mixed Status' || $statusLabel === 'Pending') {
+                                $statusClass .= 'status-pending';
+                            } elseif (strpos((string)$statusLabel, 'Delivered') !== false) {
+                                $statusClass .= 'status-delivered';
+                            } elseif ($statusLabel === 'Canceled') {
+                                $statusClass .= 'status-canceled';
+                            } else {
+                                $statusClass .= 'status-pending';
+                            }
+
+                            $rowClasses = ['delivery-main-row'];
+                            if ($delivery['is_grouped']) {
+                                $rowClasses[] = 'grouped-main-row';
+                            }
+                            if (!empty($delivery['contains_highlight'])) {
+                                $rowClasses[] = 'highlighted-delivery';
+                            }
+
+                            $hasPodInGroup = false;
+                            foreach ($groupedRows as $rowInGroup) {
+                                if (!empty($rowInGroup['proof_of_delivery']) || !empty($rowInGroup['has_pod_in_documents'])) {
+                                    $hasPodInGroup = true;
+                                    break;
+                                }
+                            }
+                            ?>
+                            <tr class="<?php echo implode(' ', $rowClasses); ?>" data-group-index="<?php echo $groupIndex; ?>" <?php if (!empty($delivery['contains_highlight'])) echo 'id="highlighted-delivery"'; ?> <?php if ($delivery['is_grouped']): ?>onclick="toggleDeliveryDetails(<?php echo $groupIndex; ?>, event)"<?php endif; ?>>
+                                <?php if ($can_manage_deliveries): ?>
+                                <td class="select-column">
+                                    <?php if ($delivery['is_grouped']): ?>
+                                        <?php foreach ($groupedRows as $groupRow): ?>
+                                            <input type="checkbox" name="selected_deliveries[]" class="group-hidden-checkbox grouped-checkbox-<?php echo $groupIndex; ?>" value="<?php echo (int)$groupRow['id']; ?>" data-status="<?php echo htmlspecialchars((string)($groupRow['status_of_delivery'] ?? '')); ?>" style="display:none;">
+                                        <?php endforeach; ?>
+                                        <input type="checkbox" class="group-master-checkbox" data-group-index="<?php echo $groupIndex; ?>">
+                                    <?php else: ?>
+                                        <input type="checkbox" name="selected_deliveries[]" value="<?php echo (int)$delivery['id']; ?>" data-status="<?php echo htmlspecialchars((string)($delivery['status_of_delivery'] ?? '')); ?>">
+                                    <?php endif; ?>
+                                </td>
+                                <?php endif; ?>
+                                <td class="supplier-column" title="<?php echo htmlspecialchars(implode(', ', $delivery['supplier_list'])); ?>">
+                                    <?php echo htmlspecialchars($delivery['supplier_display']); ?>
+                                    <?php if ($delivery['is_grouped']): ?>
+                                    <span class="group-helper-text"><?php echo (int)$delivery['group_count']; ?> lines grouped under this BOL</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="wattage-column">
+                                    <span class="wattage-pill"><?php echo htmlspecialchars((string)$delivery['display_wattage']); ?></span>
+                                    <?php if ($delivery['is_grouped']): ?>
+                                    <span class="group-helper-text">Click row to expand details</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="status-column">
+                                    <span class="<?php echo $statusClass; ?>"><?php echo htmlspecialchars((string)$statusLabel); ?></span>
+                                </td>
+                                <td class="quantity-column"><?php echo (int)($delivery['is_grouped'] ? $delivery['total_quantity'] : $delivery['quantity']); ?></td>
+                                <td class="bol-column"><?php echo htmlspecialchars((string)($delivery['bol_number'] ?: '—')); ?></td>
+                                <td class="anticipated-column"><?php echo htmlspecialchars((string)($delivery['is_grouped'] ? $delivery['anticipated_display'] : ($delivery['anticipated_delivery_date'] ? date('m/d/Y', strtotime($delivery['anticipated_delivery_date'])) : '—'))); ?></td>
+                                <td class="actual-column"><?php echo htmlspecialchars((string)($delivery['is_grouped'] ? $delivery['actual_display'] : ($delivery['actual_delivery_date'] ? date('m/d/Y', strtotime($delivery['actual_delivery_date'])) : '—'))); ?></td>
+                                <td class="pallets-column">
+                                    <?php if ($palletCount): ?>
+                                    <button type="button" class="action-btn action-btn-primary view-pallets-btn" data-pallets='<?php echo htmlspecialchars($palletData, ENT_QUOTES); ?>'>
+                                        <i class="fas fa-boxes"></i>
+                                        View Pallets (<?php echo $palletCount; ?>)
+                                    </button>
+                                    <?php else: ?>
+                                    —
+                                    <?php endif; ?>
+                                </td>
+                                <td class="scheduled-column">
+                                    <?php if ($delivery['is_grouped']): ?>
+                                    <span class="status-badge status-pending">See detail rows</span>
+                                    <?php else: ?>
+                                        <?php if ($delivery['scheduled'] == 1): ?>
+                                            <?php if (!empty($delivery['project_id']) && !empty($delivery['appointment_id'])): ?>
+                                            <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>&appointment_id=<?php echo $delivery['appointment_id']; ?>&auto_edit=1" class="action-btn action-btn-success">
+                                                <i class="fas fa-calendar-check"></i>
+                                                View Appointment
+                                            </a>
+                                            <?php else: ?>
+                                            <span class="status-badge status-delivered"><i class="fas fa-check-circle"></i> Scheduled</span>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
+                                            <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" class="action-btn action-btn-warning">
+                                                <i class="fas fa-calendar-plus"></i>
+                                                Schedule
+                                            </a>
+                                            <?php else: ?>
+                                            —
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="pod-column">
+                                    <?php if ($delivery['is_grouped']): ?>
+                                        <?php if ($hasPodInGroup): ?>
+                                        <span class="status-badge status-delivered">POD available in details</span>
+                                        <?php else: ?>
+                                        <span class="group-helper-text">Use detail rows for POD actions</span>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
+                                        <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="action-btn action-btn-primary">
+                                            <i class="fas fa-file-pdf"></i>
+                                            View POD
+                                        </a>
+                                        <?php else: ?>
+                                            <?php if (in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'], true)): ?>
+                                            <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="action-btn action-btn-outline">
+                                                <i class="fas fa-upload"></i>
+                                                Upload POD
+                                            </a>
+                                            <?php else: ?>
+                                            —
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </td>
+                                <?php if ($can_manage_deliveries): ?>
+                                <td class="actions-column">
+                                    <?php if ($delivery['is_grouped']): ?>
+                                    <button type="button" class="action-btn action-btn-outline" onclick="toggleDeliveryDetails(<?php echo $groupIndex; ?>, event)">Toggle Details</button>
+                                    <?php else: ?>
+                                    <a href="edit_delivery.php?delivery_id=<?php echo (int)$delivery['id']; ?>&project_id=<?php echo (int)$delivery['project_id']; ?>" class="action-btn action-btn-primary">Edit</a>
+                                    <?php endif; ?>
+                                </td>
+                                <?php endif; ?>
+                            </tr>
+
+                            <?php if ($delivery['is_grouped']): ?>
+                                <?php foreach ($groupedRows as $detailRow): ?>
+                                <tr class="delivery-detail-row" data-parent-group="<?php echo $groupIndex; ?>" style="display:none;">
+                                    <?php if ($can_manage_deliveries): ?>
+                                    <td class="select-column"></td>
+                                    <?php endif; ?>
+                                    <td class="supplier-column delivery-detail-indent">↳ <?php echo htmlspecialchars((string)$detailRow['supplier']); ?></td>
+                                    <td class="wattage-column">
+                                        <?php $detail_wattage = trim((string)($detailRow['wattage'] ?? '')); ?>
+                                        <span class="wattage-pill"><?php echo htmlspecialchars($detail_wattage !== '' ? $detail_wattage . 'W' : 'Unknown'); ?> x <?php echo (int)$detailRow['quantity']; ?></span>
+                                    </td>
+                                    <td class="status-column">
+                                        <span class="status-badge"><?php echo htmlspecialchars((string)$detailRow['status_of_delivery']); ?></span>
+                                    </td>
+                                    <td class="quantity-column"><?php echo (int)$detailRow['quantity']; ?></td>
+                                    <td class="bol-column">—</td>
+                                    <td class="anticipated-column"><?php echo $detailRow['anticipated_delivery_date'] ? date('m/d/Y', strtotime($detailRow['anticipated_delivery_date'])) : '—'; ?></td>
+                                    <td class="actual-column"><?php echo $detailRow['actual_delivery_date'] ? date('m/d/Y', strtotime($detailRow['actual_delivery_date'])) : '—'; ?></td>
+                                    <td class="pallets-column">—</td>
+                                    <td class="scheduled-column">
+                                        <?php if ($detailRow['scheduled'] == 1 && !empty($detailRow['project_id']) && !empty($detailRow['appointment_id'])): ?>
+                                        <a href="scheduling.php?project_id=<?php echo (int)$detailRow['project_id']; ?>&delivery_id=<?php echo (int)$detailRow['id']; ?>&appointment_id=<?php echo (int)$detailRow['appointment_id']; ?>&auto_edit=1" class="action-btn action-btn-success">View</a>
+                                        <?php elseif (!empty($detailRow['project_id']) && $detailRow['status_of_delivery'] === 'In Transit to Project'): ?>
+                                        <a href="scheduling.php?project_id=<?php echo (int)$detailRow['project_id']; ?>&delivery_id=<?php echo (int)$detailRow['id']; ?>" class="action-btn action-btn-warning">Schedule</a>
+                                        <?php else: ?>
+                                        —
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="pod-column">
+                                        <?php if (!empty($detailRow['proof_of_delivery']) || !empty($detailRow['has_pod_in_documents'])): ?>
+                                        <a href="view_pod?delivery_id=<?php echo (int)$detailRow['id']; ?>" target="_blank" class="action-btn action-btn-primary">View POD</a>
+                                        <?php elseif (in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'], true)): ?>
+                                        <a href="upload_pod?delivery_id=<?php echo (int)$detailRow['id']; ?>" class="action-btn action-btn-outline">Upload POD</a>
+                                        <?php else: ?>
+                                        —
+                                        <?php endif; ?>
+                                    </td>
+                                    <?php if ($can_manage_deliveries): ?>
+                                    <td class="actions-column">
+                                        <a href="edit_delivery.php?delivery_id=<?php echo (int)$detailRow['id']; ?>&project_id=<?php echo (int)($detailRow['project_id'] ?? 0); ?>" class="action-btn action-btn-primary">Edit</a>
+                                    </td>
+                                    <?php endif; ?>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                        <?php
+                        if ($stmtPallets) {
+                            $stmtPallets->close();
+                        }
+                        if ($palletConn && !$palletConn->connect_errno) {
+                            $palletConn->close();
+                        }
+                        ?>
+                    </tbody>
+                </table>
+                <?php else: ?>
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <h3>No Deliveries Found</h3>
+                    <p>No deliveries match your current filter criteria. Try adjusting your filters.</p>
+                </div>
+                <?php endif; ?>
             </div>
-            <?php endif; ?>
-        </div>
+        </form>
     </div>
 
     <!-- Pallets Modal -->
@@ -1513,13 +2482,103 @@ sort($unique_suppliers);
             </div>
         </div>
     </div>
+
+    <?php if ($can_manage_deliveries): ?>
+    <div id="bulkEditModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Bulk Edit Deliveries</h2>
+                <span class="modal-close" onclick="closeBulkEditModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form method="post" id="bulkEditForm">
+                    <div id="bulkEditSelectedInputs"></div>
+                    <div class="modal-form-grid">
+                        <div class="modal-form-group">
+                            <label for="bulk_manufacturer">Supplier</label>
+                            <input type="text" id="bulk_manufacturer" name="manufacturer" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_wattage">Wattage</label>
+                            <input type="text" id="bulk_wattage" name="wattage" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_quantity">Quantity</label>
+                            <input type="number" id="bulk_quantity" name="quantity" min="0" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_status">Status</label>
+                            <select id="bulk_status" name="status_of_delivery">
+                                <option value="">No Change</option>
+                                <option value="Pending">Pending</option>
+                                <option value="On Water">On Water</option>
+                                <option value="Cleared Customs">Cleared Customs</option>
+                                <option value="In Transit to Warehouse">In Transit to Warehouse</option>
+                                <option value="Delivered to Warehouse">Delivered to Warehouse</option>
+                                <option value="In Transit to Project">In Transit to Project</option>
+                                <option value="Delivered to Project">Delivered to Project</option>
+                                <option value="Canceled">Canceled</option>
+                            </select>
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_anticipated_date">Anticipated Date</label>
+                            <input type="date" id="bulk_anticipated_date" name="anticipated_delivery_date">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_actual_date">Actual Date</label>
+                            <input type="date" id="bulk_actual_date" name="actual_delivery_date">
+                        </div>
+                    </div>
+                    <div class="modal-form-actions">
+                        <button type="button" class="modal-btn-secondary" onclick="closeBulkEditModal()">Cancel</button>
+                        <button type="submit" class="modal-btn-primary" name="bulk_edit_submit">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="receiveToProjectModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Receive to Project</h2>
+                <span class="modal-close" onclick="closeReceiveToProjectModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form method="post" enctype="multipart/form-data" id="receiveToProjectForm">
+                    <div id="receiveSelectedInputs"></div>
+                    <div class="modal-form-grid">
+                        <div class="modal-form-group">
+                            <label for="receive_actual_date">Actual Delivery Date</label>
+                            <input type="date" id="receive_actual_date" name="actual_delivery_date" value="<?php echo date('Y-m-d'); ?>" required>
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="receive_pod_file">Proof of Delivery (optional)</label>
+                            <input type="file" id="receive_pod_file" name="proof_of_delivery" accept="image/*,.pdf">
+                        </div>
+                    </div>
+                    <div class="modal-form-actions">
+                        <button type="button" class="modal-btn-secondary" onclick="closeReceiveToProjectModal()">Cancel</button>
+                        <button type="submit" class="modal-btn-primary" name="receive_to_project_submit">Mark Delivered</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 </main>
 
 <script>
-// Global variables
-var associatedPalletsModal, palletListDiv;
+const canManageDeliveries = <?php echo $can_manage_deliveries ? 'true' : 'false'; ?>;
+let associatedPalletsModal;
+let palletListDiv;
+let bulkEditModal;
+let receiveToProjectModal;
+let currentPage = 1;
+let itemsPerPage = 25;
+let mainDeliveryRows = [];
+const expandedGroups = new Set();
 
-// Clear filters
 function clearFilters() {
     document.getElementById('filterForm').reset();
     const url = new URL(window.location.href);
@@ -1531,19 +2590,23 @@ function clearFilters() {
     window.location.href = url.toString();
 }
 
-// Column chooser
 function toggleColumnChooser() {
     const dropdown = document.getElementById('columnChooserDropdown');
     dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
 }
+
 function toggleColumn(col, show) {
-    document.querySelectorAll('.' + col).forEach(el => {
-        show ? el.classList.remove('column-hidden') : el.classList.add('column-hidden');
+    document.querySelectorAll('.' + col).forEach((el) => {
+        if (show) {
+            el.classList.remove('column-hidden');
+        } else {
+            el.classList.add('column-hidden');
+        }
     });
 }
 
 function resetColumns() {
-    document.querySelectorAll('.column-toggle').forEach(cb => {
+    document.querySelectorAll('.column-toggle').forEach((cb) => {
         cb.checked = true;
         toggleColumn(cb.dataset.column, true);
     });
@@ -1551,26 +2614,27 @@ function resetColumns() {
 }
 
 function saveColumnPreferences() {
-    var prefs = {};
-    document.querySelectorAll('.column-toggle').forEach(cb => {
+    const prefs = {};
+    document.querySelectorAll('.column-toggle').forEach((cb) => {
         prefs[cb.dataset.column] = cb.checked;
     });
     localStorage.setItem('viewProjectColumnPreferences', JSON.stringify(prefs));
 }
 
 function loadColumnPreferences() {
-    var p = localStorage.getItem('viewProjectColumnPreferences');
-    if (!p) return;
-    p = JSON.parse(p);
-    document.querySelectorAll('.column-toggle').forEach(cb => {
-        if (p.hasOwnProperty(cb.dataset.column)) {
-            cb.checked = p[cb.dataset.column];
+    let prefs = localStorage.getItem('viewProjectColumnPreferences');
+    if (!prefs) {
+        return;
+    }
+    prefs = JSON.parse(prefs);
+    document.querySelectorAll('.column-toggle').forEach((cb) => {
+        if (Object.prototype.hasOwnProperty.call(prefs, cb.dataset.column)) {
+            cb.checked = !!prefs[cb.dataset.column];
             toggleColumn(cb.dataset.column, cb.checked);
         }
     });
 }
 
-// Pallet modal
 function showPalletModal(btn) {
     if (!associatedPalletsModal) {
         associatedPalletsModal = document.getElementById('associatedPalletsModal');
@@ -1578,32 +2642,24 @@ function showPalletModal(btn) {
     }
     palletListDiv.innerHTML = '';
     const pallets = JSON.parse(btn.dataset.pallets || '[]');
-    
+
     if (!pallets.length) {
-        palletListDiv.innerHTML = '<p style="text-align: center; color: #6c757d;">No pallets found.</p>';
+        palletListDiv.innerHTML = '<p style="text-align:center;color:#6c757d;">No pallets found.</p>';
     } else {
         const tbl = document.createElement('table');
         tbl.className = 'pallet-table';
-        
         const head = tbl.createTHead().insertRow();
-        ['Identifier', 'Wattage', 'Quantity', 'Actions'].forEach(h => {
+        ['Identifier', 'Wattage', 'Quantity', 'Actions'].forEach((h) => {
             const th = document.createElement('th');
             th.textContent = h;
             head.appendChild(th);
         });
-        
         const body = tbl.createTBody();
-        pallets.forEach(p => {
+        pallets.forEach((p) => {
             const r = body.insertRow();
-            const id = r.insertCell();
-            id.textContent = p.pallet_identifier || `ID: ${p.id}`;
-            
-            const wat = r.insertCell();
-            wat.textContent = p.wattage ? `${p.wattage}W` : '—';
-            
-            const qty = r.insertCell();
-            qty.textContent = p.quantity || '—';
-            
+            r.insertCell().textContent = p.pallet_identifier || `ID: ${p.id}`;
+            r.insertCell().textContent = p.wattage ? `${p.wattage}W` : '—';
+            r.insertCell().textContent = p.quantity || '—';
             const act = r.insertCell();
             const a = document.createElement('a');
             a.href = `pallet_details.php?pallet_id=${p.id}`;
@@ -1611,156 +2667,315 @@ function showPalletModal(btn) {
             a.innerHTML = '<i class="fas fa-eye"></i> View Details';
             act.appendChild(a);
         });
-        
         palletListDiv.appendChild(tbl);
     }
-    
     associatedPalletsModal.style.display = 'block';
 }
 
 function closeAssociatedPalletModal() {
-    if (associatedPalletsModal) {
-        associatedPalletsModal.style.display = 'none';
+    if (!associatedPalletsModal) {
+        return;
+    }
+    associatedPalletsModal.style.display = 'none';
+    if (palletListDiv) {
         palletListDiv.innerHTML = '';
     }
 }
 
-// Pagination logic
-let currentPage = 1;
-let itemsPerPage = 25;
-let allDeliveryRows = [];
+function isInteractiveTarget(target) {
+    return !!target.closest('a,button,input,select,textarea,label');
+}
+
+function toggleDeliveryDetails(index, event) {
+    if (event && isInteractiveTarget(event.target)) {
+        return;
+    }
+    const key = String(index);
+    if (expandedGroups.has(key)) {
+        expandedGroups.delete(key);
+    } else {
+        expandedGroups.add(key);
+    }
+    applyGroupVisibility(key);
+}
+
+function applyGroupVisibility(groupKey) {
+    const mainRow = document.querySelector(`tr.delivery-main-row[data-group-index="${groupKey}"]`);
+    const shouldShow = !!(mainRow && mainRow.style.display !== 'none' && expandedGroups.has(String(groupKey)));
+    document.querySelectorAll(`tr.delivery-detail-row[data-parent-group="${groupKey}"]`).forEach((row) => {
+        row.style.display = shouldShow ? '' : 'none';
+    });
+}
 
 function initializePagination() {
     const table = document.getElementById('deliveriesTable');
-    if (!table) return;
-    
+    if (!table) {
+        return;
+    }
     const tbody = table.querySelector('tbody');
-    if (!tbody) return;
-    
-    allDeliveryRows = Array.from(tbody.querySelectorAll('tr'));
-    
+    if (!tbody) {
+        return;
+    }
+    mainDeliveryRows = Array.from(tbody.querySelectorAll('tr.delivery-main-row'));
     const itemsPerPageInput = document.getElementById('itemsPerPage');
     const prevButton = document.getElementById('prevPage');
     const nextButton = document.getElementById('nextPage');
-    
+
     if (itemsPerPageInput) {
-        itemsPerPageInput.addEventListener('change', function() {
-            itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 25), 500);
+        itemsPerPageInput.addEventListener('change', function onItemsPerPageChange() {
+            itemsPerPage = Math.min(Math.max(1, parseInt(this.value, 10) || 25), 500);
             this.value = itemsPerPage;
             currentPage = 1;
             updatePagination();
         });
     }
-    
     if (prevButton) {
-        prevButton.addEventListener('click', function() {
+        prevButton.addEventListener('click', () => {
             if (currentPage > 1) {
-                currentPage--;
+                currentPage -= 1;
                 updatePagination();
             }
         });
     }
-    
     if (nextButton) {
-        nextButton.addEventListener('click', function() {
-            const maxPages = Math.ceil(allDeliveryRows.length / itemsPerPage);
+        nextButton.addEventListener('click', () => {
+            const maxPages = Math.max(1, Math.ceil(mainDeliveryRows.length / itemsPerPage));
             if (currentPage < maxPages) {
-                currentPage++;
+                currentPage += 1;
                 updatePagination();
             }
         });
     }
-    
     updatePagination();
 }
 
 function updatePagination() {
-    const totalItems = allDeliveryRows.length;
-    const maxPages = Math.ceil(totalItems / itemsPerPage);
+    const totalItems = mainDeliveryRows.length;
+    const maxPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+    if (currentPage > maxPages) {
+        currentPage = maxPages;
+    }
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
-    
-    // Hide all rows
-    allDeliveryRows.forEach(row => {
+
+    mainDeliveryRows.forEach((row) => {
         row.style.display = 'none';
     });
-    
-    // Show only current page rows
-    allDeliveryRows.slice(startIndex, endIndex).forEach(row => {
-        row.style.display = '';
+    document.querySelectorAll('tr.delivery-detail-row').forEach((row) => {
+        row.style.display = 'none';
     });
-    
-    // Update pagination info
+
+    const visibleRows = mainDeliveryRows.slice(startIndex, endIndex);
+    visibleRows.forEach((row) => {
+        row.style.display = '';
+        const groupKey = row.dataset.groupIndex;
+        if (expandedGroups.has(String(groupKey))) {
+            applyGroupVisibility(groupKey);
+        }
+    });
+
     const paginationInfo = document.getElementById('paginationInfo');
     const pageInfo = document.getElementById('pageInfo');
     const prevButton = document.getElementById('prevPage');
     const nextButton = document.getElementById('nextPage');
-    
+
     if (paginationInfo) {
         const showing = Math.min(endIndex, totalItems);
         const displayStart = totalItems > 0 ? startIndex + 1 : 0;
         paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${totalItems} deliveries`;
     }
-    
     if (pageInfo) {
-        pageInfo.textContent = `Page ${Math.max(1, currentPage)} of ${Math.max(1, maxPages)}`;
+        pageInfo.textContent = `Page ${currentPage} of ${maxPages}`;
     }
-    
     if (prevButton) {
         prevButton.disabled = currentPage <= 1;
     }
-    
     if (nextButton) {
         nextButton.disabled = currentPage >= maxPages || totalItems === 0;
     }
 }
 
-// DOM ready
+function toggleGroupedCheckboxes(groupIndex, checked) {
+    document.querySelectorAll(`.grouped-checkbox-${groupIndex}`).forEach((hiddenCb) => {
+        hiddenCb.checked = checked;
+    });
+}
+
+function getSelectedDeliveryInputs() {
+    return Array.from(document.querySelectorAll('input[name="selected_deliveries[]"]:checked'));
+}
+
+function updateBulkActionButtons() {
+    if (!canManageDeliveries) {
+        return;
+    }
+    const selected = getSelectedDeliveryInputs();
+    const count = selected.length;
+    const countLabel = document.getElementById('selectedDeliveryCount');
+    if (countLabel) {
+        countLabel.textContent = `${count} selected`;
+    }
+
+    ['bulkEditBtn', 'receiveToProjectBtn', 'bulkDeleteBtn'].forEach((id) => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            btn.disabled = count === 0;
+        }
+    });
+
+    const allToggleCandidates = Array.from(
+        document.querySelectorAll('tbody tr.delivery-main-row input.group-master-checkbox, tbody tr.delivery-main-row input[name="selected_deliveries[]"]:not(.group-hidden-checkbox)')
+    );
+    const checkedMain = allToggleCandidates.filter((cb) => cb.checked).length;
+    const selectAll = document.getElementById('selectAllDeliveries');
+    if (selectAll) {
+        selectAll.checked = allToggleCandidates.length > 0 && checkedMain === allToggleCandidates.length;
+        selectAll.indeterminate = checkedMain > 0 && checkedMain < allToggleCandidates.length;
+    }
+}
+
+function populateSelectedInputs(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return 0;
+    }
+    container.innerHTML = '';
+    const selected = getSelectedDeliveryInputs();
+    selected.forEach((cb) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'selected_deliveries[]';
+        input.value = cb.value;
+        container.appendChild(input);
+    });
+    return selected.length;
+}
+
+function openBulkEditModal() {
+    if (!canManageDeliveries) {
+        return;
+    }
+    const selectedCount = populateSelectedInputs('bulkEditSelectedInputs');
+    if (selectedCount === 0) {
+        return;
+    }
+    bulkEditModal = document.getElementById('bulkEditModal');
+    if (bulkEditModal) {
+        bulkEditModal.style.display = 'block';
+    }
+}
+
+function closeBulkEditModal() {
+    bulkEditModal = document.getElementById('bulkEditModal');
+    if (bulkEditModal) {
+        bulkEditModal.style.display = 'none';
+    }
+}
+
+function openReceiveToProjectModal() {
+    if (!canManageDeliveries) {
+        return;
+    }
+    const selectedCount = populateSelectedInputs('receiveSelectedInputs');
+    if (selectedCount === 0) {
+        return;
+    }
+    receiveToProjectModal = document.getElementById('receiveToProjectModal');
+    if (receiveToProjectModal) {
+        receiveToProjectModal.style.display = 'block';
+    }
+}
+
+function closeReceiveToProjectModal() {
+    receiveToProjectModal = document.getElementById('receiveToProjectModal');
+    if (receiveToProjectModal) {
+        receiveToProjectModal.style.display = 'none';
+    }
+}
+
+function initializeBulkSelection() {
+    if (!canManageDeliveries) {
+        return;
+    }
+
+    document.querySelectorAll('.group-master-checkbox').forEach((groupCb) => {
+        groupCb.addEventListener('change', function onGroupChange() {
+            toggleGroupedCheckboxes(this.dataset.groupIndex, this.checked);
+            updateBulkActionButtons();
+        });
+    });
+
+    document.querySelectorAll('input[name="selected_deliveries[]"]').forEach((cb) => {
+        cb.addEventListener('change', updateBulkActionButtons);
+    });
+
+    const selectAll = document.getElementById('selectAllDeliveries');
+    if (selectAll) {
+        selectAll.addEventListener('change', function onSelectAll() {
+            document.querySelectorAll('tbody tr.delivery-main-row input.group-master-checkbox').forEach((groupCb) => {
+                groupCb.checked = this.checked;
+                toggleGroupedCheckboxes(groupCb.dataset.groupIndex, this.checked);
+            });
+            document.querySelectorAll('tbody tr.delivery-main-row input[name="selected_deliveries[]"]:not(.group-hidden-checkbox)').forEach((singleCb) => {
+                singleCb.checked = this.checked;
+            });
+            updateBulkActionButtons();
+        });
+    }
+
+    updateBulkActionButtons();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    associatedPalletsModal = document.getElementById('associatedPalletsModal');
+    palletListDiv = document.getElementById('palletList');
+    bulkEditModal = document.getElementById('bulkEditModal');
+    receiveToProjectModal = document.getElementById('receiveToProjectModal');
+
     loadColumnPreferences();
-    
-    // View pallets buttons
-    document.querySelectorAll('.view-pallets-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+
+    document.querySelectorAll('.view-pallets-btn').forEach((btn) => {
+        btn.addEventListener('click', function onPalletClick() {
             showPalletModal(this);
         });
     });
-    
-    // Close modal
+
     document.getElementById('closePalletModalBtn')?.addEventListener('click', closeAssociatedPalletModal);
-    
-    // Column toggles
-    document.querySelectorAll('.column-toggle').forEach(cb => {
+
+    document.querySelectorAll('.column-toggle').forEach((cb) => {
         cb.addEventListener('change', () => {
             toggleColumn(cb.dataset.column, cb.checked);
             saveColumnPreferences();
         });
     });
-    
-    // Close dropdowns on outside click
-    document.addEventListener('click', e => {
+
+    document.addEventListener('click', (e) => {
         const columnChooser = document.getElementById('columnChooserDropdown');
         if (columnChooser && !e.target.closest('.btn-columns-header') && !columnChooser.contains(e.target)) {
             columnChooser.style.display = 'none';
         }
     });
-    
-    // Close modal on outside click
-    window.addEventListener('click', e => {
+
+    window.addEventListener('click', (e) => {
         if (e.target === associatedPalletsModal) {
             closeAssociatedPalletModal();
         }
+        if (e.target === bulkEditModal) {
+            closeBulkEditModal();
+        }
+        if (e.target === receiveToProjectModal) {
+            closeReceiveToProjectModal();
+        }
     });
-    
-    // Highlight delivery if specified
+
     const hi = document.getElementById('highlighted-delivery');
     if (hi) {
         setTimeout(() => {
             hi.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 500);
     }
-    
-    // Initialize pagination
+
+    initializeBulkSelection();
     initializePagination();
 });
 </script>
