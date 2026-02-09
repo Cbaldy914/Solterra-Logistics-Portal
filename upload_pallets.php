@@ -100,7 +100,14 @@ $manufacturers = [];
 $manufacturer_where = "WHERE is_active = 1";
 $manufacturer_params = [];
 $manufacturer_types = '';
-if ($account_id) {
+$manufacturer_has_account_id = false;
+$accountColumnResult = $conn->query("SHOW COLUMNS FROM manufacturers LIKE 'account_id'");
+if ($accountColumnResult) {
+    $manufacturer_has_account_id = $accountColumnResult->num_rows > 0;
+    $accountColumnResult->close();
+}
+
+if ($account_id && $manufacturer_has_account_id) {
     $manufacturer_where .= " AND account_id = ?";
     $manufacturer_types = 'i';
     $manufacturer_params[] = $account_id;
