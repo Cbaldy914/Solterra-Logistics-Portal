@@ -895,7 +895,7 @@ function buildDistributionSubrowMarkup(row) {
     }).join('');
 
     return `
-        <div style="padding:8px 10px;background:#f8fbfc;border-top:1px solid #e6edf1;border-bottom:1px solid #e6edf1">
+        <div style="padding:8px 10px;background:#eef7fb;border-top:1px solid #d7eaf3;border-bottom:1px solid #d7eaf3;border-left:3px solid #9fd0e0">
             <div style="padding:7px 8px;background:#f2f7f9;border:1px solid #e1eaef;border-radius:6px;font-size:0.78em;color:#4f5b65;margin-bottom:8px">
                 <strong style="color:#293E4C">${escapeHtml(row.manufacturer)}</strong> • ${escapeHtml(row.assignment_scope)} • Wattage breakout
             </div>
@@ -1017,13 +1017,20 @@ function openChartModal(type) {
                     ? `${Number(row.domestic_content_pct).toFixed(1)}%`
                     : 'Not tracked';
                 const wattageSummary = renderWattageSummaryCell(row);
+                const manufacturerUrl = `manufacturer_details?manufacturer=${encodeURIComponent(row.manufacturer)}`;
+                const modulesUrl = 'modules.php';
 
                 return `
                     <tr class="distribution-row" data-row-index="${idx}" onclick="selectDistributionRow(${idx})" style="cursor:pointer;transition:background 0.15s ease">
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;font-weight:600;color:#293E4C;font-size:0.82em;word-break:break-word">${escapeHtml(row.manufacturer)}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;font-weight:600;color:#293E4C;font-size:0.82em;word-break:break-word">
+                            <a href="${manufacturerUrl}" onclick="event.stopPropagation()" style="color:#2f6172;text-decoration:none;border-bottom:1px dotted #9bbecb">${escapeHtml(row.manufacturer)}</a>
+                        </td>
                         <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center"><span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:0.68em;font-weight:600;${scopeStyle}">${scope}</span></td>
                         <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${moduleCount}</td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${batchCount}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">
+                            <div>${batchCount}</div>
+                            <a href="${modulesUrl}" onclick="event.stopPropagation()" style="font-size:0.7em;color:#488C9A;text-decoration:none">View</a>
+                        </td>
                         <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${projectCount}</td>
                         <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${wattageSummary}</td>
                         <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${domesticPct}</td>

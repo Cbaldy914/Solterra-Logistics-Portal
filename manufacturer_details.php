@@ -162,31 +162,53 @@ $stmt_proj->close();
 
 // Get module batches for this manufacturer
 $module_batches = [];
+$modules_has_batch_name = false;
+$batch_name_col_result = $conn->query("SHOW COLUMNS FROM modules LIKE 'batch_name'");
+if ($batch_name_col_result && $batch_name_col_result->num_rows > 0) {
+    $modules_has_batch_name = true;
+}
+if ($batch_name_col_result instanceof mysqli_result) {
+    $batch_name_col_result->free();
+}
+
+$batch_name_select = $modules_has_batch_name ? "m.batch_name," : "NULL AS batch_name,";
+$batch_name_group = $modules_has_batch_name ? ", m.batch_name" : "";
+$batch_access_where = "";
+$batch_access_types = "";
+$batch_access_params = [];
+
+if ($role !== 'global_admin') {
+    // Scope module batches by account access so unassigned batches are included,
+    // without creating duplicate rows from joins.
+    $batch_access_where = " AND EXISTS (SELECT 1 FROM customer_account_users cau WHERE cau.user_id = ? AND cau.account_id = m.account_id)";
+    $batch_access_types = "i";
+    $batch_access_params[] = $user_id;
+}
+
 $batch_sql = "
     SELECT
         m.id as module_id,
+        $batch_name_select
         m.vendor_name,
         m.cost_per_watt,
         p.project_name,
         p.id as project_id,
-        umi.wattage,
+        GROUP_CONCAT(DISTINCT umi.wattage ORDER BY umi.wattage DESC SEPARATOR ', ') as wattages,
         SUM(umi.quantity) as total_quantity,
         SUM(umi.wattage * umi.quantity) as total_watts
     FROM modules m
     JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
-    JOIN projects p ON m.project_id = p.id
+    LEFT JOIN projects p ON m.project_id = p.id
     WHERE m.vendor_name = ?
-      AND p.id IN ($project_access_sql)
-    GROUP BY m.id, m.vendor_name, m.cost_per_watt, p.project_name, p.id, umi.wattage
-    ORDER BY p.project_name, umi.wattage DESC
+    $batch_access_where
+    GROUP BY m.id $batch_name_group, m.vendor_name, m.cost_per_watt, p.project_name, p.id
+    ORDER BY (p.project_name IS NULL), p.project_name, m.id DESC
 ";
 
 $stmt_batch = $conn->prepare($batch_sql);
-if (!empty($access_types)) {
-    $stmt_batch->bind_param("s" . $access_types, $manufacturer, ...$access_params);
-} else {
-    $stmt_batch->bind_param("s", $manufacturer);
-}
+$stmt_batch_types = "s" . $batch_access_types;
+$stmt_batch_params = array_merge([$manufacturer], $batch_access_params);
+$stmt_batch->bind_param($stmt_batch_types, ...$stmt_batch_params);
 $stmt_batch->execute();
 $batch_result = $stmt_batch->get_result();
 
@@ -648,6 +670,81 @@ $conn->close();
         .cost-highlight {
             font-weight: 600;
             color: #488C9A;
+        }
+
+        /* Module batches table (styled to match modules.php) */
+        .module-batches-table {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+        .module-batches-table table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+        }
+        .module-batches-table thead {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+        }
+        .module-batches-table th {
+            padding: 14px 16px;
+            text-align: center;
+            font-weight: 600;
+            color: #fff;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            border-bottom: none;
+        }
+        .module-batches-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            text-align: center;
+            vertical-align: middle;
+            font-size: 0.88rem;
+            color: #293E4C;
+        }
+        .module-batches-table tbody tr {
+            transition: background-color 0.2s ease;
+        }
+        .module-batches-table tbody tr:hover {
+            background: #f0f7f8;
+        }
+        .module-batches-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .module-batches-table .clickable-row {
+            cursor: pointer;
+        }
+        .module-batches-table .batch-name {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #293E4C;
+            line-height: 1.25;
+        }
+        .module-batches-table .batch-vendor {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-top: 2px;
+            line-height: 1.2;
+        }
+        .module-batches-table .batch-meta {
+            font-size: 0.74rem;
+            color: #7a8790;
+            margin-top: 3px;
+            line-height: 1.2;
+        }
+        .module-batches-table .table-link {
+            color: #2f6172;
+            text-decoration: none;
+            font-weight: 600;
+            border-bottom: 1px dotted rgba(47, 97, 114, 0.35);
+        }
+        .module-batches-table .table-link:hover {
+            color: #488C9A;
+            border-bottom-color: rgba(72, 140, 154, 0.5);
         }
 
         /* Modal Styles */
@@ -1167,32 +1264,67 @@ $conn->close();
     <?php if (!empty($module_batches)): ?>
     <div class="section-card">
         <h2><i class="fas fa-boxes"></i> Module Batches</h2>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Project</th>
-                    <th>Wattage</th>
-                    <th>Quantity</th>
-                    <th>Total MW</th>
-                    <th>Cost/Watt</th>
-                    <th>Total Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($module_batches as $batch):
-                    $batch_value = $batch['cost_per_watt'] ? $batch['cost_per_watt'] * $batch['total_watts'] : 0;
-                ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($batch['project_name']); ?></td>
-                    <td><?php echo number_format($batch['wattage']); ?>W</td>
-                    <td><?php echo number_format($batch['total_quantity']); ?></td>
-                    <td><?php echo number_format($batch['total_watts'] / 1000000, 3); ?> MW</td>
-                    <td><?php echo $batch['cost_per_watt'] ? '$' . number_format($batch['cost_per_watt'], 4) : 'N/A'; ?></td>
-                    <td class="cost-highlight">$<?php echo number_format($batch_value, 2); ?></td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
+        <div class="module-batches-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Batch</th>
+                        <th>Project</th>
+                        <th>Wattage</th>
+                        <th>Quantity</th>
+                        <th>Total MW</th>
+                        <th>Cost/Watt</th>
+                        <th>Total Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($module_batches as $batch):
+                        $batch_value = $batch['cost_per_watt'] ? $batch['cost_per_watt'] * $batch['total_watts'] : 0;
+                        $batch_label = !empty($batch['batch_name']) ? $batch['batch_name'] : ('Batch #' . (int)$batch['module_id']);
+                        $wattages_raw = trim((string)($batch['wattages'] ?? ''));
+                        $wattages_parts = array_values(array_filter(array_map('trim', explode(',', $wattages_raw))));
+                        $is_multi_wattage = count($wattages_parts) > 1;
+                        $wattage_display = '—';
+                        if (!empty($wattages_parts)) {
+                            if ($is_multi_wattage) {
+                                $wattage_display = 'Mixed';
+                            } else {
+                                $wattage_display = $wattages_parts[0] . 'W';
+                            }
+                        }
+                    ?>
+                    <tr class="clickable-row" onclick="window.location.href='module_overview.php?batch_id=<?php echo (int)$batch['module_id']; ?>'">
+                        <td>
+                            <div class="batch-name"><?php echo htmlspecialchars($batch_label); ?></div>
+                            <div class="batch-vendor"><?php echo htmlspecialchars($batch['vendor_name']); ?></div>
+                            <div class="batch-meta">#<?php echo (int)$batch['module_id']; ?></div>
+                        </td>
+                        <td>
+                            <?php if (!empty($batch['project_id']) && !empty($batch['project_name'])): ?>
+                                <a class="table-link" href="project_overview?project_id=<?php echo (int)$batch['project_id']; ?>" onclick="event.stopPropagation();">
+                                    <?php echo htmlspecialchars($batch['project_name']); ?>
+                                </a>
+                            <?php else: ?>
+                                <span style="display:inline-block;padding:3px 8px;border-radius:999px;background:#fff4e5;color:#8a5a00;font-size:0.72em;font-weight:600;">Unassigned</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <div style="font-weight:600;"><?php echo htmlspecialchars($wattage_display); ?></div>
+                            <?php if ($is_multi_wattage): ?>
+                                <div style="font-size:0.75em;color:#6c757d;margin-top:2px;">
+                                    <?php echo htmlspecialchars(implode('W, ', $wattages_parts)) . 'W'; ?>
+                                </div>
+                            <?php endif; ?>
+                        </td>
+                        <td><?php echo number_format($batch['total_quantity']); ?></td>
+                        <td><?php echo number_format($batch['total_watts'] / 1000000, 3); ?> MW</td>
+                        <td><?php echo $batch['cost_per_watt'] ? '$' . number_format($batch['cost_per_watt'], 4) : 'N/A'; ?></td>
+                        <td class="cost-highlight">$<?php echo number_format($batch_value, 2); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
     <?php endif; ?>
 </main>
