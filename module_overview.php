@@ -2107,8 +2107,8 @@ $conn->close();
                                 <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content <span style="color: #9aa0a6;">(<?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% tracked)</span></div>
                             </div>
                             <?php if ($isAdmin): ?>
-                            <a href="edit_project.php?id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
-                                <span>&#9998;</span> Edit
+                            <a href="edit_project.php?project_id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
+                                <span>&#9998;</span> Edit Project
                             </a>
                             <?php endif; ?>
                         </div>
