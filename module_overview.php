@@ -613,7 +613,7 @@ try {
         $placeholders_batches = implode(',', array_fill(0, count($batch_ids), '?'));
         $types_batches = str_repeat('i', count($batch_ids));
         
-        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) AND wattage > 0 AND quantity > 0 ORDER BY unassigned_module_id, wattage ASC");
+        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity, domestic_content_pct FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) AND wattage > 0 AND quantity > 0 ORDER BY unassigned_module_id, wattage ASC");
         if (!$stmtItems) throw new Exception("Prepare items fetch failed: " . $conn->error);
         $stmtItems->bind_param($types_batches, ...$batch_ids);
         $stmtItems->execute();
@@ -635,7 +635,10 @@ try {
                     'remaining_quantity' => 0,
                     'pallet_distribution' => [],
                     'modules_per_pallet' => null,
-                    'batch_id' => $batchId
+                    'batch_id' => $batchId,
+                    'domestic_weighted_watts' => 0.0,
+                    'domestic_tracked_watts' => 0.0,
+                    'domestic_content_pct' => null
                 ];
             }
             $batch_wattage_summary[$batchId][$wattage]['ordered_quantity'] += (int)$item['quantity'];
@@ -648,10 +651,23 @@ try {
                     'remaining_quantity' => 0,
                     'pallet_distribution' => [],
                     'modules_per_pallet' => null,
-                    'batch_id' => $batchId
+                    'batch_id' => $batchId,
+                    'domestic_weighted_watts' => 0.0,
+                    'domestic_tracked_watts' => 0.0,
+                    'domestic_content_pct' => null
                 ];
             }
             $wattage_summary[$wattage]['ordered_quantity'] += (int)$item['quantity'];
+
+            $domesticPctRaw = $item['domestic_content_pct'] ?? null;
+            if ($domesticPctRaw !== null && $domesticPctRaw !== '') {
+                $domesticPct = (float)$domesticPctRaw;
+                $rowWatts = (float)$wattage * (int)$item['quantity'];
+                $batch_wattage_summary[$batchId][$wattage]['domestic_weighted_watts'] += $rowWatts * $domesticPct;
+                $batch_wattage_summary[$batchId][$wattage]['domestic_tracked_watts'] += $rowWatts;
+                $wattage_summary[$wattage]['domestic_weighted_watts'] += $rowWatts * $domesticPct;
+                $wattage_summary[$wattage]['domestic_tracked_watts'] += $rowWatts;
+            }
             // Track UMI details for replacement adjustments later
             $item_quantity_by_id[$item['id']] = (int)$item['quantity'];
             $item_wattage_by_id[$item['id']] = (int)$item['wattage'];
@@ -964,6 +980,11 @@ try {
     foreach ($batch_wattage_summary as $bId => &$byW) {
         foreach ($byW as $w => &$data) {
             $data['remaining_quantity'] = (int)$data['ordered_quantity'] - (int)$data['palletized_quantity'];
+            if (!empty($data['domestic_tracked_watts'])) {
+                $data['domestic_content_pct'] = $data['domestic_weighted_watts'] / $data['domestic_tracked_watts'];
+            } else {
+                $data['domestic_content_pct'] = null;
+            }
         }
         unset($data);
     }
@@ -971,6 +992,11 @@ try {
     // Maintain legacy aggregate remaining as well
     foreach ($wattage_summary as $wattage => &$data) {
         $data['remaining_quantity'] = (int)$data['ordered_quantity'] - (int)$data['palletized_quantity'];
+        if (!empty($data['domestic_tracked_watts'])) {
+            $data['domestic_content_pct'] = $data['domestic_weighted_watts'] / $data['domestic_tracked_watts'];
+        } else {
+            $data['domestic_content_pct'] = null;
+        }
     }
     unset($data);
 
@@ -1045,13 +1071,30 @@ try {
         'cost_per_watt' => null,
         'contract_value' => 0,
         'milestones_triggered_percent' => 0,
-        'pallets_created' => 0
+        'pallets_created' => 0,
+        'domestic_content_pct' => null,
+        'domestic_coverage_pct' => 0
     ];
 
     // Calculate total MW and modules from wattage_summary
+    $total_watts_for_domestic = 0.0;
+    $tracked_watts_for_domestic = 0.0;
+    $domestic_weighted_watts = 0.0;
     foreach ($wattage_summary as $wattage => $data) {
-        $quick_stats['total_mw'] += ($wattage * $data['ordered_quantity']) / 1000000;
+        $orderedWatts = (float)$wattage * (float)$data['ordered_quantity'];
+        $quick_stats['total_mw'] += $orderedWatts / 1000000;
         $quick_stats['total_modules'] += $data['ordered_quantity'];
+        $total_watts_for_domestic += $orderedWatts;
+        if (isset($data['domestic_content_pct']) && $data['domestic_content_pct'] !== null) {
+            $tracked_watts_for_domestic += $orderedWatts;
+            $domestic_weighted_watts += $orderedWatts * (float)$data['domestic_content_pct'];
+        }
+    }
+    if ($tracked_watts_for_domestic > 0) {
+        $quick_stats['domestic_content_pct'] = $domestic_weighted_watts / $tracked_watts_for_domestic;
+    }
+    if ($total_watts_for_domestic > 0) {
+        $quick_stats['domestic_coverage_pct'] = ($tracked_watts_for_domestic / $total_watts_for_domestic) * 100;
     }
 
     // Get cost_per_watt from first batch (or aggregate for project view)
@@ -2059,6 +2102,11 @@ $conn->close();
                                 <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
                                 <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
                             </div>
+                            <div style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef;">
+                                <div style="font-size: 1.4rem; font-weight: 700; color: #6f42c1;"><?php echo $quick_stats['domestic_content_pct'] !== null ? number_format($quick_stats['domestic_content_pct'], 1) . '%' : 'N/A'; ?></div>
+                                <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content</div>
+                                <div style="font-size: 0.72rem; color: #9aa0a6;"><?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% MW tracked</div>
+                            </div>
                             <?php if ($isAdmin): ?>
                             <a href="edit_project.php?id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
                                 <span>&#9998;</span> Edit
@@ -2085,6 +2133,11 @@ $conn->close();
                         <div onclick="showContractValueModal()" style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
                             <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
                             <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
+                        </div>
+                        <div style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef;">
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #6f42c1;"><?php echo $quick_stats['domestic_content_pct'] !== null ? number_format($quick_stats['domestic_content_pct'], 1) . '%' : 'N/A'; ?></div>
+                            <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content</div>
+                            <div style="font-size: 0.72rem; color: #9aa0a6;"><?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% MW tracked</div>
                         </div>
                         <?php if ($isAdmin): ?>
                         <a href="<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
@@ -2213,6 +2266,7 @@ $conn->close();
                                         <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
                                         <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                                         <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
+                                        <p><strong>Domestic:</strong> <?php echo $data['domestic_content_pct'] !== null ? number_format((float)$data['domestic_content_pct'], 1) . '%' : 'Not tracked'; ?></p>
                                         <?php $damP = $damaged_by_batch_wattage[$bId][$wattage]['pallets'] ?? 0; $damM = $damaged_by_batch_wattage[$bId][$wattage]['modules'] ?? 0; if ($damM > 0): ?>
                                             <p style="color:#b45309; font-size:0.92em;"><strong>Includes Damaged:</strong> <?php echo (int)$damP; ?> pallet<?php echo $damP===1?'':'s'; ?> (<?php echo number_format($damM); ?> modules)</p>
                                         <?php endif; ?>
@@ -2279,6 +2333,7 @@ $conn->close();
                             <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
                             <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                             <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
+                            <p><strong>Domestic:</strong> <?php echo $data['domestic_content_pct'] !== null ? number_format((float)$data['domestic_content_pct'], 1) . '%' : 'Not tracked'; ?></p>
                             <?php $damP2 = $damaged_by_wattage[$wattage]['pallets'] ?? 0; $damM2 = $damaged_by_wattage[$wattage]['modules'] ?? 0; if ($damM2 > 0): ?>
                                 <p style="color:#b45309; font-size:0.92em;"><strong>Includes Damaged:</strong> <?php echo (int)$damP2; ?> pallet<?php echo $damP2===1?'':'s'; ?> (<?php echo number_format($damM2); ?> modules)</p>
                             <?php endif; ?>
@@ -2857,6 +2912,7 @@ $conn->close();
                     <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e9ecef;">Wattage</th>
                     <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Modules</th>
                     <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">MW</th>
+                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Domestic %</th>
                     <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e9ecef;">Palletized</th>
                 </tr>
             </thead>
@@ -2866,6 +2922,7 @@ $conn->close();
                     <td style="padding: 10px; border-bottom: 1px solid #e9ecef;"><?php echo $wattage; ?>W</td>
                     <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format($data['ordered_quantity']); ?></td>
                     <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format(($wattage * $data['ordered_quantity']) / 1000000, 3); ?></td>
+                    <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo $data['domestic_content_pct'] !== null ? number_format((float)$data['domestic_content_pct'], 1) . '%' : '—'; ?></td>
                     <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e9ecef;"><?php echo number_format($data['palletized_quantity']); ?></td>
                 </tr>
                 <?php endforeach; ?>

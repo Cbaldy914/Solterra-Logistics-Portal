@@ -119,7 +119,7 @@ if ($stmtMfgs = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_acti
 
 // Load current wattages with pallet counts
 $current_wattages = [];
-if ($stmtW = $conn->prepare('SELECT id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC')) {
+if ($stmtW = $conn->prepare('SELECT id, wattage, quantity, domestic_content_pct FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC')) {
     $stmtW->bind_param('i', $batch_id);
     $stmtW->execute();
     $r = $stmtW->get_result();
@@ -277,6 +277,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $posted_watts = $_POST['wattages'] ?? [];
     $posted_qtys = $_POST['quantities'] ?? [];
+    $posted_domestic_pcts = $_POST['domestic_content_pcts'] ?? [];
+    $track_domestic_content = !empty($_POST['track_domestic_content']);
     $posted_milestones = $_POST['milestones'] ?? [];
 
     if (milestone_requires_po_execution_date($posted_milestones) && empty($po_execution_date)) {
@@ -305,7 +307,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($initial_location === '') { $initial_location = 'Unassigned'; }
 
     // Validate wattages
-    $new_pairs = [];
+    $new_rows = [];
     if (!is_array($posted_watts) || !is_array($posted_qtys) || count($posted_watts) !== count($posted_qtys)) {
         $errors[] = 'Wattage and quantity arrays must match.';
     } else {
@@ -314,9 +316,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $q = (int)trim((string)$posted_qtys[$i]);
             if ($w <= 0 && $q <= 0) { continue; }
             if ($w <= 0 || $q <= 0) { $errors[] = 'All wattages and quantities must be positive integers.'; break; }
-            $new_pairs[] = [$w,$q];
+            $domesticContentPct = null;
+            if ($track_domestic_content) {
+                $pctRaw = trim((string)($posted_domestic_pcts[$i] ?? ''));
+                if ($pctRaw === '' || !is_numeric($pctRaw)) {
+                    $errors[] = 'Domestic Content % is required and must be numeric when tracking is enabled.';
+                    break;
+                }
+                $domesticContentPct = (float)$pctRaw;
+                if ($domesticContentPct < 0 || $domesticContentPct > 100) {
+                    $errors[] = 'Domestic Content % must be between 0 and 100.';
+                    break;
+                }
+            }
+            $new_rows[] = ['wattage' => $w, 'quantity' => $q, 'domestic_content_pct' => $domesticContentPct];
         }
-        if (empty($errors) && empty($new_pairs)) { $errors[] = 'At least one wattage and quantity is required.'; }
+        if (empty($errors) && empty($new_rows)) { $errors[] = 'At least one wattage and quantity is required.'; }
     }
 
     if (empty($errors)) {
@@ -349,16 +364,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Apply new pairs
             $new_totals = [];
             $posted_watts_set = [];
-            foreach ($new_pairs as [$w,$q]) {
+            foreach ($new_rows as $newRow) {
+                $w = (int)$newRow['wattage'];
+                $q = (int)$newRow['quantity'];
+                $domesticContentPct = $track_domestic_content ? $newRow['domestic_content_pct'] : null;
                 $posted_watts_set[$w] = true;
                 if (isset($existing_items[$w])) {
-                    $stmtE = $conn->prepare('UPDATE unassigned_module_items SET quantity = ? WHERE id = ?');
-                    $stmtE->bind_param('ii', $q, $existing_items[$w]['id']);
+                    if ($track_domestic_content) {
+                        $stmtE = $conn->prepare('UPDATE unassigned_module_items SET quantity = ?, domestic_content_pct = ? WHERE id = ?');
+                        $stmtE->bind_param('idi', $q, $domesticContentPct, $existing_items[$w]['id']);
+                    } else {
+                        $stmtE = $conn->prepare('UPDATE unassigned_module_items SET quantity = ?, domestic_content_pct = NULL WHERE id = ?');
+                        $stmtE->bind_param('ii', $q, $existing_items[$w]['id']);
+                    }
                     if (!$stmtE->execute()) { throw new Exception('Failed updating item: '.$stmtE->error); }
                     $stmtE->close();
                 } else {
-                    $stmtI = $conn->prepare('INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)');
-                    $stmtI->bind_param('iii', $batch_id, $w, $q);
+                    if ($track_domestic_content) {
+                        $stmtI = $conn->prepare('INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity, domestic_content_pct) VALUES (?, ?, ?, ?)');
+                        $stmtI->bind_param('iiid', $batch_id, $w, $q, $domesticContentPct);
+                    } else {
+                        $stmtI = $conn->prepare('INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)');
+                        $stmtI->bind_param('iii', $batch_id, $w, $q);
+                    }
                     if (!$stmtI->execute()) { throw new Exception('Failed inserting item: '.$stmtI->error); }
                     $stmtI->close();
                 }
@@ -540,6 +568,7 @@ foreach ($current_wattages as $w) {
         $existingWattages[] = [
             'wattage'=>(int)$w['wattage'],
             'quantity'=>(int)$w['quantity'],
+            'domestic_content_pct'=>isset($w['domestic_content_pct']) && $w['domestic_content_pct'] !== null ? (float)$w['domestic_content_pct'] : null,
             'pallet_count'=>(int)($w['pallet_count'] ?? 0),
             'pallet_modules'=>(int)($w['pallet_modules'] ?? 0)
         ];

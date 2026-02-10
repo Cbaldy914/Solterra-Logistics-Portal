@@ -21238,6 +21238,7 @@ CREATE TABLE `unassigned_module_items` (
   `unassigned_module_id` int(11) NOT NULL COMMENT 'FK to unassigned_modules.id',
   `wattage` int(11) NOT NULL,
   `quantity` int(11) NOT NULL,
+  `domestic_content_pct` decimal(5,2) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `last_updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;

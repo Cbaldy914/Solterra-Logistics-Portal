@@ -200,6 +200,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $wattages = $_POST['wattages'];
         $quantities = $_POST['quantities'];
+        $domestic_content_pcts = $_POST['domestic_content_pcts'] ?? [];
+        $track_domestic_content = !empty($_POST['track_domestic_content']);
         
         if (count($wattages) !== count($quantities)) {
             $errors[] = 'Wattage and quantity arrays must match';
@@ -226,6 +228,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors[] = 'All wattages and quantities must be positive integers';
                     break;
                 }
+
+                if ($track_domestic_content) {
+                    $pctRaw = trim((string)($domestic_content_pcts[$i] ?? ''));
+                    if ($pctRaw === '' || !is_numeric($pctRaw)) {
+                        $errors[] = 'Domestic Content % is required and must be numeric when tracking is enabled.';
+                        break;
+                    }
+                    $pctVal = (float)$pctRaw;
+                    if ($pctVal < 0 || $pctVal > 100) {
+                        $errors[] = 'Domestic Content % must be between 0 and 100.';
+                        break;
+                    }
+                }
             }
         }
     }
@@ -242,13 +257,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     pallet_double_stacked_height_mm, pallet_total_weight_kg, stacking_in_warehouse,
                     stacking_during_transport, forklift_truck_long_side_mm, forklift_truck_short_side_mm,
                     pallet_jack_long_side_mm, pallet_jack_short_side_mm, module_notes, module_docs_url, cost_per_watt, po_execution_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                ) VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             ");
             // Determine account for insert
             $insert_account_id = 0;
             if (!empty($project['account_id'])) {
                 $insert_account_id = (int)$project['account_id'];
-            } elseif ($role === 'admin' && $account_id_for_admin) {
+            } elseif (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin) {
                 $insert_account_id = (int)$account_id_for_admin;
             } elseif ($role === 'global_admin') {
                 $insert_account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : 0;
@@ -284,7 +299,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             
             // Insert wattage items
-            $stmtWattages = $conn->prepare("
+            $stmtWattagesWithDomestic = $conn->prepare("
+                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity, domestic_content_pct) 
+                VALUES (?, ?, ?, ?)
+            ");
+            $stmtWattagesNoDomestic = $conn->prepare("
                 INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) 
                 VALUES (?, ?, ?)
             ");
@@ -292,15 +311,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             for ($i = 0; $i < count($wattages); $i++) {
                 $wattage = intval(trim($wattages[$i]));
                 $quantity = intval(trim($quantities[$i]));
+                $domesticContentPct = null;
+                if (!empty($track_domestic_content)) {
+                    $pctRaw = trim((string)($domestic_content_pcts[$i] ?? ''));
+                    if ($pctRaw !== '' && is_numeric($pctRaw)) {
+                        $domesticContentPct = max(0, min(100, (float)$pctRaw));
+                    }
+                }
                 // Skip empty or zero entries defensively
                 if ($wattage <= 0 || $quantity <= 0) { continue; }
                 
-                $stmtWattages->bind_param("iii", $module_id, $wattage, $quantity);
-                if (!$stmtWattages->execute()) {
-                    throw new Exception("Error adding wattage item: " . $stmtWattages->error);
+                if (!empty($track_domestic_content)) {
+                    $stmtWattagesWithDomestic->bind_param("iiid", $module_id, $wattage, $quantity, $domesticContentPct);
+                    if (!$stmtWattagesWithDomestic->execute()) {
+                        throw new Exception("Error adding wattage item: " . $stmtWattagesWithDomestic->error);
+                    }
+                } else {
+                    $stmtWattagesNoDomestic->bind_param("iii", $module_id, $wattage, $quantity);
+                    if (!$stmtWattagesNoDomestic->execute()) {
+                        throw new Exception("Error adding wattage item: " . $stmtWattagesNoDomestic->error);
+                    }
                 }
             }
-            $stmtWattages->close();
+            $stmtWattagesWithDomestic->close();
+            $stmtWattagesNoDomestic->close();
             
             // Update project_wattage_orders for project size calculation (only if assigned to a project)
             if ($project_id > 0) {
@@ -354,12 +388,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($auto_modules_per_pallet <= 0) {
                     throw new Exception('Auto-palletization is enabled but Modules per Pallet is missing or zero.');
                 }
-                if ($project_id <= 0) {
-                    throw new Exception('Auto-palletization requires the batch to be assigned to a project.');
-                }
             }
 
-            if ($enable_palletization && $auto_modules_per_pallet > 0 && $project_id > 0) {
+            if ($enable_palletization && $auto_modules_per_pallet > 0) {
                 // Get the unassigned_module_items we just created
                 $stmtItems = $conn->prepare("
                     SELECT id, wattage, quantity
@@ -387,6 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Handle NULL location_id properly
                 $loc_id_for_insert = $location_id !== null ? $location_id : null;
+                $assigned_project_id_for_insert = $project_id > 0 ? $project_id : null;
 
                 while ($item = $itemsResult->fetch_assoc()) {
                     $item_id = $item['id'];
@@ -410,7 +442,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ");
                         $stmtPallet->bind_param("siiissii",
                             $pallet_id, $item_id, $item_wattage, $auto_modules_per_pallet,
-                            $defaultStatus, $vendor_name, $loc_id_for_insert, $project_id
+                            $defaultStatus, $vendor_name, $loc_id_for_insert, $assigned_project_id_for_insert
                         );
                         if (!$stmtPallet->execute()) {
                             throw new Exception("Error creating pallet: " . $stmtPallet->error);
@@ -431,7 +463,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ");
                         $stmtPallet->bind_param("siiissii",
                             $pallet_id, $item_id, $item_wattage, $remaining_modules,
-                            $defaultStatus, $vendor_name, $loc_id_for_insert, $project_id
+                            $defaultStatus, $vendor_name, $loc_id_for_insert, $assigned_project_id_for_insert
                         );
                         if (!$stmtPallet->execute()) {
                             throw new Exception("Error creating partial pallet: " . $stmtPallet->error);
@@ -1085,6 +1117,7 @@ $conn->close();
                                         <li>Pallets will be created with <strong>system-generated IDs</strong> (e.g., PAL-0001, PAL-0002)</li>
                                         <li>You can link actual <strong>manufacturer pallet IDs</strong> to these later when shipments arrive</li>
                                         <li>This is ideal for planning and tracking before real pallet data is available</li>
+                                        <li>Works for both <strong>project-assigned</strong> and <strong>unassigned</strong> batches</li>
                                         <li>For importing real manufacturer pallet data, use the <strong>Import Pallets</strong> option instead</li>
                                     </ul>
                                 </div>
@@ -1105,11 +1138,14 @@ $conn->close();
                                     <label for="auto_modules_per_pallet" style="font-weight: 600; color: #293E4C; font-size: 0.95rem; white-space: nowrap;">
                                         Modules per Pallet:
                                     </label>
-                                    <input type="number" name="auto_modules_per_pallet" id="auto_modules_per_pallet" min="1" placeholder="30" style="width: 80px; padding: 8px 12px; border: 2px solid #e9ecef; border-radius: 6px; font-size: 1rem; font-weight: 600; text-align: center;">
+                                    <input type="number" name="auto_modules_per_pallet" id="auto_modules_per_pallet" min="1" value="<?php echo htmlspecialchars($_POST['auto_modules_per_pallet'] ?? ''); ?>" placeholder="30" style="width: 80px; padding: 8px 12px; border: 2px solid #e9ecef; border-radius: 6px; font-size: 1rem; font-weight: 600; text-align: center;">
                                     <div id="palletCalculation" style="display: none; padding: 6px 12px; background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-radius: 6px; border: 1px solid #c8e6c9;">
                                         <span style="font-size: 0.9rem; font-weight: 600; color: #28a745;" id="calcTotalPallets">0 pallets</span>
                                         <span id="calcPartialPallet" style="color: #856404; font-size: 0.85rem; margin-left: 4px;"></span>
                                     </div>
+                                </div>
+                                <div style="font-size: 0.8rem; color: #6c757d; margin-top: 8px;">
+                                    Leave blank to use the Logistics "Modules per Pallet" value.
                                 </div>
                             </div>
                         </div>
@@ -1132,107 +1168,6 @@ $conn->close();
                             </div>
                         </div>
                     </div>
-                    <!-- Basic Information -->
-                    <div class="form-section" style="display:none">
-                        <h2>Basic Information</h2>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="vendor_name">Vendor/Manufacturer Name: *</label>
-                                <input type="text" name="vendor_name" id="vendor_name" value="<?php echo htmlspecialchars($_POST['vendor_name'] ?? ''); ?>" disabled>
-                            </div>
-                            <div class="form-group">
-                                <label for="initial_location">Initial Location: *</label>
-                                <input type="text" name="initial_location" id="initial_location" value="<?php echo htmlspecialchars($_POST['initial_location'] ?? ''); ?>" disabled>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Wattage & Quantities -->
-                    <div class="form-section" style="display:none">
-                        <h2>Module Configuration</h2>
-                        <div class="wattage-container">
-                            <button type="button" class="add-wattage-btn" onclick="addWattageEntry()">+ Add Wattage</button>
-                            <div id="wattage-entries">
-                                <div class="wattage-entry">
-                                    <div class="form-group">
-                                        <label>Wattage (W)</label>
-                                        <input type="number" name="wattages[]" min="1">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Quantity</label>
-                                        <input type="number" name="quantities[]" min="1">
-                                    </div>
-                                    <button type="button" class="remove-wattage-btn" onclick="removeWattageEntry(this)">Remove</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Logistics Specifications -->
-                    <div class="form-section" style="display:none">
-                        <h2>Logistics Specifications (Optional)</h2>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="modules_per_pallet">Modules per Pallet:</label>
-                                <input type="number" name="modules_per_pallet" id="modules_per_pallet" value="<?php echo htmlspecialchars($_POST['modules_per_pallet'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallets_per_truck">Pallets per Truck:</label>
-                                <input type="number" name="pallets_per_truck" id="pallets_per_truck" value="<?php echo htmlspecialchars($_POST['pallets_per_truck'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="modules_per_truck">Modules per Truck:</label>
-                                <input type="number" name="modules_per_truck" id="modules_per_truck" value="<?php echo htmlspecialchars($_POST['modules_per_truck'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallet_length_mm">Pallet Length (mm):</label>
-                                <input type="number" name="pallet_length_mm" id="pallet_length_mm" value="<?php echo htmlspecialchars($_POST['pallet_length_mm'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallet_depth_mm">Pallet Depth (mm):</label>
-                                <input type="number" name="pallet_depth_mm" id="pallet_depth_mm" value="<?php echo htmlspecialchars($_POST['pallet_depth_mm'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallet_double_stacked_height_mm">Stack Height (mm):</label>
-                                <input type="number" name="pallet_double_stacked_height_mm" id="pallet_double_stacked_height_mm" value="<?php echo htmlspecialchars($_POST['pallet_double_stacked_height_mm'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallet_total_weight_kg">Total Weight (kg):</label>
-                                <input type="number" name="pallet_total_weight_kg" id="pallet_total_weight_kg" value="<?php echo htmlspecialchars($_POST['pallet_total_weight_kg'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="forklift_truck_long_side_mm">Forklift Long Side (mm):</label>
-                                <input type="number" name="forklift_truck_long_side_mm" id="forklift_truck_long_side_mm" value="<?php echo htmlspecialchars($_POST['forklift_truck_long_side_mm'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="forklift_truck_short_side_mm">Forklift Short Side (mm):</label>
-                                <input type="number" name="forklift_truck_short_side_mm" id="forklift_truck_short_side_mm" value="<?php echo htmlspecialchars($_POST['forklift_truck_short_side_mm'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallet_jack_long_side_mm">Pallet Jack Long Side (mm):</label>
-                                <input type="number" name="pallet_jack_long_side_mm" id="pallet_jack_long_side_mm" value="<?php echo htmlspecialchars($_POST['pallet_jack_long_side_mm'] ?? ''); ?>" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label for="pallet_jack_short_side_mm">Pallet Jack Short Side (mm):</label>
-                                <input type="number" name="pallet_jack_short_side_mm" id="pallet_jack_short_side_mm" value="<?php echo htmlspecialchars($_POST['pallet_jack_short_side_mm'] ?? ''); ?>" min="0">
-                            </div>
-                        </div>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="stacking_in_warehouse">Warehouse Stacking Instructions:</label>
-                                <textarea name="stacking_in_warehouse" id="stacking_in_warehouse" rows="3"><?php echo htmlspecialchars($_POST['stacking_in_warehouse'] ?? ''); ?></textarea>
-                            </div>
-                            <div class="form-group">
-                                <label for="stacking_during_transport">Transport Stacking Instructions:</label>
-                                <textarea name="stacking_during_transport" id="stacking_during_transport" rows="3"><?php echo htmlspecialchars($_POST['stacking_during_transport'] ?? ''); ?></textarea>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="module_notes">Module Notes:</label>
-                            <textarea name="module_notes" id="module_notes" rows="4"><?php echo htmlspecialchars($_POST['module_notes'] ?? ''); ?></textarea>
-                        </div>
-                    </div>
-                    
                     <div class="button-group">
                         <a href="<?php echo $project ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
                         <button type="submit" class="btn-submit">Create Module Batch</button>
@@ -1650,15 +1585,33 @@ $conn->close();
              const enableCheckbox = document.getElementById('enable_palletization');
              const configDiv = document.getElementById('palletizationConfig');
              const modulesPerPalletInput = document.getElementById('auto_modules_per_pallet');
+             const logisticsModulesPerPalletInput = document.getElementById('modules_per_pallet');
              const calcDiv = document.getElementById('palletCalculation');
              const enableLabel = document.getElementById('enablePalletizationLabel');
 
              if (!enableCheckbox || !configDiv) return;
 
+             function getEffectiveModulesPerPallet() {
+                 const autoValue = parseInt(modulesPerPalletInput && modulesPerPalletInput.value ? modulesPerPalletInput.value : '', 10);
+                 if (autoValue > 0) return autoValue;
+                 const logisticsValue = parseInt(logisticsModulesPerPalletInput && logisticsModulesPerPalletInput.value ? logisticsModulesPerPalletInput.value : '', 10);
+                 return logisticsValue > 0 ? logisticsValue : 0;
+             }
+
+             function syncAutoModulesPerPalletFromLogistics() {
+                 if (!modulesPerPalletInput || !logisticsModulesPerPalletInput) return;
+                 const autoValue = parseInt(modulesPerPalletInput.value || '', 10);
+                 const logisticsValue = parseInt(logisticsModulesPerPalletInput.value || '', 10);
+                 if (!(autoValue > 0) && logisticsValue > 0) {
+                     modulesPerPalletInput.value = String(logisticsValue);
+                 }
+             }
+
              // Toggle config visibility when checkbox changes
              enableCheckbox.addEventListener('change', function() {
                  configDiv.style.display = this.checked ? 'block' : 'none';
                  if (this.checked) {
+                     syncAutoModulesPerPalletFromLogistics();
                      enableLabel.style.borderColor = '#28a745';
                      enableLabel.style.background = '#d4edda';
                      updatePalletCalculation();
@@ -1671,6 +1624,14 @@ $conn->close();
              // Calculate pallets when modules per pallet changes
              if (modulesPerPalletInput) {
                  modulesPerPalletInput.addEventListener('input', updatePalletCalculation);
+             }
+             if (logisticsModulesPerPalletInput) {
+                 logisticsModulesPerPalletInput.addEventListener('input', function() {
+                     if (enableCheckbox.checked) {
+                         syncAutoModulesPerPalletFromLogistics();
+                         updatePalletCalculation();
+                     }
+                 });
              }
 
              // Also recalculate when wattage/quantity inputs change
@@ -1686,7 +1647,7 @@ $conn->close();
              function updatePalletCalculation() {
                  if (!enableCheckbox.checked) return;
 
-                 const modulesPerPallet = parseInt(modulesPerPalletInput.value) || 0;
+                 const modulesPerPallet = getEffectiveModulesPerPallet();
                  const quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
 
                  let totalModules = 0;
@@ -1728,6 +1689,11 @@ $conn->close();
              if (wattageContainer) {
                  const observer = new MutationObserver(updatePalletCalculation);
                  observer.observe(wattageContainer, { childList: true, subtree: true });
+             }
+
+             if (enableCheckbox.checked) {
+                 syncAutoModulesPerPalletFromLogistics();
+                 updatePalletCalculation();
              }
          });
 
@@ -1903,7 +1869,14 @@ $conn->close();
                      const enablePalletization = document.getElementById('enable_palletization');
                      const isPalletizing = enablePalletization && enablePalletization.checked;
                      const modulesPerPalletInput = document.getElementById('auto_modules_per_pallet');
-                     const hasModulesPerPallet = modulesPerPalletInput && parseInt(modulesPerPalletInput.value) > 0;
+                     const logisticsModulesPerPalletInput = document.getElementById('modules_per_pallet');
+                     let hasModulesPerPallet = modulesPerPalletInput && parseInt(modulesPerPalletInput.value, 10) > 0;
+                     if (!hasModulesPerPallet && logisticsModulesPerPalletInput && parseInt(logisticsModulesPerPalletInput.value, 10) > 0) {
+                         hasModulesPerPallet = true;
+                         if (modulesPerPalletInput) {
+                             modulesPerPalletInput.value = logisticsModulesPerPalletInput.value;
+                         }
+                     }
 
                      // Check capacity before submitting
                      if (capacityData.projectSizeMw > 0) {

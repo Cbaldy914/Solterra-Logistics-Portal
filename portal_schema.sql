@@ -135,6 +135,7 @@ CREATE TABLE unassigned_module_items (
   unassigned_module_id int(11) NOT NULL,  -- FK to modules.id
   wattage int(11) NOT NULL,
   quantity int(11) NOT NULL,
+  domestic_content_pct decimal(5,2) DEFAULT NULL, -- Optional domestic content percentage (0-100)
   created_at timestamp DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (unassigned_module_id) REFERENCES modules(id)
 );

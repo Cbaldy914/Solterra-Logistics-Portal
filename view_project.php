@@ -2,6 +2,10 @@
 session_name("logistics_session");
 session_start();
 
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // ---------- AUTH & INPUT --------------------------------------------------
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
@@ -18,6 +22,7 @@ if (!$project_id && !$origin_batch_id) die("Project ID or Origin Batch ID is mis
 // ---------- DB ------------------------------------------------------------
 require_once '../config.php';
 require_once 'milestone_helpers.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
@@ -376,6 +381,91 @@ if ($search_query !== '') {
 $redirect_url = 'view_project.php' . (empty($redirect_params) ? '' : ('?' . http_build_query($redirect_params)));
 
 if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['action']) && $_POST['action'] === 'upload_pod') {
+        header('Content-Type: application/json');
+
+        try {
+            if (
+                !isset($_POST['csrf_token']) ||
+                !hash_equals($_SESSION['csrf_token'] ?? '', (string)$_POST['csrf_token'])
+            ) {
+                throw new Exception('Invalid upload request.');
+            }
+
+            $delivery_id = isset($_POST['delivery_id']) ? (int)$_POST['delivery_id'] : 0;
+            if ($delivery_id <= 0) {
+                throw new Exception('Invalid delivery ID.');
+            }
+
+            $authorized_ids = getAuthorizedDeliveryIds(
+                $conn,
+                [$delivery_id],
+                $project_id,
+                $source_vendor_name_for_batch,
+                $is_global_admin,
+                $account_id_for_admin
+            );
+            if (empty($authorized_ids)) {
+                throw new Exception('You are not authorized to upload POD for this delivery.');
+            }
+
+            if (!isset($_FILES['pod_file']) || $_FILES['pod_file']['error'] !== UPLOAD_ERR_OK) {
+                throw new Exception('Please select a POD file to upload.');
+            }
+
+            $stmtDeliveryMeta = $conn->prepare("
+                SELECT project_id, warehouse_id, status_of_delivery
+                FROM deliveries
+                WHERE id = ?
+                LIMIT 1
+            ");
+            if (!$stmtDeliveryMeta) {
+                throw new Exception('Failed to fetch delivery context.');
+            }
+            $stmtDeliveryMeta->bind_param("i", $delivery_id);
+            $stmtDeliveryMeta->execute();
+            $stmtDeliveryMeta->bind_result($pod_project_id, $pod_warehouse_id, $pod_delivery_status);
+            if (!$stmtDeliveryMeta->fetch()) {
+                $stmtDeliveryMeta->close();
+                throw new Exception('Delivery not found.');
+            }
+            $stmtDeliveryMeta->close();
+
+            $processed_file = processDocumentUpload($_FILES['pod_file'], 'pods');
+            $pod_sub_type = determineDocumentSubType('pods', [
+                'delivery_status' => $pod_delivery_status,
+                'warehouse_id' => $pod_warehouse_id
+            ]);
+
+            $doc_result = saveDocumentToProjectDocuments($conn, [
+                'project_id' => $pod_project_id ?: null,
+                'document_type' => 'pods',
+                'document_sub_type' => $pod_sub_type,
+                'delivery_id' => $delivery_id,
+                'warehouse_id' => $pod_warehouse_id ?: null,
+                'original_name' => $processed_file['original_name'],
+                'file_size' => $processed_file['size'],
+                'mime_type' => $processed_file['mime_type'],
+                'uploaded_by' => $user_id,
+                'tmp_name' => $processed_file['tmp_name'],
+                'entity_context' => "POD uploaded from view_project for delivery ID: {$delivery_id}"
+            ]);
+
+            $stmtUpdatePodPath = $conn->prepare("UPDATE deliveries SET proof_of_delivery = ? WHERE id = ?");
+            if ($stmtUpdatePodPath) {
+                $stmtUpdatePodPath->bind_param("si", $doc_result['file_path'], $delivery_id);
+                $stmtUpdatePodPath->execute();
+                $stmtUpdatePodPath->close();
+            }
+
+            echo json_encode(['success' => true, 'message' => 'POD uploaded successfully.']);
+            exit();
+        } catch (Throwable $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+            exit();
+        }
+    }
+
     if (isset($_POST['bulk_edit_submit'])) {
         $selected_ids = $_POST['selected_deliveries'] ?? [];
         $selected_ids = getAuthorizedDeliveryIds(
@@ -398,12 +488,15 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $values = [];
 
         $editable_fields = [
-            'manufacturer' => 's',
-            'wattage' => 's',
-            'quantity' => 'i',
-            'status_of_delivery' => 's',
             'anticipated_delivery_date' => 's',
-            'actual_delivery_date' => 's'
+            'warehouse_arrival_date' => 's',
+            'actual_delivery_date' => 's',
+            'left_warehouse_date' => 's',
+            'miles' => 'd',
+            'freight_cost' => 'd',
+            'accessorial_costs_paid' => 'd',
+            'accessorial_costs' => 'd',
+            'customer_cost' => 'd'
         ];
 
         foreach ($editable_fields as $field => $bind_type) {
@@ -411,10 +504,11 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
 
-            $db_field = ($field === 'manufacturer') ? 'supplier' : $field;
-            $updates[] = "$db_field = ?";
+            $updates[] = "$field = ?";
             $types .= $bind_type;
-            if ($bind_type === 'i') {
+            if ($bind_type === 'd') {
+                $values[] = (float)$_POST[$field];
+            } elseif ($bind_type === 'i') {
                 $values[] = (int)$_POST[$field];
             } else {
                 $values[] = trim((string)$_POST[$field]);
@@ -426,9 +520,6 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
             header("Location: $redirect_url");
             exit();
         }
-
-        $new_delivery_status = $_POST['status_of_delivery'] ?? null;
-        $actual_delivery_date = $_POST['actual_delivery_date'] ?? null;
 
         $conn->begin_transaction();
         try {
@@ -442,77 +533,6 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Bulk update failed: " . $stmt->error);
             }
             $stmt->close();
-
-            if ($new_delivery_status) {
-                $status_mapping = [
-                    'Delivered to Project' => 'Delivered to Project',
-                    'Delivered to Warehouse' => 'In Warehouse',
-                    'In Transit to Project' => 'In Transit to Project',
-                    'In Transit to Warehouse' => 'In Transit to Warehouse',
-                    'Pending' => 'At Manufacturer',
-                    'Canceled' => 'At Manufacturer',
-                    'Cancelled' => 'At Manufacturer'
-                ];
-                if (isset($status_mapping[$new_delivery_status])) {
-                    $new_pallet_status = $status_mapping[$new_delivery_status];
-                    $dp_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
-                    $stmtPalletIds = $conn->prepare("
-                        SELECT DISTINCT inventory_pallet_id
-                        FROM delivery_pallets
-                        WHERE delivery_id IN ($dp_placeholders)
-                    ");
-                    $stmtPalletIds->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
-                    $stmtPalletIds->execute();
-                    $resPallets = $stmtPalletIds->get_result();
-                    $pallet_ids = [];
-                    while ($row = $resPallets->fetch_assoc()) {
-                        $pallet_ids[] = (int)$row['inventory_pallet_id'];
-                    }
-                    $stmtPalletIds->close();
-
-                    if (!empty($pallet_ids)) {
-                        $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
-                        $stmtPalletUpdate = $conn->prepare("
-                            UPDATE inventory_pallets
-                            SET status = ?
-                            WHERE id IN ($pallet_placeholders)
-                        ");
-                        $stmtPalletUpdate->bind_param('s' . str_repeat('i', count($pallet_ids)), $new_pallet_status, ...$pallet_ids);
-                        $stmtPalletUpdate->execute();
-                        $stmtPalletUpdate->close();
-                    }
-                }
-
-                if ($new_delivery_status === 'Delivered to Project') {
-                    $date_for_schedule = $actual_delivery_date ?: date('Y-m-d');
-                    $arrival_time = $date_for_schedule . ' 08:00:00';
-                    $departure_time = $date_for_schedule . ' 16:00:00';
-                    $sched_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
-                    $stmtSched = $conn->prepare("
-                        UPDATE site_scheduling
-                        SET arrival_time = ?, departure_time = ?, is_closed = 1
-                        WHERE delivery_id IN ($sched_placeholders)
-                    ");
-                    $sched_types = 'ss' . str_repeat('i', count($selected_ids));
-                    $sched_values = array_merge([$arrival_time, $departure_time], $selected_ids);
-                    $stmtSched->bind_param($sched_types, ...$sched_values);
-                    $stmtSched->execute();
-                    $stmtSched->close();
-                }
-
-                if (function_exists('trigger_delivery_milestones_for_status')) {
-                    foreach ($selected_ids as $delivery_id) {
-                        trigger_delivery_milestones_for_status(
-                            $delivery_id,
-                            $new_delivery_status,
-                            $conn,
-                            $user_id,
-                            null,
-                            $actual_delivery_date ?: null
-                        );
-                    }
-                }
-            }
 
             $conn->commit();
             $_SESSION['messages'][] = "<p>Bulk update successful.</p>";
@@ -1136,8 +1156,15 @@ sort($unique_suppliers);
             gap: 16px;
         }
 
+        .table-header-main {
+            display: flex;
+            align-items: center;
+            flex: 1 1 220px;
+            min-width: 220px;
+        }
+
         .table-title {
-            font-size: 1.3em;
+            font-size: 1.7em;
             font-weight: 600;
             margin: 0;
             display: flex;
@@ -1146,11 +1173,54 @@ sort($unique_suppliers);
             color: white;
         }
 
+        .table-header-admin {
+            flex: 1 1 300px;
+            min-width: 260px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+        }
+
+        .admin-tools-title {
+            margin: 0;
+            font-size: 0.9em;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.95);
+            text-align: center;
+        }
+
+        .admin-tools-buttons {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .table-header-admin .bulk-btn {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+        }
+
+        .table-header-admin .bulk-btn:disabled {
+            opacity: 0.55;
+            box-shadow: none;
+        }
+
         .table-header-actions {
             display: flex;
             gap: 10px;
             align-items: center;
             flex-wrap: wrap;
+            justify-content: flex-end;
+            flex: 1 1 220px;
+            min-width: 220px;
         }
 
         .btn-export-header, .btn-calendar-header, .btn-columns-header {
@@ -1587,8 +1657,23 @@ sort($unique_suppliers);
                 gap: 12px;
             }
 
+            .table-header-main,
+            .table-header-admin,
             .table-header-actions {
                 width: 100%;
+            }
+
+            .table-header-main {
+                justify-content: flex-start;
+            }
+
+            .table-header-admin {
+                align-items: flex-start;
+            }
+
+            .admin-tools-title,
+            .admin-tools-buttons {
+                text-align: left;
                 justify-content: flex-start;
             }
 
@@ -1764,32 +1849,6 @@ sort($unique_suppliers);
             border-color: #f7c8c8;
         }
 
-        .bulk-actions-bar {
-            background: linear-gradient(135deg, #ffffff 0%, #f4fbfd 100%);
-            border-radius: 16px;
-            border: 1px solid rgba(72, 140, 154, 0.14);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
-            margin-bottom: 20px;
-            padding: 16px 20px;
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .bulk-actions-title {
-            color: #293E4C;
-            font-weight: 600;
-            margin: 0;
-        }
-
-        .bulk-actions-buttons {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
         .bulk-btn {
             border: none;
             border-radius: 10px;
@@ -1944,11 +2003,6 @@ sort($unique_suppliers);
             .modal-form-grid {
                 grid-template-columns: 1fr;
             }
-
-            .bulk-actions-bar {
-                flex-direction: column;
-                align-items: flex-start;
-            }
         }
     </style>
 </head>
@@ -2098,17 +2152,6 @@ sort($unique_suppliers);
     </form>
 </div>
 
-    <?php if ($can_manage_deliveries && $grouped_deliveries): ?>
-    <div class="bulk-actions-bar">
-        <p class="bulk-actions-title">Admin Tools: <span id="selectedDeliveryCount">0 selected</span></p>
-        <div class="bulk-actions-buttons">
-            <button type="button" class="bulk-btn bulk-btn-edit" id="bulkEditBtn" onclick="openBulkEditModal()" disabled>Bulk Edit</button>
-            <button type="button" class="bulk-btn bulk-btn-receive" id="receiveToProjectBtn" onclick="openReceiveToProjectModal()" disabled>Receive to Project</button>
-            <button type="submit" form="deliveriesForm" name="delete_selected" class="bulk-btn bulk-btn-delete" id="bulkDeleteBtn" disabled onclick="return confirm('Delete selected deliveries? This cannot be undone.');">Bulk Delete</button>
-        </div>
-    </div>
-    <?php endif; ?>
-
     <!-- Pagination Controls -->
     <?php if ($grouped_deliveries): ?>
     <div class="pagination-container">
@@ -2129,10 +2172,22 @@ sort($unique_suppliers);
     <!-- Deliveries Table -->
     <div class="deliveries-container">
         <div class="table-header">
-            <h3 class="table-title">
-                <i class="fas fa-truck"></i>
-                Deliveries
-            </h3>
+            <div class="table-header-main">
+                <h3 class="table-title">
+                    <i class="fas fa-truck"></i>
+                    Deliveries
+                </h3>
+            </div>
+            <?php if ($can_manage_deliveries && $grouped_deliveries): ?>
+            <div class="table-header-admin">
+                <p class="admin-tools-title">Admin Tools: <span id="selectedDeliveryCount">0 selected</span></p>
+                <div class="admin-tools-buttons">
+                    <button type="button" class="bulk-btn bulk-btn-edit" id="bulkEditBtn" onclick="openBulkEditModal()" disabled>Bulk Edit</button>
+                    <button type="button" class="bulk-btn bulk-btn-receive" id="receiveToProjectBtn" onclick="openReceiveToProjectModal()" disabled>Receive to Project</button>
+                    <button type="submit" form="deliveriesForm" name="delete_selected" class="bulk-btn bulk-btn-delete" id="bulkDeleteBtn" disabled onclick="return confirm('Delete selected deliveries? This cannot be undone.');">Bulk Delete</button>
+                </div>
+            </div>
+            <?php endif; ?>
             <div class="table-header-actions">
                 <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
                     <i class="fas fa-download"></i>
@@ -2382,10 +2437,10 @@ sort($unique_suppliers);
                                         </a>
                                         <?php else: ?>
                                             <?php if (in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'], true)): ?>
-                                            <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="action-btn action-btn-outline">
+                                            <button type="button" class="action-btn action-btn-outline" onclick="event.stopPropagation(); openUploadPodModal(<?php echo (int)$delivery['id']; ?>);">
                                                 <i class="fas fa-upload"></i>
                                                 Upload POD
-                                            </a>
+                                            </button>
                                             <?php else: ?>
                                             —
                                             <?php endif; ?>
@@ -2435,7 +2490,7 @@ sort($unique_suppliers);
                                         <?php if (!empty($detailRow['proof_of_delivery']) || !empty($detailRow['has_pod_in_documents'])): ?>
                                         <a href="view_pod?delivery_id=<?php echo (int)$detailRow['id']; ?>" target="_blank" class="action-btn action-btn-primary">View POD</a>
                                         <?php elseif (in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'], true)): ?>
-                                        <a href="upload_pod?delivery_id=<?php echo (int)$detailRow['id']; ?>" class="action-btn action-btn-outline">Upload POD</a>
+                                        <button type="button" class="action-btn action-btn-outline" onclick="event.stopPropagation(); openUploadPodModal(<?php echo (int)$detailRow['id']; ?>);">Upload POD</button>
                                         <?php else: ?>
                                         —
                                         <?php endif; ?>
@@ -2484,6 +2539,33 @@ sort($unique_suppliers);
     </div>
 
     <?php if ($can_manage_deliveries): ?>
+    <div id="uploadPodModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Upload POD</h2>
+                <span class="modal-close" onclick="closeUploadPodModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="uploadPodForm" enctype="multipart/form-data">
+                    <input type="hidden" name="action" value="upload_pod">
+                    <input type="hidden" name="delivery_id" id="uploadPodDeliveryId">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                    <div class="modal-form-grid">
+                        <div class="modal-form-group" style="grid-column: 1 / -1;">
+                            <label for="uploadPodFile">POD File</label>
+                            <input type="file" id="uploadPodFile" name="pod_file" accept=".pdf,.jpg,.jpeg,.png,.gif,.doc,.docx,.xls,.xlsx,.txt,.csv" required>
+                            <small style="color:#6b7280;font-size:0.82em;">Allowed: PDF, image, Word, Excel, TXT, CSV (max 50MB)</small>
+                        </div>
+                    </div>
+                    <div class="modal-form-actions">
+                        <button type="button" class="modal-btn-secondary" onclick="closeUploadPodModal()">Cancel</button>
+                        <button type="submit" class="modal-btn-primary" id="uploadPodSubmitBtn">Upload POD</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div id="bulkEditModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -2495,38 +2577,40 @@ sort($unique_suppliers);
                     <div id="bulkEditSelectedInputs"></div>
                     <div class="modal-form-grid">
                         <div class="modal-form-group">
-                            <label for="bulk_manufacturer">Supplier</label>
-                            <input type="text" id="bulk_manufacturer" name="manufacturer" placeholder="Optional">
-                        </div>
-                        <div class="modal-form-group">
-                            <label for="bulk_wattage">Wattage</label>
-                            <input type="text" id="bulk_wattage" name="wattage" placeholder="Optional">
-                        </div>
-                        <div class="modal-form-group">
-                            <label for="bulk_quantity">Quantity</label>
-                            <input type="number" id="bulk_quantity" name="quantity" min="0" placeholder="Optional">
-                        </div>
-                        <div class="modal-form-group">
-                            <label for="bulk_status">Status</label>
-                            <select id="bulk_status" name="status_of_delivery">
-                                <option value="">No Change</option>
-                                <option value="Pending">Pending</option>
-                                <option value="On Water">On Water</option>
-                                <option value="Cleared Customs">Cleared Customs</option>
-                                <option value="In Transit to Warehouse">In Transit to Warehouse</option>
-                                <option value="Delivered to Warehouse">Delivered to Warehouse</option>
-                                <option value="In Transit to Project">In Transit to Project</option>
-                                <option value="Delivered to Project">Delivered to Project</option>
-                                <option value="Canceled">Canceled</option>
-                            </select>
-                        </div>
-                        <div class="modal-form-group">
                             <label for="bulk_anticipated_date">Anticipated Date</label>
                             <input type="date" id="bulk_anticipated_date" name="anticipated_delivery_date">
                         </div>
                         <div class="modal-form-group">
+                            <label for="bulk_warehouse_arrival_date">Warehouse Arrival</label>
+                            <input type="date" id="bulk_warehouse_arrival_date" name="warehouse_arrival_date">
+                        </div>
+                        <div class="modal-form-group">
                             <label for="bulk_actual_date">Actual Date</label>
                             <input type="date" id="bulk_actual_date" name="actual_delivery_date">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_left_warehouse_date">Left Warehouse</label>
+                            <input type="date" id="bulk_left_warehouse_date" name="left_warehouse_date">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_miles">Miles</label>
+                            <input type="number" step="0.01" id="bulk_miles" name="miles" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_freight_cost">Freight Cost</label>
+                            <input type="number" step="0.01" id="bulk_freight_cost" name="freight_cost" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_accessorial_paid">Accessorial Paid</label>
+                            <input type="number" step="0.01" id="bulk_accessorial_paid" name="accessorial_costs_paid" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_accessorial_charged">Accessorial Charged</label>
+                            <input type="number" step="0.01" id="bulk_accessorial_charged" name="accessorial_costs" placeholder="Optional">
+                        </div>
+                        <div class="modal-form-group">
+                            <label for="bulk_customer_cost">Customer Cost</label>
+                            <input type="number" step="0.01" id="bulk_customer_cost" name="customer_cost" placeholder="Optional">
                         </div>
                     </div>
                     <div class="modal-form-actions">
@@ -2572,6 +2656,7 @@ sort($unique_suppliers);
 const canManageDeliveries = <?php echo $can_manage_deliveries ? 'true' : 'false'; ?>;
 let associatedPalletsModal;
 let palletListDiv;
+let uploadPodModal;
 let bulkEditModal;
 let receiveToProjectModal;
 let currentPage = 1;
@@ -2680,6 +2765,31 @@ function closeAssociatedPalletModal() {
     if (palletListDiv) {
         palletListDiv.innerHTML = '';
     }
+}
+
+function openUploadPodModal(deliveryId) {
+    if (!canManageDeliveries) {
+        return;
+    }
+    uploadPodModal = document.getElementById('uploadPodModal');
+    const deliveryInput = document.getElementById('uploadPodDeliveryId');
+    const fileInput = document.getElementById('uploadPodFile');
+    if (!uploadPodModal || !deliveryInput) {
+        return;
+    }
+    deliveryInput.value = String(deliveryId || '');
+    if (fileInput) {
+        fileInput.value = '';
+    }
+    uploadPodModal.style.display = 'block';
+}
+
+function closeUploadPodModal() {
+    uploadPodModal = document.getElementById('uploadPodModal');
+    if (!uploadPodModal) {
+        return;
+    }
+    uploadPodModal.style.display = 'none';
 }
 
 function isInteractiveTarget(target) {
@@ -2929,6 +3039,7 @@ function initializeBulkSelection() {
 document.addEventListener('DOMContentLoaded', () => {
     associatedPalletsModal = document.getElementById('associatedPalletsModal');
     palletListDiv = document.getElementById('palletList');
+    uploadPodModal = document.getElementById('uploadPodModal');
     bulkEditModal = document.getElementById('bulkEditModal');
     receiveToProjectModal = document.getElementById('receiveToProjectModal');
 
@@ -2960,6 +3071,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target === associatedPalletsModal) {
             closeAssociatedPalletModal();
         }
+        if (e.target === uploadPodModal) {
+            closeUploadPodModal();
+        }
         if (e.target === bulkEditModal) {
             closeBulkEditModal();
         }
@@ -2967,6 +3081,40 @@ document.addEventListener('DOMContentLoaded', () => {
             closeReceiveToProjectModal();
         }
     });
+
+    const uploadPodForm = document.getElementById('uploadPodForm');
+    if (uploadPodForm) {
+        uploadPodForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const submitBtn = document.getElementById('uploadPodSubmitBtn');
+            const originalLabel = submitBtn ? submitBtn.textContent : '';
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Uploading...';
+            }
+
+            try {
+                const formData = new FormData(uploadPodForm);
+                const response = await fetch(window.location.pathname + window.location.search, {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (!result || !result.success) {
+                    throw new Error((result && result.message) ? result.message : 'Upload failed.');
+                }
+                closeUploadPodModal();
+                window.location.reload();
+            } catch (error) {
+                alert(error.message || 'Failed to upload POD.');
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalLabel || 'Upload POD';
+                }
+            }
+        });
+    }
 
     const hi = document.getElementById('highlighted-delivery');
     if (hi) {

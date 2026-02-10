@@ -4,7 +4,7 @@
 // - $manufacturers: array of ['id'=>int,'name'=>string]
 // - $prefManufacturerId: int|null (optional preselect)
 // - $prefLocationId: int|null (optional preselect)
-// - $existingWattages: array of ['wattage'=>int,'quantity'=>int] (optional for edit)
+// - $existingWattages: array of ['wattage'=>int,'quantity'=>int,'domestic_content_pct'=>float|null] (optional for edit)
 // - $module (optional): existing module data for edit mode
 
 if (!function_exists('mb_optional_number_value')) {
@@ -16,6 +16,16 @@ if (!function_exists('mb_optional_number_value')) {
             return htmlspecialchars((string)$value);
         }
         return '';
+    }
+}
+
+$mb_track_domestic_default = !empty($_POST['track_domestic_content']);
+if (!$mb_track_domestic_default && !empty($existingWattages) && is_array($existingWattages)) {
+    foreach ($existingWattages as $existingRow) {
+        if (isset($existingRow['domestic_content_pct']) && $existingRow['domestic_content_pct'] !== null && $existingRow['domestic_content_pct'] !== '') {
+            $mb_track_domestic_default = true;
+            break;
+        }
     }
 }
 ?>
@@ -43,9 +53,23 @@ if (!function_exists('mb_optional_number_value')) {
     .mb-right-column .input-group label {
         margin-bottom: 12px;
     }
+    .mb-domestic-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+        color: #495057;
+    }
+    .mb-domestic-toggle input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: #488C9A;
+    }
 
     .wattage-container { margin: 0; }
     .wattage-entry { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; padding: 12px; background: #f8f9fa; border-radius: 10px; margin-bottom: 10px; border: 1px solid #e9ecef; }
+    .wattage-entry.has-domestic { grid-template-columns: 1fr 1fr 1fr auto; }
     .wattage-entry .input-group { margin-bottom: 0; }
     .wattage-entry .input-group label { font-size: 0.85rem; margin-bottom: 4px; }
     .wattage-entry .input-group input { padding: 10px 12px; font-size: 0.95rem; }
@@ -297,6 +321,10 @@ if (!function_exists('mb_optional_number_value')) {
                 <div class="mb-right-column">
                     <div class="input-group" style="margin-bottom: 0;">
                         <label>Wattage & Quantities</label>
+                        <label class="mb-domestic-toggle" for="track_domestic_content">
+                            <input type="checkbox" id="track_domestic_content" name="track_domestic_content" value="1" <?php echo $mb_track_domestic_default ? 'checked' : ''; ?>>
+                            Track Domestic Content %
+                        </label>
                         <div id="wattage-container" class="wattage-container"></div>
                         <button type="button" class="add-wattage-btn" onclick="mb_addWattageField()">+ Add Wattage</button>
                     </div>
@@ -574,10 +602,9 @@ if (!function_exists('mb_optional_number_value')) {
 // Store location data for address display
 let mb_locationDataCache = {};
 
-function mb_addWattageField(wattage = '', quantity = '') {
+function mb_addWattageField(wattage = '', quantity = '', domesticPct = '') {
     const container = document.getElementById('wattage-container');
     if (!container) return; // Guard against missing container
-    const index = container.children.length;
     const div = document.createElement('div');
     div.className = 'wattage-entry';
 
@@ -599,12 +626,44 @@ function mb_addWattageField(wattage = '', quantity = '') {
     if (quantity !== '') qInput.value = quantity;
     qGroup.appendChild(qLabel); qGroup.appendChild(qInput);
 
+    const dGroup = document.createElement('div');
+    dGroup.className = 'input-group wattage-domestic-group';
+    const dLabel = document.createElement('label');
+    dLabel.textContent = 'Domestic Content %';
+    const dInput = document.createElement('input');
+    dInput.type = 'number';
+    dInput.step = '0.01';
+    dInput.min = '0';
+    dInput.max = '100';
+    dInput.name = 'domestic_content_pcts[]';
+    dInput.placeholder = 'e.g. 45.50';
+    if (domesticPct !== '' && domesticPct !== null) dInput.value = domesticPct;
+    dGroup.appendChild(dLabel);
+    dGroup.appendChild(dInput);
+
     const removeButton = document.createElement('button');
     removeButton.type = 'button'; removeButton.textContent = 'Remove'; removeButton.className = 'remove-btn';
     removeButton.onclick = () => container.removeChild(div);
 
-    div.appendChild(wGroup); div.appendChild(qGroup); div.appendChild(removeButton);
+    div.appendChild(wGroup); div.appendChild(qGroup); div.appendChild(dGroup); div.appendChild(removeButton);
     container.appendChild(div);
+    mb_toggleDomesticContentFields();
+}
+
+function mb_toggleDomesticContentFields() {
+    const trackDomestic = document.getElementById('track_domestic_content');
+    const isEnabled = !!(trackDomestic && trackDomestic.checked);
+    document.querySelectorAll('.wattage-entry').forEach(entry => {
+        const domesticGroup = entry.querySelector('.wattage-domestic-group');
+        const domesticInput = domesticGroup ? domesticGroup.querySelector('input[name="domestic_content_pcts[]"]') : null;
+        if (domesticGroup) {
+            domesticGroup.style.display = isEnabled ? '' : 'none';
+        }
+        if (domesticInput) {
+            domesticInput.required = isEnabled;
+        }
+        entry.classList.toggle('has-domestic', isEnabled);
+    });
 }
 
 function mb_handleManufacturerChange(select) {
@@ -1105,10 +1164,19 @@ function mb_loadExistingMilestones(existingMilestones) {
 document.addEventListener('DOMContentLoaded', function() {
     const existing = <?php echo json_encode($existingWattages ?? []); ?>;
     if (existing.length) {
-        existing.forEach(row => mb_addWattageField(row.wattage, row.quantity));
+        existing.forEach(row => mb_addWattageField(
+            row.wattage,
+            row.quantity,
+            (row.domestic_content_pct !== null && row.domestic_content_pct !== undefined) ? row.domestic_content_pct : ''
+        ));
     } else {
         mb_addWattageField();
     }
+    const trackDomestic = document.getElementById('track_domestic_content');
+    if (trackDomestic) {
+        trackDomestic.addEventListener('change', mb_toggleDomesticContentFields);
+    }
+    mb_toggleDomesticContentFields();
     const mSel = document.getElementById('manufacturer_id');
     if (mSel && mSel.value) { mb_handleManufacturerChange(mSel); }
     const mpp = document.getElementById('modules_per_pallet');
