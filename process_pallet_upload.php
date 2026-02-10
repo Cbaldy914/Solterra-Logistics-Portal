@@ -601,6 +601,7 @@ function handleImport($conn, $user_id) {
     $project_id = intval($_POST['project_id'] ?? 0);
     $account_id = intval($_POST['account_id'] ?? 0) ?: getAccountIdForUser($conn, $user_id);
     $saveMapping = $_POST['save_mapping'] === '1';
+    $batch_name = trim($_POST['batch_name'] ?? '');
     $trackDomesticContent = !empty($_POST['track_domestic_content']);
     $defaultDomesticContentPct = null;
 
@@ -686,7 +687,7 @@ function handleImport($conn, $user_id) {
 
     try {
         // Find or create module batch for this manufacturer + project
-        $moduleBatchId = findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location, $logistics);
+        $moduleBatchId = findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location, $logistics, $batch_name);
 
         // Handle milestones
         $milestones = [];
@@ -914,7 +915,7 @@ function handleImport($conn, $user_id) {
 /**
  * Find or create module batch for manufacturer + project
  */
-function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location = '', $logistics = []) {
+function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location = '', $logistics = [], $batch_name = '') {
     $stmt = $conn->prepare("
         SELECT id FROM modules
         WHERE account_id = ? AND project_id = ? AND vendor_name = ?
@@ -982,18 +983,19 @@ function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_
     }
 
     // Create new module batch with all fields
+    $batchNameVal = !empty($batch_name) ? $batch_name : null;
     $stmt = $conn->prepare("
         INSERT INTO modules (
-            account_id, project_id, vendor_name, initial_location, data_source,
+            account_id, project_id, vendor_name, initial_location, data_source, batch_name,
             modules_per_pallet, pallets_per_truck, modules_per_truck,
             pallet_length_mm, pallet_depth_mm, pallet_double_stacked_height_mm, pallet_total_weight_kg,
             forklift_truck_long_side_mm, forklift_truck_short_side_mm,
             pallet_jack_long_side_mm, pallet_jack_short_side_mm,
             stacking_in_warehouse, stacking_during_transport, module_notes, cost_per_watt, po_execution_date
-        ) VALUES (?, ?, ?, ?, 'pallet_import', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'pallet_import', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    $stmt->bind_param("iissiiiiiiiiiiisssd" . "s",
-        $account_id, $project_id, $manufacturerName, $initial_location,
+    $stmt->bind_param("iisssiiiiiiiiiiisssd" . "s",
+        $account_id, $project_id, $manufacturerName, $initial_location, $batchNameVal,
         $logistics['modules_per_pallet'], $logistics['pallets_per_truck'], $logistics['modules_per_truck'],
         $logistics['pallet_length_mm'], $logistics['pallet_depth_mm'],
         $logistics['pallet_double_stacked_height_mm'], $logistics['pallet_total_weight_kg'],

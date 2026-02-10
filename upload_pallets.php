@@ -1142,6 +1142,21 @@ $conn->close();
             box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.15);
         }
         .help-text { font-size: 0.85rem; color: #6c757d; margin-top: 6px; }
+
+        /* Inline form row (2-column grid) */
+        .form-row-inline {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 700px) {
+            .form-row-inline { grid-template-columns: 1fr; }
+        }
+
+        /* Clickable step indicators */
+        .step { cursor: default; }
+        .step.completed { cursor: pointer; }
+        .step.completed:hover { filter: brightness(0.95); }
     </style>
 </head>
 <body>
@@ -1247,41 +1262,51 @@ $conn->close();
                 <form id="uploadForm" enctype="multipart/form-data">
                     <input type="hidden" name="account_id" value="<?php echo $account_id ?? ''; ?>">
 
-                    <div class="form-group">
-                        <label class="required" for="manufacturer_id">Manufacturer</label>
-                        <select name="manufacturer_id" id="manufacturer_id" required>
-                            <option value="">Select Manufacturer</option>
-                            <?php foreach ($manufacturers as $mfg): ?>
-                                <option value="<?php echo $mfg['id']; ?>">
-                                    <?php echo htmlspecialchars($mfg['name']); ?>
-                                    <?php if ($mfg['short_name']): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="form-group" id="locationGroup" style="display: none;">
-                        <label class="required" for="manufacturer_location_id">Manufacturer Location</label>
-                        <select name="manufacturer_location_id" id="manufacturer_location_id">
-                            <option value="">Select Location</option>
-                        </select>
-                        <div id="locationAddressDisplay" class="location-address-display" style="display: none;">
-                            <span class="address-icon">📍</span>
-                            <span id="locationAddressText"></span>
+                    <!-- Row 1: Batch Name | Project -->
+                    <div class="form-row-inline">
+                        <div class="form-group">
+                            <label for="batch_name">Batch Name</label>
+                            <input type="text" name="batch_name" id="batch_name" placeholder="e.g. Q1 Delivery, Phase 2 Panels...">
+                            <div class="field-hint">Optional label for this import batch.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="destination_project_id">Project</label>
+                            <select name="destination_project_id" id="destination_project_id">
+                                <option value="">Unassigned</option>
+                                <?php foreach ($projects as $p): ?>
+                                    <option value="<?php echo $p['id']; ?>" <?php echo ($project_id && $project_id == $p['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($p['project_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="field-hint">Leave as "Unassigned" if these pallets are not yet assigned to a specific project.</div>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="destination_project_id">Project</label>
-                        <select name="destination_project_id" id="destination_project_id">
-                            <option value="">Unassigned</option>
-                            <?php foreach ($projects as $p): ?>
-                                <option value="<?php echo $p['id']; ?>" <?php echo ($project_id && $project_id == $p['id']) ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($p['project_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <div class="field-hint">Leave as "Unassigned" if these pallets are not yet assigned to a specific project.</div>
+                    <!-- Row 2: Manufacturer | Location -->
+                    <div class="form-row-inline">
+                        <div class="form-group">
+                            <label class="required" for="manufacturer_id">Manufacturer</label>
+                            <select name="manufacturer_id" id="manufacturer_id" required>
+                                <option value="">Select Manufacturer</option>
+                                <?php foreach ($manufacturers as $mfg): ?>
+                                    <option value="<?php echo $mfg['id']; ?>">
+                                        <?php echo htmlspecialchars($mfg['name']); ?>
+                                        <?php if ($mfg['short_name']): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group" id="locationGroup">
+                            <label class="required" for="manufacturer_location_id">Manufacturer Location</label>
+                            <select name="manufacturer_location_id" id="manufacturer_location_id" disabled>
+                                <option value="">Select a manufacturer first</option>
+                            </select>
+                            <div id="locationAddressDisplay" class="location-address-display" style="display: none;">
+                                <span class="address-icon">📍</span>
+                                <span id="locationAddressText"></span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Logistics & Documentation Buttons for Step 1 -->
@@ -1566,6 +1591,9 @@ $conn->close();
                 <div class="summary-stats" id="summaryStats">
                     <!-- Populated by JavaScript -->
                 </div>
+
+                <!-- Pricing & Milestone Summary -->
+                <div id="pricingMilestoneSummary" style="display: none;"></div>
 
                 <!-- Duplicate Pallets Info Banner -->
                 <div class="duplicate-info-banner" id="duplicateInfoBanner" style="display: none;">
@@ -1920,7 +1948,6 @@ include 'components/module_batch_scripts.php';
     // Manufacturer change - load locations
     document.getElementById('manufacturer_id').addEventListener('change', function() {
         const mfgId = this.value;
-        const locationGroup = document.getElementById('locationGroup');
         const locationSelect = document.getElementById('manufacturer_location_id');
         const addressDisplay = document.getElementById('locationAddressDisplay');
         const addressText = document.getElementById('locationAddressText');
@@ -1931,6 +1958,8 @@ include 'components/module_batch_scripts.php';
         locationDataCache = {};
 
         if (mfgId) {
+            locationSelect.disabled = true;
+            locationSelect.innerHTML = '<option value="">Loading...</option>';
             fetch(`get_manufacturer_locations.php?manufacturer_id=${mfgId}`)
                 .then(r => r.json())
                 .then(data => {
@@ -1945,19 +1974,21 @@ include 'components/module_batch_scripts.php';
                                 : (loc.formatted_address || loc.city);
                             locationSelect.innerHTML += `<option value="${loc.id}">${displayText}</option>`;
                         });
-                        locationGroup.style.display = 'block';
+                        locationSelect.disabled = false;
                     } else {
-                        locationGroup.style.display = 'none';
+                        locationSelect.innerHTML = '<option value="">No locations available</option>';
+                        locationSelect.disabled = true;
                     }
                     updateStep1Validation();
                 })
                 .catch(() => {
-                    locationGroup.style.display = 'none';
+                    locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+                    locationSelect.disabled = true;
                     updateStep1Validation();
                 });
         } else {
-            locationGroup.style.display = 'none';
-            locationSelect.innerHTML = '<option value="">Select Location</option>';
+            locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+            locationSelect.disabled = true;
         }
         updateStep1Validation();
     });
@@ -1991,6 +2022,16 @@ include 'components/module_batch_scripts.php';
         document.querySelectorAll('.step-content').forEach(c => c.classList.remove('active'));
         document.getElementById('step' + step).classList.add('active');
     }
+
+    // Clickable completed step indicators
+    document.querySelectorAll('.step').forEach(s => {
+        s.addEventListener('click', () => {
+            const stepNum = parseInt(s.dataset.step);
+            if (stepNum < currentStep) {
+                goToStep(stepNum);
+            }
+        });
+    });
 
     // File Upload Handling
     fileDropArea.addEventListener('click', () => fileInput.click());
@@ -2271,6 +2312,60 @@ include 'components/module_batch_scripts.php';
                 <div class="stat-label">Avg Modules/Pallet</div>
             </div>
         `;
+
+        // Pricing & Milestone Summary
+        const pricingSummaryDiv = document.getElementById('pricingMilestoneSummary');
+        if (pricingSummaryDiv) {
+            const cpw = document.getElementById('cost_per_watt')?.value || '';
+            const hasCpw = cpw && parseFloat(cpw) > 0;
+            const dcChecked = document.getElementById('track_domestic_content')?.checked;
+            const dcPct = document.getElementById('domestic_content_pct')?.value || '';
+
+            // Build milestone rows
+            let milestoneHtml = '';
+            if (typeof mb_milestones !== 'undefined' && mb_milestones.length > 0 && hasCpw) {
+                const items = mb_milestones
+                    .filter(m => m.trigger_event && parseFloat(m.percentage) > 0)
+                    .map(m => {
+                        const label = (typeof mb_triggerEventLabels !== 'undefined' && mb_triggerEventLabels[m.trigger_event])
+                            ? mb_triggerEventLabels[m.trigger_event]
+                            : m.trigger_event;
+                        return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #f0f7f8; border-radius: 6px; margin-bottom: 6px;"><span style="color: #293E4C; font-size: 0.85rem;">${label}</span><span style="font-weight: 600; color: #488C9A; font-size: 0.85rem; background: white; padding: 2px 8px; border-radius: 4px;">${parseFloat(m.percentage).toFixed(1)}%</span></div>`;
+                    }).join('');
+                if (items) {
+                    milestoneHtml = items;
+                }
+            }
+            if (!milestoneHtml) {
+                milestoneHtml = '<div style="color: #6c757d; font-size: 0.9rem;">Default: 100% Project Delivery</div>';
+            }
+
+            // Domestic content display
+            let dcHtml = '<span style="color: #6c757d;">Not tracked</span>';
+            if (dcChecked && dcPct) {
+                dcHtml = `<span style="font-weight: 600; color: #488C9A;">${parseFloat(dcPct).toFixed(2)}%</span>`;
+            }
+
+            pricingSummaryDiv.innerHTML = `
+                <div style="display: grid; grid-template-columns: auto 1px 1fr 1px auto; gap: 0; margin-bottom: 24px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-radius: 12px; padding: 20px 24px;">
+                    <div style="padding-right: 24px;">
+                        <div style="font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 10px;">Cost Per Watt</div>
+                        <div style="font-size: 1.4rem; font-weight: 700; color: ${hasCpw ? '#488C9A' : '#6c757d'};">${hasCpw ? '$' + parseFloat(cpw).toFixed(4) + '/W' : 'Not set'}</div>
+                    </div>
+                    <div style="background: #e9ecef;"></div>
+                    <div style="padding: 0 24px;">
+                        <div style="font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 10px;">Payment Milestones</div>
+                        ${milestoneHtml}
+                    </div>
+                    <div style="background: #e9ecef;"></div>
+                    <div style="padding-left: 24px;">
+                        <div style="font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 10px;">Domestic Content</div>
+                        <div style="font-size: 1.4rem; font-weight: 700;">${dcHtml}</div>
+                    </div>
+                </div>
+            `;
+            pricingSummaryDiv.style.display = 'block';
+        }
 
         // Show duplicate info banner if there are existing pallets
         const duplicateInfoDiv = document.getElementById('duplicateInfoBanner');
@@ -2566,6 +2661,7 @@ include 'components/module_batch_scripts.php';
         formData.append('manufacturer_location_id', manufacturerLocationId());
         formData.append('project_id', projectId());
         formData.append('account_id', accountId());
+        formData.append('batch_name', document.getElementById('batch_name')?.value || '');
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
         formData.append('track_domestic_content', trackDomesticCheckbox && trackDomesticCheckbox.checked ? '1' : '0');
