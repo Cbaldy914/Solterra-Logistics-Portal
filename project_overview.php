@@ -174,57 +174,56 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             </div>
             <div class="project-header-stats">
-                <div class="project-stat-item">
-                    <p class="project-stat-number"><?php echo number_format($project_size_mw, 2); ?></p>
-                    <p class="project-stat-label">MW Target</p>
-                </div>
-                <div class="project-stat-item stat-clickable <?php echo (!empty($total_orders) && count($total_orders) > 0) ? 'has-dropdown' : ''; ?>" <?php echo (!empty($total_orders) && count($total_orders) > 0) ? 'onclick="toggleWattageBreakdown(event)"' : ''; ?>>
-                    <p class="project-stat-number highlight"><?php echo number_format($ordered_mw, 2); ?></p>
-                    <p class="project-stat-label">MW Ordered</p>
-                    <p class="project-stat-sub"><?php echo number_format($total_raw_modules); ?> modules</p>
-                    <?php if (!empty($total_orders) && count($total_orders) > 0): ?>
-                    <!-- Wattage Breakdown Dropdown -->
-                    <div class="stat-dropdown wattage-breakdown">
-                        <div class="stat-dropdown-title">Module Breakdown</div>
-                        <div class="stat-dropdown-chips">
-                            <?php foreach ($total_orders as $label => $info): ?>
-                            <span class="breakdown-chip"><?php echo number_format($info['raw_quantity']); ?> × <?php echo $label; ?></span>
-                            <?php endforeach; ?>
-                        </div>
-                        <?php if ($can_add_modules): ?>
-                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="stat-dropdown-action" onclick="event.stopPropagation();">+ Add Modules</a>
-                        <?php endif; ?>
-                    </div>
+                <!-- Domestic Content (always visible) -->
+                <div class="project-stat-dc <?php echo $dc_overall_pct !== null ? '' : 'dc-not-tracked'; ?>" onclick="<?php echo $dc_overall_pct !== null ? 'openDomesticContentModal()' : ''; ?>; event.stopPropagation();">
+                    <?php if ($dc_overall_pct !== null): ?>
+                    <span class="stat-dc-number"><?php echo number_format($dc_overall_pct, 1); ?>%</span>
+                    <?php else: ?>
+                    <span class="stat-dc-number dc-na-value">N/A</span>
+                    <?php endif; ?>
+                    <span class="stat-dc-label">Domestic Content</span>
+                    <?php if ($dc_overall_pct !== null): ?>
+                    <svg class="stat-dc-icon" width="12" height="12" viewBox="0 0 12 12"><path d="M2 10L10 2M10 2H4M10 2V8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     <?php endif; ?>
                 </div>
-                <?php if ($remaining_mw > 0): ?>
-                <div class="project-stat-item stat-warning">
-                    <p class="project-stat-number"><?php echo number_format($remaining_mw, 2); ?></p>
-                    <p class="project-stat-label">MW Remaining</p>
-                </div>
-                <?php elseif ($remaining_mw < 0): ?>
-                <div class="project-stat-item stat-success">
-                    <p class="project-stat-number">+<?php echo number_format(abs($remaining_mw), 2); ?></p>
-                    <p class="project-stat-label">MW Over Target</p>
-                </div>
-                <?php else: ?>
-                <div class="project-stat-item stat-success">
-                    <p class="project-stat-number">100%</p>
-                    <p class="project-stat-label">Target Reached</p>
-                </div>
-                <?php endif; ?>
-                <?php if ($project_size_mw > 0): ?>
-                <div class="project-stat-item project-stat-progress">
-                    <div class="progress-ring-container">
-                        <svg class="progress-ring" width="50" height="50">
-                            <circle class="progress-ring-bg" cx="25" cy="25" r="20" fill="none" stroke="#e9ecef" stroke-width="5"/>
-                            <circle class="progress-ring-fill <?php echo $order_progress_pct >= 100 ? 'complete' : ''; ?>" cx="25" cy="25" r="20" fill="none" stroke="<?php echo $order_progress_pct >= 100 ? '#28a745' : '#488C9A'; ?>" stroke-width="5" stroke-linecap="round" stroke-dasharray="125.6" stroke-dashoffset="<?php echo 125.6 - (125.6 * min(100, $order_progress_pct) / 100); ?>" transform="rotate(-90 25 25)"/>
+
+                <!-- Order Progress -->
+                <div class="project-stat-order" onclick="openOrderBreakdownModal(); event.stopPropagation();">
+                    <?php if ($project_size_mw > 0): ?>
+                    <div class="stat-order-ring">
+                        <svg width="46" height="46">
+                            <circle cx="23" cy="23" r="18" fill="none" stroke="#e9ecef" stroke-width="4"/>
+                            <circle cx="23" cy="23" r="18" fill="none"
+                                stroke="<?php echo $order_progress_pct >= 100 ? '#28a745' : '#488C9A'; ?>"
+                                stroke-width="4" stroke-linecap="round"
+                                stroke-dasharray="113.1"
+                                stroke-dashoffset="<?php echo 113.1 - (113.1 * min(100, $order_progress_pct) / 100); ?>"
+                                transform="rotate(-90 23 23)"/>
                         </svg>
-                        <span class="progress-ring-text"><?php echo number_format($order_progress_pct, 0); ?>%</span>
+                        <span class="stat-order-ring-pct"><?php echo number_format($order_progress_pct, 0); ?>%</span>
                     </div>
-                    <p class="project-stat-label">Order Progress</p>
+                    <?php endif; ?>
+                    <div class="stat-order-details">
+                        <div class="stat-order-mw">
+                            <span class="stat-mw-value"><?php echo number_format($ordered_mw, 2); ?></span>
+                            <span class="stat-mw-label">ordered</span>
+                            <span class="stat-mw-sep">/</span>
+                            <span class="stat-mw-total"><?php echo number_format($project_size_mw, 2); ?></span>
+                            <span class="stat-mw-unit">MW</span>
+                        </div>
+                        <div class="stat-order-meta">
+                            <span><?php echo number_format($total_raw_modules); ?> modules</span>
+                            <?php if ($remaining_mw > 0): ?>
+                            <span class="stat-badge stat-badge-warning"><?php echo number_format($remaining_mw, 2); ?> MW remaining</span>
+                            <?php elseif ($remaining_mw < 0): ?>
+                            <span class="stat-badge stat-badge-success">+<?php echo number_format(abs($remaining_mw), 2); ?> MW over</span>
+                            <?php else: ?>
+                            <span class="stat-badge stat-badge-success">On target</span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <svg class="stat-order-expand" width="12" height="12" viewBox="0 0 12 12"><path d="M2 10L10 2M10 2H4M10 2V8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </div>
-                <?php endif; ?>
             </div>
             <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
             <div class="project-header-actions">
@@ -400,6 +399,132 @@ document.addEventListener('DOMContentLoaded', function() {
                     <button type="submit" class="health-modal-btn save" id="healthSaveBtn">Save Changes</button>
                 </div>
             </form>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Order Breakdown Modal -->
+    <div class="dc-modal-overlay" id="orderBreakdownModal">
+        <div class="dc-modal">
+            <div class="dc-modal-header">
+                <div>
+                    <h3>Modules Ordered</h3>
+                    <p class="dc-modal-subtitle">Modules assigned to this project vs project target</p>
+                </div>
+                <button type="button" class="dc-modal-close" onclick="closeOrderBreakdownModal()">&times;</button>
+            </div>
+            <div class="dc-modal-body">
+                <!-- Ordered vs Target comparison -->
+                <div class="om-comparison">
+                    <div class="om-compare-box om-ordered">
+                        <span class="om-compare-num"><?php echo number_format($ordered_mw, 2); ?></span>
+                        <span class="om-compare-unit">MW</span>
+                        <span class="om-compare-label">Ordered</span>
+                    </div>
+                    <div class="om-compare-vs">vs</div>
+                    <div class="om-compare-box om-target">
+                        <span class="om-compare-num"><?php echo number_format($project_size_mw, 2); ?></span>
+                        <span class="om-compare-unit">MW</span>
+                        <span class="om-compare-label">Project Size</span>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div class="om-progress">
+                    <div class="om-progress-bar-wrap">
+                        <div class="om-progress-bar" style="width: <?php echo min(100, $order_progress_pct); ?>%"></div>
+                    </div>
+                    <div class="om-progress-meta">
+                        <span class="om-progress-pct"><?php echo number_format($order_progress_pct, 0); ?>% filled</span>
+                        <?php if ($remaining_mw > 0): ?>
+                        <span class="om-progress-status om-status-warning"><?php echo number_format($remaining_mw, 2); ?> MW remaining</span>
+                        <?php elseif ($remaining_mw < 0): ?>
+                        <span class="om-progress-status om-status-success">+<?php echo number_format(abs($remaining_mw), 2); ?> MW over target</span>
+                        <?php else: ?>
+                        <span class="om-progress-status om-status-success">Target reached</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <?php if (!empty($total_orders)): ?>
+                <!-- Module breakdown table -->
+                <div class="om-breakdown">
+                    <div class="om-breakdown-title"><?php echo number_format($total_raw_modules); ?> modules across <?php echo count($total_orders); ?> wattage <?php echo count($total_orders) === 1 ? 'type' : 'types'; ?></div>
+                    <div class="om-breakdown-table">
+                        <div class="om-table-header">
+                            <span>Wattage</span>
+                            <span>Modules</span>
+                            <span class="om-col-right">MW</span>
+                            <span class="om-col-right">Share</span>
+                        </div>
+                        <?php foreach ($total_orders as $label => $info):
+                            $wattMw = ($info['raw_quantity'] * $info['wattage']) / 1000000;
+                            $wattPct = $ordered_mw > 0 ? ($wattMw / $ordered_mw) * 100 : 0;
+                        ?>
+                        <div class="om-table-row">
+                            <span class="om-row-wattage"><?php echo $label; ?></span>
+                            <span class="om-row-modules"><?php echo number_format($info['raw_quantity']); ?></span>
+                            <span class="om-row-mw om-col-right"><?php echo number_format($wattMw, 3); ?></span>
+                            <span class="om-row-share om-col-right"><?php echo number_format($wattPct, 1); ?>%</span>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <?php if ($can_add_modules): ?>
+                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="order-modal-add-btn">+ Add Modules</a>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <?php if ($dc_overall_pct !== null): ?>
+    <!-- Domestic Content Modal -->
+    <div class="dc-modal-overlay" id="dcModal">
+        <div class="dc-modal">
+            <div class="dc-modal-header">
+                <div>
+                    <h3>Domestic Content</h3>
+                    <p class="dc-modal-subtitle"><?php echo $dc_tracked_coverage; ?>% of total watts tracked</p>
+                </div>
+                <button type="button" class="dc-modal-close" onclick="closeDomesticContentModal()">&times;</button>
+            </div>
+            <div class="dc-modal-body">
+                <div class="dc-overall-stat">
+                    <span class="dc-overall-number"><?php echo number_format($dc_overall_pct, 1); ?>%</span>
+                    <span class="dc-overall-label">Weighted Average</span>
+                </div>
+
+                <?php foreach ($dc_by_batch as $bid => $bdc): ?>
+                <div class="dc-batch-card">
+                    <div class="dc-batch-header">
+                        <span class="dc-batch-name"><?php echo htmlspecialchars($bdc['vendor_name']); ?></span>
+                        <?php if ($bdc['dc_pct'] !== null): ?>
+                        <span class="dc-batch-pct"><?php echo number_format($bdc['dc_pct'], 1); ?>%</span>
+                        <?php else: ?>
+                        <span class="dc-batch-pct dc-na">N/A</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="dc-wattage-rows">
+                        <?php foreach ($bdc['wattages'] as $winfo): ?>
+                        <div class="dc-wattage-row">
+                            <span class="dc-wattage-label"><?php echo number_format($winfo['wattage'], 0); ?>W</span>
+                            <span class="dc-wattage-modules"><?php echo number_format($winfo['modules']); ?> modules</span>
+                            <?php if ($winfo['dc_pct'] !== null): ?>
+                            <div class="dc-wattage-bar-wrap">
+                                <div class="dc-wattage-bar" style="width: <?php echo min(100, $winfo['dc_pct']); ?>%"></div>
+                            </div>
+                            <span class="dc-wattage-pct"><?php echo number_format($winfo['dc_pct'], 1); ?>%</span>
+                            <?php else: ?>
+                            <span class="dc-wattage-pct dc-na">Not tracked</span>
+                            <?php endif; ?>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
         </div>
     </div>
     <?php endif; ?>
@@ -3149,26 +3274,41 @@ function toggleMainDeliveriesDropdown() {
     }
 }
 
-// Wattage Breakdown Toggle (available for all users who can see module breakdown)
-function toggleWattageBreakdown(event) {
-    event.stopPropagation();
-    const box = event.currentTarget;
-    const dropdown = box.querySelector('.wattage-breakdown');
-
-    if (dropdown) {
-        const isOpen = dropdown.classList.contains('show');
-        dropdown.classList.toggle('show', !isOpen);
-    }
+// Order Breakdown Modal
+function openOrderBreakdownModal() {
+    const modal = document.getElementById('orderBreakdownModal');
+    if (modal) modal.classList.add('show');
 }
 
-// Close wattage breakdown when clicking outside
+function closeOrderBreakdownModal() {
+    const modal = document.getElementById('orderBreakdownModal');
+    if (modal) modal.classList.remove('show');
+}
+
+// Domestic Content Modal
+function openDomesticContentModal() {
+    const modal = document.getElementById('dcModal');
+    if (modal) modal.classList.add('show');
+}
+
+function closeDomesticContentModal() {
+    const modal = document.getElementById('dcModal');
+    if (modal) modal.classList.remove('show');
+}
+
+// Close modals on overlay click
 document.addEventListener('click', function(event) {
-    const modulesBox = document.querySelector('.project-stat-item.stat-clickable') || document.querySelector('.stat-chip.has-dropdown') || document.querySelector('.modules-ordered-box');
-    if (modulesBox && !modulesBox.contains(event.target)) {
-        const dropdown = modulesBox.querySelector('.wattage-breakdown');
-        if (dropdown) {
-            dropdown.classList.remove('show');
-        }
+    if (event.target.classList.contains('dc-modal-overlay')) {
+        event.target.classList.remove('show');
+    }
+});
+
+// Close modals on Escape key
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        document.querySelectorAll('.dc-modal-overlay.show').forEach(function(m) {
+            m.classList.remove('show');
+        });
     }
 });
 

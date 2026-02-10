@@ -241,6 +241,72 @@ foreach($total_orders as $lbl => $info) {
     $total_raw_modules += $info['raw_quantity'];
 }
 
+// Domestic content data for this project
+$dc_by_batch = [];
+$dc_total_tracked_watts = 0;
+$dc_total_weighted_watts = 0;
+$dc_total_all_watts = 0;
+
+$stmt_dc = $conn->prepare("
+    SELECT
+        m.id AS batch_id,
+        m.vendor_name,
+        umi.wattage,
+        SUM(umi.quantity) AS total_modules,
+        SUM(umi.wattage * umi.quantity) AS total_watts,
+        COALESCE(SUM(CASE WHEN umi.domestic_content_pct IS NOT NULL THEN umi.wattage * umi.quantity END), 0) AS tracked_watts,
+        COALESCE(SUM(CASE WHEN umi.domestic_content_pct IS NOT NULL THEN (umi.wattage * umi.quantity * umi.domestic_content_pct / 100) END), 0) AS weighted_domestic_watts
+    FROM modules m
+    JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+    WHERE m.project_id = ? AND umi.wattage > 0 AND umi.quantity > 0
+    GROUP BY m.id, m.vendor_name, umi.wattage
+    ORDER BY m.vendor_name, umi.wattage
+");
+$stmt_dc->bind_param("i", $project_id);
+$stmt_dc->execute();
+$dc_result = $stmt_dc->get_result();
+
+while ($dc_row = $dc_result->fetch_assoc()) {
+    $batch_id = (int)$dc_row['batch_id'];
+    if (!isset($dc_by_batch[$batch_id])) {
+        $dc_by_batch[$batch_id] = [
+            'vendor_name' => $dc_row['vendor_name'] ?: 'Unknown',
+            'wattages' => [],
+            'tracked_watts' => 0,
+            'weighted_watts' => 0,
+            'total_watts' => 0,
+        ];
+    }
+
+    $tracked = (float)$dc_row['tracked_watts'];
+    $weighted = (float)$dc_row['weighted_domestic_watts'];
+
+    $dc_by_batch[$batch_id]['wattages'][] = [
+        'wattage' => (float)$dc_row['wattage'],
+        'modules' => (int)$dc_row['total_modules'],
+        'dc_pct' => $tracked > 0 ? round(($weighted / $tracked) * 100, 1) : null,
+    ];
+
+    $dc_by_batch[$batch_id]['tracked_watts'] += $tracked;
+    $dc_by_batch[$batch_id]['weighted_watts'] += $weighted;
+    $dc_by_batch[$batch_id]['total_watts'] += (float)$dc_row['total_watts'];
+
+    $dc_total_tracked_watts += $tracked;
+    $dc_total_weighted_watts += $weighted;
+    $dc_total_all_watts += (float)$dc_row['total_watts'];
+}
+$stmt_dc->close();
+
+$dc_overall_pct = $dc_total_tracked_watts > 0 ? round(($dc_total_weighted_watts / $dc_total_tracked_watts) * 100, 1) : null;
+$dc_tracked_coverage = $dc_total_all_watts > 0 ? round(($dc_total_tracked_watts / $dc_total_all_watts) * 100, 0) : 0;
+
+foreach ($dc_by_batch as &$bdc) {
+    $bdc['dc_pct'] = $bdc['tracked_watts'] > 0
+        ? round(($bdc['weighted_watts'] / $bdc['tracked_watts']) * 100, 1)
+        : null;
+}
+unset($bdc);
+
 // Projection fallback totals (used when projection allocations are incomplete)
 $projection_fallback_totals = null;
 $fallback_total_watts = 0;
