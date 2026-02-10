@@ -711,22 +711,18 @@ $conn->close();
                         </p>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
-            <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to add modules?</h3>
-            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
-                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
-                    <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
-                    <strong style="color: #293E4C;">Manual Entry</strong>
-                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Enter generic module batch information manually. Pallets can be auto-generated with system IDs.</p>
-                </label>
-                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
-                    <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
-                    <strong style="color: #293E4C;">Import Pallets</strong>
-                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload real manufacturer pallet data from a CSV/Excel file.</p>
-                </label>
+                <div class="entry-method-toggle" style="display: flex; background: #f0f0f0; border-radius: 10px; padding: 4px; gap: 4px;">
+                    <label class="method-option" style="padding: 10px 20px; border-radius: 8px; cursor: pointer; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                        <input type="radio" name="entry_method" value="manual" checked style="display: none;">
+                        <i class="fas fa-edit" style="color: #488C9A;"></i>
+                        <span style="font-weight: 600; color: #293E4C; font-size: 0.9rem;">Manual Entry</span>
+                    </label>
+                    <label class="method-option" style="padding: 10px 20px; border-radius: 8px; cursor: pointer; background: transparent; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                        <input type="radio" name="entry_method" value="import" style="display: none;">
+                        <i class="fas fa-file-import" style="color: #6c757d;"></i>
+                        <span style="font-weight: 500; color: #6c757d; font-size: 0.9rem;">Import Pallets</span>
+                    </label>
+                </div>
             </div>
         </div>
 
@@ -809,22 +805,22 @@ $conn->close();
                 <!-- Step Indicator -->
                 <div class="step-indicator-wrapper">
                     <div class="step-indicator">
-                        <div class="step current" data-step="1">
+                        <div class="step current" data-step="1" onclick="goToStep(1)">
                             <div class="step-number">1</div>
                             <div class="step-title">Manufacturer &amp; Modules</div>
                         </div>
                         <div class="step-connector"></div>
-                        <div class="step" data-step="2">
+                        <div class="step" data-step="2" onclick="goToStep(2)">
                             <div class="step-number">2</div>
                             <div class="step-title">Pricing &amp; Milestones</div>
                         </div>
                         <div class="step-connector"></div>
-                        <div class="step" data-step="3">
+                        <div class="step" data-step="3" onclick="goToStep(3)">
                             <div class="step-number">3</div>
                             <div class="step-title">Logistics &amp; Docs</div>
                         </div>
                         <div class="step-connector"></div>
-                        <div class="step" data-step="4">
+                        <div class="step" data-step="4" onclick="goToStep(4)">
                             <div class="step-number">4</div>
                             <div class="step-title">Palletization</div>
                         </div>
@@ -1159,20 +1155,21 @@ $conn->close();
 
         methodRadios.forEach(function(radio) {
             radio.addEventListener('change', function() {
+                methodOptions.forEach(function(opt) {
+                    var isActive = opt.querySelector('input').checked;
+                    opt.style.background = isActive ? '#fff' : 'transparent';
+                    opt.style.boxShadow = isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none';
+                    var icon = opt.querySelector('i');
+                    var label = opt.querySelector('span');
+                    if (icon) icon.style.color = isActive ? '#488C9A' : '#6c757d';
+                    if (label) { label.style.color = isActive ? '#293E4C' : '#6c757d'; label.style.fontWeight = isActive ? '600' : '500'; }
+                });
                 if (this.value === 'manual') {
                     manualContainer.style.display = 'block';
                     importContainer.style.display = 'none';
-                    methodOptions[0].style.border = '2px solid #488C9A';
-                    methodOptions[0].style.background = 'rgba(72,140,154,0.05)';
-                    methodOptions[1].style.border = '2px solid #e9ecef';
-                    methodOptions[1].style.background = '#f8f9fa';
                 } else {
                     manualContainer.style.display = 'none';
                     importContainer.style.display = 'block';
-                    methodOptions[1].style.border = '2px solid #488C9A';
-                    methodOptions[1].style.background = 'rgba(72,140,154,0.05)';
-                    methodOptions[0].style.border = '2px solid #e9ecef';
-                    methodOptions[0].style.background = '#f8f9fa';
                 }
             });
         });
