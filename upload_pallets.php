@@ -5,8 +5,9 @@
  * Multi-step upload process for importing pallets/modules into inventory.
  * Step 1: Select manufacturer and upload file
  * Step 2: Map columns
- * Step 3: Preview and confirm import
- * Step 4: Results
+ * Step 3: Pricing & Milestones
+ * Step 4: Preview and confirm import
+ * Step 5: Results
  */
 
 session_name("logistics_session");
@@ -1021,6 +1022,126 @@ $conn->close();
             background: #fff3cd;
             color: #856404;
         }
+        /* Pricing & Domestic Content Grid */
+        .pricing-top-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .pricing-top-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .pricing-top-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .pricing-top-icon {
+            font-size: 1.1rem;
+        }
+        .pricing-top-card .form-group label {
+            font-size: 0.9rem;
+        }
+        .pricing-top-card .form-group input[type="number"] {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        @media (max-width: 700px) {
+            .pricing-top-grid { grid-template-columns: 1fr; }
+        }
+
+        /* Milestone Styles (from module_batch_styles for step 3) */
+        .form-subsection-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 24px 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .form-subsection-title:first-of-type { margin-top: 0; }
+        .milestone-row {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #e9ecef;
+        }
+        .milestone-row-inner {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .milestone-trigger-col { flex: 3; min-width: 0; }
+        .milestone-pct-col { flex: 0 0 120px; }
+        .milestone-remove-col { flex: 0 0 auto; }
+        .milestone-label { font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; display: block; margin-bottom: 4px; }
+        .milestone-select, .milestone-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .milestone-input { width: 80px; }
+        .milestone-remove-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .milestone-trigger-info {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #17a2b8;
+            font-style: italic;
+            min-height: 14px;
+        }
+        .milestone-po-date-row {
+            display: none;
+            margin-top: 8px;
+            padding: 10px 12px;
+            background: linear-gradient(135deg, #e8f4f8 0%, #f0f8ff 100%);
+            border: 1px solid #b8daff;
+            border-radius: 6px;
+        }
+        .milestone-po-date-row.visible {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .milestone-po-date-row label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #488C9A;
+            white-space: nowrap;
+        }
+        .milestone-po-date-row input[type="date"] {
+            padding: 6px 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 13px;
+            max-width: 200px;
+        }
+        .milestone-po-date-row input[type="date"]:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.15);
+        }
+        .help-text { font-size: 0.85rem; color: #6c757d; margin-top: 6px; }
     </style>
 </head>
 <body>
@@ -1058,10 +1179,14 @@ $conn->close();
             </div>
             <div class="step" data-step="3">
                 <span class="step-number">3</span>
-                <span>Preview</span>
+                <span>Pricing & Milestones</span>
             </div>
             <div class="step" data-step="4">
                 <span class="step-number">4</span>
+                <span>Preview</span>
+            </div>
+            <div class="step" data-step="5">
+                <span class="step-number">5</span>
                 <span>Complete</span>
             </div>
         </div>
@@ -1263,23 +1388,6 @@ $conn->close();
                             <label for="module_notes">Module Notes</label>
                             <textarea id="module_notes" name="module_notes" rows="2" placeholder="General notes about the modules..."></textarea>
                         </div>
-                        <div class="form-group" style="margin-top: 12px;">
-                            <label for="cost_per_watt">Cost Per Watt ($/W) <span style="color: #6c757d; font-weight: 400; font-size: 0.85em;">(optional)</span></label>
-                            <input type="number" step="0.000001" min="0" id="cost_per_watt" name="cost_per_watt" placeholder="e.g. 0.25">
-                            <small style="color: #6c757d; font-size: 0.75rem;">Used for module cost reporting and milestone calculations. If no milestones are set, we assume 100% due on project delivery.</small>
-                        </div>
-                        <h5 style="margin: 20px 0 12px 0; color: #293E4C; font-size: 0.95rem; border-bottom: 1px solid #e9ecef; padding-bottom: 8px;">Domestic Content</h5>
-                        <div class="form-group" style="margin-top: 12px;">
-                            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 0;">
-                                <input type="checkbox" id="track_domestic_content" name="track_domestic_content" value="1">
-                                Track Domestic Content %
-                            </label>
-                            <small style="color: #6c757d; font-size: 0.75rem;">Apply one domestic-content percentage to imported module rows in this batch.</small>
-                        </div>
-                        <div class="form-group" id="domesticContentPctGroup" style="display: none;">
-                            <label for="domestic_content_pct">Domestic Content %</label>
-                            <input type="number" step="0.01" min="0" max="100" id="domestic_content_pct" name="domestic_content_pct" placeholder="e.g. 45.50">
-                        </div>
                     </div>
 
                     <div class="form-group">
@@ -1353,18 +1461,95 @@ $conn->close();
                     </label>
                     <div style="display: flex; gap: 12px;">
                         <button type="button" class="btn btn-secondary" id="btnBack2">Back</button>
-                        <button type="button" class="btn btn-primary" id="btnNext2">Next: Preview Import</button>
+                        <button type="button" class="btn btn-primary" id="btnNext2">Next: Pricing & Milestones</button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Step 3: Preview -->
+        <!-- Step 3: Pricing & Milestones -->
         <div class="step-content" id="step3">
             <div class="content-card">
-                <h2>Step 3: Preview Import</h2>
+                <h2>Step 3: Pricing & Milestones</h2>
 
-                <!-- Logistics & Documentation Buttons for Step 3 -->
+                <?php $module = []; $existingMilestones = []; ?>
+
+                <!-- Pricing & Domestic Content side by side -->
+                <div class="pricing-top-grid">
+                    <div class="pricing-top-card">
+                        <div class="pricing-top-card-header">
+                            <span class="pricing-top-icon">💲</span>
+                            <span>Cost Per Watt</span>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="cost_per_watt">Price per Watt ($/W)</label>
+                            <input type="number" step="0.000001" min="0" name="cost_per_watt" id="cost_per_watt"
+                                   placeholder="e.g. 0.25"
+                                   value="<?php echo htmlspecialchars($module['cost_per_watt'] ?? ''); ?>"
+                                   oninput="mb_updateMilestoneAvailability()">
+                            <span class="help-text">Used for reporting and milestone calculations.</span>
+                        </div>
+                    </div>
+                    <div class="pricing-top-card">
+                        <div class="pricing-top-card-header">
+                            <span class="pricing-top-icon">🏭</span>
+                            <span>Domestic Content</span>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 12px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 0;">
+                                <input type="checkbox" id="track_domestic_content" name="track_domestic_content" value="1"
+                                       style="width: 18px; height: 18px; accent-color: #488C9A; cursor: pointer;">
+                                <span>Track Domestic Content %</span>
+                            </label>
+                        </div>
+                        <div class="form-group" id="domesticContentPctGroup" style="display: none; margin-bottom: 0;">
+                            <label for="domestic_content_pct">Percentage</label>
+                            <input type="number" step="0.01" min="0" max="100" id="domestic_content_pct" name="domestic_content_pct" placeholder="e.g. 45.50">
+                            <span class="help-text">Applied to all imported rows in this batch.</span>
+                        </div>
+                        <div id="domesticContentDisabledHint" class="help-text" style="margin-top: 4px;">Enable to apply a domestic-content percentage to this batch.</div>
+                    </div>
+                </div>
+
+                <!-- Milestones section from shared component (without the cost per watt part) -->
+                <div class="form-subsection-title">Payment Milestones <span style="font-weight: 400; font-size: 0.85rem; color: #6c757d;">(optional)</span></div>
+                <p style="margin: 8px 0 16px 0; color: #6c757d; font-size: 0.85rem;">
+                    Configure when payments are triggered based on delivery events.
+                    Payment = <strong>cost per watt &times; wattage &times; quantity &times; percentage</strong>
+                </p>
+                <div id="mb_milestoneRequiresCost" style="display: none; padding: 12px 16px; background: #f8f9fa; border: 1px dashed #dee2e6; border-radius: 8px; color: #6c757d; font-size: 13px; text-align: center;">
+                    Enter a cost per watt above to configure payment milestones.
+                </div>
+                <div id="mb_milestoneConfigArea">
+                    <div id="mb_milestoneContainer"></div>
+                    <button type="button" id="mb_addMilestoneBtn" style="margin-top: 12px; padding: 10px 16px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">
+                        + Add Milestone
+                    </button>
+                </div>
+                <div id="mb_milestoneTotalArea" style="margin-top: 20px; padding: 12px 16px; background: #f8f9fa; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 500; color: #293E4C;">Total Percentage:</span>
+                    <span id="mb_milestoneTotalPercent" style="font-weight: 600; font-size: 1.1rem; color: #17a2b8;">0%</span>
+                </div>
+                <div id="mb_milestonePercentWarning" style="display: none; margin-top: 8px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; color: #856404; font-size: 12px;">
+                    Note: Total percentage does not equal 100%. This is allowed but may indicate incomplete milestone configuration.
+                </div>
+                <div id="mb_milestoneHiddenInputs"></div>
+                <input type="hidden" name="po_execution_date" id="po_execution_date"
+                       value="<?php echo htmlspecialchars($module['po_execution_date'] ?? ''); ?>">
+
+                <div class="btn-group">
+                    <button type="button" class="btn btn-secondary" id="btnBack3">Back</button>
+                    <button type="button" class="btn btn-primary" id="btnNext3">Next: Preview Import</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Preview -->
+        <div class="step-content" id="step4">
+            <div class="content-card">
+                <h2>Step 4: Preview Import</h2>
+
+                <!-- Logistics & Documentation Buttons for Preview -->
                 <div class="inline-buttons-row">
                     <button type="button" class="logistics-inline-btn" id="logisticsBtn3" onclick="openLogisticsPanel()">
                         <span>📦</span>
@@ -1437,14 +1622,14 @@ $conn->close();
                 </div>
 
                 <div class="btn-group">
-                    <button type="button" class="btn btn-secondary" id="btnBack3">Back</button>
+                    <button type="button" class="btn btn-secondary" id="btnBack4">Back</button>
                     <button type="button" class="btn btn-success" id="btnConfirm">Confirm Import</button>
                 </div>
             </div>
         </div>
 
-        <!-- Step 4: Results -->
-        <div class="step-content" id="step4">
+        <!-- Step 5: Results -->
+        <div class="step-content" id="step5">
             <div class="content-card">
                 <div class="results-summary" id="resultsContent">
                     <!-- Populated by JavaScript -->
@@ -1624,6 +1809,13 @@ $conn->close();
     </div>
 </main>
 
+<?php
+$existingWattages = [];
+$existingMilestones = [];
+$prefLocationId = 0;
+include 'components/module_batch_scripts.php';
+?>
+
 <script>
 (function() {
     // State
@@ -1677,7 +1869,9 @@ $conn->close();
     const btnNext1 = document.getElementById('btnNext1');
     const btnNext2 = document.getElementById('btnNext2');
     const btnBack2 = document.getElementById('btnBack2');
+    const btnNext3 = document.getElementById('btnNext3');
     const btnBack3 = document.getElementById('btnBack3');
+    const btnBack4 = document.getElementById('btnBack4');
     const btnConfirm = document.getElementById('btnConfirm');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
@@ -1693,6 +1887,8 @@ $conn->close();
         if (domesticContentPctInput) {
             domesticContentPctInput.required = enabled;
         }
+        const hint = document.getElementById('domesticContentDisabledHint');
+        if (hint) hint.style.display = enabled ? 'none' : '';
     }
     if (trackDomesticCheckbox) {
         trackDomesticCheckbox.addEventListener('change', toggleDomesticContentInput);
@@ -2033,8 +2229,7 @@ $conn->close();
                 updateCalculatedFields();
             }
 
-            // Show preview
-            buildPreview();
+            // Go to Pricing & Milestones step
             goToStep(3);
 
         } catch (err) {
@@ -2280,10 +2475,31 @@ $conn->close();
         }
     }
 
-    // Step 3 -> Step 2
+    // Step 3 (Pricing & Milestones) -> Step 2
     btnBack3.addEventListener('click', () => goToStep(2));
 
-    // Step 3 -> Confirm Import
+    // Step 3 -> Step 4 (Preview)
+    btnNext3.addEventListener('click', () => {
+        // Validate milestones if cost_per_watt is set
+        const costInput = document.getElementById('cost_per_watt');
+        const hasCost = costInput && costInput.value && parseFloat(costInput.value) > 0;
+        if (hasCost && typeof mb_milestones !== 'undefined' && mb_milestones.length > 0) {
+            if (typeof mb_validateMilestoneTotal === 'function' && !mb_validateMilestoneTotal()) {
+                return;
+            }
+            if (typeof mb_validatePoExecutionDate === 'function' && !mb_validatePoExecutionDate()) {
+                return;
+            }
+        }
+
+        buildPreview();
+        goToStep(4);
+    });
+
+    // Step 4 (Preview) -> Step 3
+    btnBack4.addEventListener('click', () => goToStep(3));
+
+    // Step 4 -> Confirm Import
     btnConfirm.addEventListener('click', async () => {
         // Check if over capacity and require explicit confirmation
         // Use same calculation as preview: only count NEW pallets + MW diff from updates
@@ -2372,6 +2588,22 @@ $conn->close();
             }
         });
 
+        // Add PO execution date
+        const poDateInput = document.getElementById('po_execution_date');
+        if (poDateInput && poDateInput.value) {
+            formData.append('po_execution_date', poDateInput.value);
+        }
+
+        // Add milestone hidden inputs
+        if (typeof mb_milestones !== 'undefined' && mb_milestones.length > 0) {
+            mb_milestones.forEach((m, index) => {
+                if (m.trigger_event && parseFloat(m.percentage) > 0) {
+                    formData.append('milestones[' + index + '][trigger_event]', m.trigger_event);
+                    formData.append('milestones[' + index + '][percentage]', m.percentage);
+                }
+            });
+        }
+
         // Add module documentation files if any
         const moduleDocsFiles = window.getModuleDocsFiles ? window.getModuleDocsFiles() : [];
         if (moduleDocsFiles.length > 0) {
@@ -2398,7 +2630,7 @@ $conn->close();
 
             // Show results
             showResults(result);
-            goToStep(4);
+            goToStep(5);
 
         } catch (err) {
             hideLoading();

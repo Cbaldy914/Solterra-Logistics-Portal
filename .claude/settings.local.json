@@ -21,7 +21,10 @@
       "Bash(cmd /c \"copy project_overview.php project_overview_backup.php && copy /Y project_overview_new.php project_overview.php && del temp_extract.php project_overview_new.php\")",
       "Bash(del \"\\\\?\\\\C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\nul\")",
       "Bash(git stash:*)",
-      "Bash(ls \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\migrations\"\" 2>/dev/null || echo \"No migrations dir \")"
+      "Bash(ls \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\migrations\"\" 2>/dev/null || echo \"No migrations dir \")",
+      "Bash(C:\\\\xampp\\\\php\\\\php.exe:*)",
+      "Bash(\"C:/xampp/php/php.exe\" -l \"C:/xampp/htdocs/Solterra-Solutions/Solterra-Logistics-Portal/upload_pallets.php\")",
+      "Bash(\"C:/xampp/php/php.exe\" -l:*)"
     ],
     "deny": [],
     "ask": []
