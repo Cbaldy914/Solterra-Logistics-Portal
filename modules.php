@@ -24,7 +24,7 @@ $account_id_for_user  = null;
 $accounts             = []; // For global_admin account dropdown
 $projects_for_account = []; // For project assignment dropdown
 
-if ($role === 'admin' || $role === 'global_admin') {
+if (in_array($role, ['admin', 'global_admin', 'customer_admin'], true)) {
     // Fetch the specific account_id linked to this admin/global_admin user
     $sqlAdminUserAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1";
     $stmtAdminUserAcc = $conn->prepare($sqlAdminUserAcc);
@@ -54,7 +54,7 @@ if ($role === 'global_admin') {
             $projects_for_account[] = $proj;
         }
     }
-} elseif ($role === 'admin' && $account_id_for_admin) {
+} elseif (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin) {
     // Admins see projects for their assigned account in dropdown
     $sqlAdminProjs = "SELECT id, project_name, account_id FROM projects WHERE account_id = ? ORDER BY project_name ASC";
     $stmtAdminProjs = $conn->prepare($sqlAdminProjs);
@@ -96,7 +96,7 @@ if ($role === 'global_admin') {
 // Ensure $projects_for_account has account_id if not already present (e.g. for admin role)
 // For global_admin, account_id is already fetched. For user role, it's fetched.
 // For admin role, we fetched projects WHERE account_id = $account_id_for_admin, so we can add it.
-if ($role === 'admin' && $account_id_for_admin && !empty($projects_for_account)) {
+if (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin && !empty($projects_for_account)) {
     foreach ($projects_for_account as $key => $proj) {
         if (!isset($proj['account_id'])) { // Should already be there from the query
             $projects_for_account[$key]['account_id'] = $account_id_for_admin;
@@ -260,7 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
     
             // Insert into modules (including new project_id)
-            $stmt = $conn->prepare("INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, ?)");
+            $stmt = $conn->prepare("INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, NULLIF(?, 0))");
             if (!$stmt) throw new Exception("Error preparing main insert: " . $conn->error);
             $stmt->bind_param("issi", $account_id, $vendor_name, $initial_location, $project_id);
             if (!$stmt->execute()) throw new Exception("Error inserting module batch: " . $stmt->error);
@@ -272,23 +272,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (isset($_POST['wattages'], $_POST['quantities'])) {
                 $wattages   = $_POST['wattages'];
                 $quantities = $_POST['quantities'];
+                $domestic_content_pcts = $_POST['domestic_content_pcts'] ?? [];
+                $track_domestic_content = !empty($_POST['track_domestic_content']);
     
                 if (count($wattages) !== count($quantities)) throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
                 
-                $stmt2 = $conn->prepare("INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)");
-                if (!$stmt2) throw new Exception("Error preparing item insert: " . $conn->error);
+                $stmt2WithDomestic = $conn->prepare("INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity, domestic_content_pct) VALUES (?, ?, ?, ?)");
+                $stmt2NoDomestic = $conn->prepare("INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)");
+                if (!$stmt2WithDomestic || !$stmt2NoDomestic) throw new Exception("Error preparing item insert: " . $conn->error);
                 
                 for ($i=0; $i<count($wattages); $i++) {
                     $w = intval($wattages[$i]);
                     $q = intval($quantities[$i]);
     
                     if ($w <= 0 || $q <= 0) throw new Exception("Wattage and Quantity must be positive integers for all entries.");
+
+                    $domesticContentPct = null;
+                    if ($track_domestic_content) {
+                        $pctRaw = trim((string)($domestic_content_pcts[$i] ?? ''));
+                        if ($pctRaw === '' || !is_numeric($pctRaw)) {
+                            throw new Exception("Domestic Content % is required and must be numeric when tracking is enabled.");
+                        }
+                        $domesticContentPct = (float)$pctRaw;
+                        if ($domesticContentPct < 0 || $domesticContentPct > 100) {
+                            throw new Exception("Domestic Content % must be between 0 and 100.");
+                        }
+                    }
                     
-                    $stmt2->bind_param("iii", $unassigned_module_id, $w, $q);
-                    if (!$stmt2->execute()) throw new Exception("Error inserting wattage/quantity item: " . $stmt2->error);
+                    if ($track_domestic_content) {
+                        $stmt2WithDomestic->bind_param("iiid", $unassigned_module_id, $w, $q, $domesticContentPct);
+                        if (!$stmt2WithDomestic->execute()) throw new Exception("Error inserting wattage/quantity item: " . $stmt2WithDomestic->error);
+                    } else {
+                        $stmt2NoDomestic->bind_param("iii", $unassigned_module_id, $w, $q);
+                        if (!$stmt2NoDomestic->execute()) throw new Exception("Error inserting wattage/quantity item: " . $stmt2NoDomestic->error);
+                    }
                     $wattage_items_added++;
                 }
-                $stmt2->close();
+                $stmt2WithDomestic->close();
+                $stmt2NoDomestic->close();
             }
     
             if ($wattage_items_added === 0) throw new Exception("You must add at least one Wattage/Quantity entry.");
@@ -323,7 +344,7 @@ if ($conn) { // Check connection is still valid
                        JOIN customer_accounts c ON um.account_id = c.id
                        LEFT JOIN projects p ON um.project_id = p.id
                        ORDER BY c.name ASC, um.vendor_name ASC";
-    } elseif ($role === 'admin' && !empty($account_id_for_admin)) {
+    } elseif (in_array($role, ['admin', 'customer_admin'], true) && !empty($account_id_for_admin)) {
          $sqlModules = "SELECT 
                           um.id, um.vendor_name, um.initial_location, um.project_id,
                           c.name AS account_name,
@@ -363,7 +384,7 @@ if ($conn) { // Check connection is still valid
         $resultModules = $stmtModules->get_result();
         
         // Fetch items for each batch
-        $stmtItems = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ?");
+        $stmtItems = $conn->prepare("SELECT wattage, quantity, domestic_content_pct FROM unassigned_module_items WHERE unassigned_module_id = ?");
         if (!$stmtItems) {
             $errorMessage .= " Error preparing item query: " . $conn->error;
         } else {
@@ -982,6 +1003,8 @@ if ($conn && $conn instanceof mysqli) {
         function addWattageField() {
             var container = document.getElementById('wattage-container');
             var index = container.children.length;
+            var trackDomesticCheckbox = document.getElementById('track_domestic_content');
+            var trackDomestic = !!(trackDomesticCheckbox && trackDomesticCheckbox.checked);
 
             var div = document.createElement('div');
             div.className = 'wattage-entry';
@@ -1012,6 +1035,23 @@ if ($conn && $conn instanceof mysqli) {
             quantityDiv.appendChild(quantityLabel);
             quantityDiv.appendChild(quantityInput);
 
+            var domesticDiv = document.createElement('div');
+            domesticDiv.className = 'domestic-content-group';
+            domesticDiv.style.display = trackDomestic ? '' : 'none';
+            var domesticLabel = document.createElement('label');
+            domesticLabel.textContent = 'Domestic Content %';
+            domesticLabel.htmlFor = 'domestic_content_pcts_' + index;
+            var domesticInput = document.createElement('input');
+            domesticInput.type = 'number';
+            domesticInput.step = '0.01';
+            domesticInput.min = '0';
+            domesticInput.max = '100';
+            domesticInput.name = 'domestic_content_pcts[' + index + ']';
+            domesticInput.id = 'domestic_content_pcts_' + index;
+            domesticInput.required = trackDomestic;
+            domesticDiv.appendChild(domesticLabel);
+            domesticDiv.appendChild(domesticInput);
+
             var removeBtnDiv = document.createElement('div');
             removeBtnDiv.className = 'remove-btn-container';
             var removeButton = document.createElement('button');
@@ -1024,9 +1064,22 @@ if ($conn && $conn instanceof mysqli) {
 
             div.appendChild(wattageDiv);
             div.appendChild(quantityDiv);
+            div.appendChild(domesticDiv);
             div.appendChild(removeBtnDiv);
 
             container.appendChild(div);
+        }
+
+        function toggleDomesticContentFields() {
+            var checkbox = document.getElementById('track_domestic_content');
+            var enabled = !!(checkbox && checkbox.checked);
+            document.querySelectorAll('.domestic-content-group').forEach(function(group) {
+                group.style.display = enabled ? '' : 'none';
+                var input = group.querySelector('input');
+                if (input) {
+                    input.required = enabled;
+                }
+            });
         }
 
         // Modal handling will be added after DOM is loaded
@@ -1048,6 +1101,12 @@ if ($conn && $conn instanceof mysqli) {
             <?php if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($errorMessage)): ?>
             modal.style.display = 'block';
             <?php endif; ?>
+
+            var trackDomesticCheckbox = document.getElementById('track_domestic_content');
+            if (trackDomesticCheckbox) {
+                trackDomesticCheckbox.addEventListener('change', toggleDomesticContentFields);
+            }
+            toggleDomesticContentFields();
 
             // NEW: Add initial wattage field if container is empty on modal load
             if (modal && modal.style.display === 'block') {
@@ -1121,7 +1180,7 @@ if ($conn && $conn instanceof mysqli) {
                 <h1>Manage Modules</h1>
                 <p class="subtitle">Track and manage module batches across your projects</p>
             </div>
-            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
             <a href="add_module_batch.php" class="btn-add-batch">
                 <span>+</span> Add Module Batch
             </a>
@@ -1222,17 +1281,24 @@ if ($conn && $conn instanceof mysqli) {
                 </select>
 
                 <div class="section-title">Module Wattage and Quantities</div>
+                <label style="display:flex; align-items:center; gap:8px; margin-top: 8px; font-weight:500;">
+                    <input type="checkbox" id="track_domestic_content" name="track_domestic_content" value="1" <?php echo !empty($_POST['track_domestic_content']) ? 'checked' : ''; ?>>
+                    Track Domestic Content %
+                </label>
                 <div id="wattage-container">
                      <!-- Dynamically added fields go here -->
                      <?php
                      // Re-populate wattage fields on error
                      if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['wattages'])) {
+                          $showDomestic = !empty($_POST['track_domestic_content']);
                           for ($i = 0; $i < count($_POST['wattages']); $i++) {
                                $w_val = htmlspecialchars($_POST['wattages'][$i] ?? '');
                                $q_val = htmlspecialchars($_POST['quantities'][$i] ?? '');
+                               $d_val = htmlspecialchars($_POST['domestic_content_pcts'][$i] ?? '');
                                echo '<div class="wattage-entry">';
                                echo '<div><label>Wattage:</label><input type="number" step="1" name="wattages[]" value="' . $w_val . '" required></div>';
                                echo '<div><label>Quantity:</label><input type="number" step="1" name="quantities[]" value="' . $q_val . '" min="1" required></div>';
+                               echo '<div class="domestic-content-group" style="' . ($showDomestic ? '' : 'display:none;') . '"><label>Domestic Content %</label><input type="number" step="0.01" min="0" max="100" name="domestic_content_pcts[]" value="' . $d_val . '" ' . ($showDomestic ? 'required' : '') . '></div>';
                                echo '<div class="remove-btn-container"><button type="button" class="remove-wattage-btn" onclick="this.closest(\'.wattage-entry\').remove()">Remove</button></div>';
                                echo '</div>';
                           }
@@ -1288,7 +1354,11 @@ if ($conn && $conn instanceof mysqli) {
                                         $details = [];
                                         if (!empty($batch['items'])) {
                                             foreach ($batch['items'] as $item) {
-                                                 $details[] = htmlspecialchars((int)$item['wattage']) . 'W: ' . number_format((int)$item['quantity']);
+                                                 $detail = htmlspecialchars((int)$item['wattage']) . 'W: ' . number_format((int)$item['quantity']);
+                                                 if (isset($item['domestic_content_pct']) && $item['domestic_content_pct'] !== null && $item['domestic_content_pct'] !== '') {
+                                                     $detail .= ' (' . number_format((float)$item['domestic_content_pct'], 2) . '% domestic)';
+                                                 }
+                                                 $details[] = $detail;
                                             }
                                         }
                                         echo implode(', ', $details);
@@ -1308,7 +1378,7 @@ if ($conn && $conn instanceof mysqli) {
                             </td>
                             <td class="actions-cell">
                                 <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">View Details</a>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                 <div class="dropdown" style="display: inline-block;">
                                     <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-p<?php echo $batch['id']; ?>')" title="More actions">✏️</button>
                                     <div id="dropdown-menu-p<?php echo $batch['id']; ?>" class="dropdown-menu">
@@ -1330,7 +1400,7 @@ if ($conn && $conn instanceof mysqli) {
                         <td colspan="6">
                             <div class="empty-state-content">
                                 <span class="empty-icon">📦</span>
-                                <p>No project-assigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin'])): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
+                                <p>No project-assigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'], true)): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
                             </div>
                         </td>
                     </tr>
@@ -1381,7 +1451,11 @@ if ($conn && $conn instanceof mysqli) {
                                         $details = [];
                                         if (!empty($batch['items'])) {
                                             foreach ($batch['items'] as $item) {
-                                                 $details[] = htmlspecialchars((int)$item['wattage']) . 'W: ' . number_format((int)$item['quantity']);
+                                                 $detail = htmlspecialchars((int)$item['wattage']) . 'W: ' . number_format((int)$item['quantity']);
+                                                 if (isset($item['domestic_content_pct']) && $item['domestic_content_pct'] !== null && $item['domestic_content_pct'] !== '') {
+                                                     $detail .= ' (' . number_format((float)$item['domestic_content_pct'], 2) . '% domestic)';
+                                                 }
+                                                 $details[] = $detail;
                                             }
                                         }
                                         echo implode(', ', $details);
@@ -1401,7 +1475,7 @@ if ($conn && $conn instanceof mysqli) {
                             </td>
                             <td class="actions-cell">
                                 <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">View Details</a>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                 <div class="dropdown" style="display: inline-block;">
                                     <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-u<?php echo $batch['id']; ?>')" title="More actions">✏️</button>
                                     <div id="dropdown-menu-u<?php echo $batch['id']; ?>" class="dropdown-menu">
@@ -1424,7 +1498,7 @@ if ($conn && $conn instanceof mysqli) {
                         <td colspan="6">
                             <div class="empty-state-content">
                                 <span class="empty-icon">📦</span>
-                                <p>No unassigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin'])): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
+                                <p>No unassigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'], true)): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
                             </div>
                         </td>
                     </tr>

@@ -9,10 +9,13 @@ if (!isset($_SESSION['csrf_token'])) {
 
 /* ─────────────────────────── SECURITY / AUTH ─────────────────────────── */
 if (!isset($_SESSION['user_id']) ||
-    !in_array($_SESSION['role'], ['global_admin', 'admin'])) {
+    !in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'])) {
     header("Location: unauthorized");
     exit();
 }
+
+$role = $_SESSION['role'] ?? 'user';
+$is_customer_admin = ($role === 'customer_admin');
 
 /* ───────────────────────── PARAMS & CONNECTION ───────────────────────── */
 if (empty($_GET['delivery_id'])) {
@@ -65,6 +68,180 @@ if ($delivery['project_id']) {
     }
 }
 
+// Resolve origin and destination display values
+$origin_display = 'Manufacturer';
+$origin_address_display = 'Address unavailable';
+$destination_display = 'Unassigned / TBD';
+$destination_address_display = 'Address unavailable';
+
+$warehouse_lookup = [];
+$project_lookup = [];
+
+$warehouse_ids = [];
+$project_ids = [];
+
+if (!empty($delivery['warehouse_id'])) {
+    $warehouse_ids[] = (int)$delivery['warehouse_id'];
+}
+if (!empty($delivery['origin_id']) && ($delivery['origin_type'] ?? '') === 'warehouse') {
+    $warehouse_ids[] = (int)$delivery['origin_id'];
+}
+if (!empty($delivery['project_id'])) {
+    $project_ids[] = (int)$delivery['project_id'];
+}
+if (!empty($delivery['origin_id']) && ($delivery['origin_type'] ?? '') === 'project') {
+    $project_ids[] = (int)$delivery['origin_id'];
+}
+
+$warehouse_ids = array_values(array_unique(array_filter($warehouse_ids)));
+$project_ids = array_values(array_unique(array_filter($project_ids)));
+
+if (!function_exists('build_location_address')) {
+    function build_location_address($primary_address, $street, $city, $state, $zip) {
+        $primary_address = trim((string)$primary_address);
+        if ($primary_address !== '') {
+            return $primary_address;
+        }
+
+        $street = trim((string)$street);
+        $city = trim((string)$city);
+        $state = trim((string)$state);
+        $zip = trim((string)$zip);
+
+        $line_parts = [];
+        if ($street !== '') {
+            $line_parts[] = $street;
+        }
+
+        $city_state = implode(', ', array_filter([$city, $state], static function ($v) {
+            return $v !== '';
+        }));
+        if ($zip !== '') {
+            $city_state = trim($city_state . ($city_state !== '' ? ' ' : '') . $zip);
+        }
+        if ($city_state !== '') {
+            $line_parts[] = $city_state;
+        }
+
+        return !empty($line_parts) ? implode(', ', $line_parts) : 'Address unavailable';
+    }
+}
+
+if (!empty($warehouse_ids)) {
+    $w_placeholders = implode(',', array_fill(0, count($warehouse_ids), '?'));
+    $stmt_wh = $conn->prepare("
+        SELECT id, name, address, street_address, city, state, zip_code
+        FROM warehouses
+        WHERE id IN ($w_placeholders)
+    ");
+    if ($stmt_wh) {
+        $stmt_wh->bind_param(str_repeat('i', count($warehouse_ids)), ...$warehouse_ids);
+        $stmt_wh->execute();
+        $res_wh = $stmt_wh->get_result();
+        while ($w = $res_wh->fetch_assoc()) {
+            $warehouse_lookup[(int)$w['id']] = [
+                'name' => $w['name'],
+                'address' => build_location_address(
+                    $w['address'] ?? '',
+                    $w['street_address'] ?? '',
+                    $w['city'] ?? '',
+                    $w['state'] ?? '',
+                    $w['zip_code'] ?? ''
+                )
+            ];
+        }
+        $stmt_wh->close();
+    }
+}
+
+if (!empty($project_ids)) {
+    $p_placeholders = implode(',', array_fill(0, count($project_ids), '?'));
+    $stmt_pr = $conn->prepare("
+        SELECT id, project_name, project_address, street_address, city, state, zip_code
+        FROM projects
+        WHERE id IN ($p_placeholders)
+    ");
+    if ($stmt_pr) {
+        $stmt_pr->bind_param(str_repeat('i', count($project_ids)), ...$project_ids);
+        $stmt_pr->execute();
+        $res_pr = $stmt_pr->get_result();
+        while ($p = $res_pr->fetch_assoc()) {
+            $project_lookup[(int)$p['id']] = [
+                'name' => $p['project_name'],
+                'address' => build_location_address(
+                    $p['project_address'] ?? '',
+                    $p['street_address'] ?? '',
+                    $p['city'] ?? '',
+                    $p['state'] ?? '',
+                    $p['zip_code'] ?? ''
+                )
+            ];
+        }
+        $stmt_pr->close();
+    }
+}
+
+$origin_type = $delivery['origin_type'] ?? 'manufacturer';
+$origin_id = !empty($delivery['origin_id']) ? (int)$delivery['origin_id'] : null;
+
+if ($origin_type === 'warehouse' && $origin_id && isset($warehouse_lookup[$origin_id])) {
+    $origin_display = 'Warehouse: ' . $warehouse_lookup[$origin_id]['name'];
+    $origin_address_display = $warehouse_lookup[$origin_id]['address'];
+} elseif ($origin_type === 'project' && $origin_id && isset($project_lookup[$origin_id])) {
+    $origin_display = 'Project: ' . $project_lookup[$origin_id]['name'];
+    $origin_address_display = $project_lookup[$origin_id]['address'];
+} else {
+    $origin_display = 'Manufacturer: ' . ($delivery['supplier'] ?? 'Unknown');
+    $origin_address_display = 'Address managed in manufacturer profile';
+
+    $supplier_name = trim((string)($delivery['supplier'] ?? ''));
+    if ($supplier_name !== '') {
+        $stmt_mfr = $conn->prepare("
+            SELECT address, street_address, city, state, zip_code
+            FROM manufacturers
+            WHERE name = ?
+            LIMIT 1
+        ");
+        if ($stmt_mfr) {
+            $stmt_mfr->bind_param("s", $supplier_name);
+            $stmt_mfr->execute();
+            $res_mfr = $stmt_mfr->get_result();
+            if ($mfr = $res_mfr->fetch_assoc()) {
+                $origin_address_display = build_location_address(
+                    $mfr['address'] ?? '',
+                    $mfr['street_address'] ?? '',
+                    $mfr['city'] ?? '',
+                    $mfr['state'] ?? '',
+                    $mfr['zip_code'] ?? ''
+                );
+            }
+            $stmt_mfr->close();
+        }
+    }
+}
+
+$status_label = (string)($delivery['status_of_delivery'] ?? '');
+$warehouse_statuses = ['In Transit to Warehouse', 'Delivered to Warehouse'];
+$is_warehouse_destination_status = in_array($status_label, $warehouse_statuses, true);
+
+if (
+    $is_warehouse_destination_status &&
+    !empty($delivery['warehouse_id']) &&
+    isset($warehouse_lookup[(int)$delivery['warehouse_id']])
+) {
+    $destWh = $warehouse_lookup[(int)$delivery['warehouse_id']];
+    $destination_display = 'Warehouse: ' . $destWh['name'];
+    $destination_address_display = $destWh['address'];
+} elseif (!empty($delivery['project_id']) && isset($project_lookup[(int)$delivery['project_id']])) {
+    $destProject = $project_lookup[(int)$delivery['project_id']];
+    $destination_display = 'Project: ' . $destProject['name'];
+    $destination_address_display = $destProject['address'];
+} elseif (!empty($delivery['warehouse_id']) && isset($warehouse_lookup[(int)$delivery['warehouse_id']])) {
+    $destWh = $warehouse_lookup[(int)$delivery['warehouse_id']];
+    $destination_display = 'Warehouse: ' . $destWh['name'];
+    $destination_address_display = $destWh['address'];
+}
+
 /* ──────────────── FETCH ASSOCIATED PALLETS ──────────────── */
 // Fetch ALREADY associated pallets with their current status
 $associated_pallets = [];
@@ -113,9 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $old_left_wh_date = $delivery['left_warehouse_date'];
         
         /* Collect inputs */
-        $supplier           = $_POST['manufacturer']          ?? ''; // Map manufacturer to supplier for backward compatibility
-        $wattage            = $delivery['wattage']; // Keep original wattage, not editable here
-        $status             = $_POST['status_of_delivery'] ?? '';
+        $status             = $delivery['status_of_delivery']; // Managed elsewhere
         $quantity           = $calculated_quantity; // Use calculated quantity from pallets, not form input
         $bol_number         = $_POST['bol_number']         ?? '';
 
@@ -129,6 +304,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $access_charged     = isset($_POST['accessorial_costs']) ? (float)$_POST['accessorial_costs'] : $delivery['accessorial_costs'];
         $customer_cost      = isset($_POST['customer_cost']) ? (float)$_POST['customer_cost'] : $delivery['customer_cost'];
         $miles              = isset($_POST['miles']) ? (float)$_POST['miles'] : $delivery['miles'];
+
+        if ($is_customer_admin) {
+            // Customer admins only maintain what they paid carrier on this screen.
+            $access_paid = (float)$delivery['accessorial_costs_paid'];
+            $access_charged = (float)$delivery['accessorial_costs'];
+            $customer_cost = (float)$delivery['customer_cost'];
+            $miles = (float)$delivery['miles'];
+        }
 
         // Handle existing POD removal
         $pod = $delivery['proof_of_delivery'];
@@ -177,9 +360,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         /* Update Delivery */
         $sql = "
             UPDATE deliveries SET
-                supplier               = ?,
-                wattage                = ?,
-                status_of_delivery     = ?,
                 quantity               = ?,
                 bol_number             = ?,
                 anticipated_delivery_date = ?,
@@ -200,8 +380,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
 
         $stmt_update->bind_param(
-            "sssisssssddddsdi",
-            $supplier, $wattage, $status, $quantity, $bol_number,
+            "isssssddddsdi",
+            $quantity, $bol_number,
             $anticipated_date, $warehouse_arrival, $actual_date, $left_wh_date,
             $freight_cost, $access_paid, $access_charged, $customer_cost, $pod, $miles,
             $delivery_id
@@ -211,14 +391,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
         $stmt_update->close();
 
-        trigger_delivery_milestones_for_status(
-            $delivery_id,
-            $status,
-            $conn,
-            $_SESSION['user_id'] ?? null,
-            null,
-            $actual_date
-        );
+        $status_changed = ($old_status !== $status);
+        if ($status_changed) {
+            trigger_delivery_milestones_for_status(
+                $delivery_id,
+                $status,
+                $conn,
+                $_SESSION['user_id'] ?? null,
+                null,
+                $actual_date
+            );
+        }
 
         /* Update Associated Pallet Statuses to Match Delivery Status */
         $pallet_status_update_count = 0;
@@ -234,7 +417,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
             'Pending' => 'At Manufacturer' // Assume pallets go back to manufacturer if delivery is pending
         ];
         
-        if (isset($status_mapping[$status])) {
+        if ($status_changed && isset($status_mapping[$status])) {
             $new_pallet_status = $status_mapping[$status];
             
             // Get all pallets associated with this delivery
@@ -321,7 +504,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         // Define statuses that imply "Left Warehouse"
         $departed_statuses = ['In Transit to Project', 'Delivered to Project', 'In Transit to Warehouse']; // Moving to another WH is also a departure from current
 
-        if (in_array($status, $departed_statuses)) {
+        if ($status_changed && in_array($status, $departed_statuses)) {
             // Check which pallets were previously in warehouse
             $pallets_leaving_ids = [];
             foreach ($associated_pallets as $p) {
@@ -420,6 +603,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 }
 
 /* ─────────────────────────── VIEW (FORM) ─────────────────────────────── */
+$tracker_params = [];
+if (!empty($delivery['project_id'])) {
+    $tracker_params['project_id'] = (int)$delivery['project_id'];
+} elseif (!empty($project_id_from_url)) {
+    $tracker_params['project_id'] = (int)$project_id_from_url;
+}
+$tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build_query($tracker_params)) : '');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -439,245 +629,522 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;600;700&display=swap" rel="stylesheet">
 
 <style>
-  .form-columns {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 30px;
-      margin-top: 20px;
+  body {
+      background: #f8f9fa;
+      font-family: 'Poppins', sans-serif;
   }
-  @media (max-width: 900px) {
-      .form-columns {
-          grid-template-columns: 1fr;
-          gap: 20px;
-      }
-  }
-  fieldset {
-      border: 1px solid #ddd;
-      padding: 15px;
-      margin-bottom: 20px;
-      background-color: #fdfdfd;
+
+
+  .edit-header {
+      background: linear-gradient(135deg, #f1f8fa 0%, #ffffff 100%);
+      border-radius: 24px;
+      padding: 28px 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+      border: 1px solid rgba(72, 140, 154, 0.12);
       position: relative;
-      height: fit-content;
+      overflow: hidden;
   }
-  legend {
-      font-weight: bold; 
-      padding: 0 10px;
-      margin-left: 10px;
-      color: #333;
-      display: inline-block;
-      margin-bottom: 10px;
+
+  .edit-header::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
   }
-  label {
-      display: block;
-      margin-bottom: 5px;
+
+  .edit-header-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+  }
+
+  .edit-header h1 {
+      margin: 0;
+      font-size: 2.1em;
+      font-weight: 700;
+      color: #293E4C;
+  }
+
+  .edit-subtitle {
+      margin-top: 8px;
+      color: #64748b;
+      font-weight: 500;
+      margin-bottom: 0;
+  }
+
+  .header-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+  }
+
+  .meta-pill {
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 0.82em;
+      font-weight: 600;
+      border: 1px solid rgba(72, 140, 154, 0.18);
+      color: #34515f;
+      background: rgba(72, 140, 154, 0.08);
+  }
+
+  .content-card {
+      background: linear-gradient(135deg, #ffffff 0%, #f7fbfd 100%);
+      border-radius: 18px;
+      border: 1px solid rgba(72, 140, 154, 0.12);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      padding: 18px 20px;
+      margin-bottom: 20px;
+  }
+
+  .message-stack .message {
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
       font-weight: 500;
   }
-  input[type=text],
-  input[type=number],
-  input[type=date],
-  select,
-  input[type=file] {
-      width: 100%;
-      padding: 8px;
-      margin-bottom: 15px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-sizing: border-box;
-  }
-  input[readonly] {
-      background-color: #f8f9fa;
-      color: #6c757d;
-      cursor: not-allowed;
-  }
-  button.form-submit-button {
-      background: #488C9A;
-      color: #fff;
-      padding: 12px 20px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer; 
-      font-size: 1em;
-      display: block;
-      width: fit-content;
-      margin: 30px auto 20px auto;
-      grid-column: 1 / -1;
-  }
-  button.form-submit-button:hover {
-      background: #3A6E7F;
-  }
-  .table-responsive { width: 100%; overflow-x: auto; }
 
   .success-message {
       background-color: #d4edda;
       color: #155724;
       border: 1px solid #c3e6cb;
   }
+
   .error-message {
       background-color: #f8d7da;
       color: #721c24;
       border: 1px solid #f5c6cb;
   }
-  .manage-pallets-button {
-      background-color: #488C9A;
-      color: white;
-      padding: 5px 10px;
+
+  .form-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 8px;
+  }
+
+  .form-container {
+      margin-top: 6px;
+  }
+
+  .column-left,
+  .column-right {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+  }
+
+  fieldset {
+      border: 1px solid rgba(72, 140, 154, 0.18);
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 16px;
+      background: #fff;
+      position: relative;
+      height: fit-content;
+  }
+
+  legend {
+      font-weight: 700;
+      font-size: 0.95em;
+      color: #293E4C;
+      padding: 0 10px;
+      margin-left: 8px;
+  }
+
+  label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #334155;
       font-size: 0.9em;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      text-decoration: none; 
-      margin-left: 10px;
   }
-  .manage-pallets-button:hover {
-      background-color: #28606C;
+
+  .details-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px 14px;
   }
-  .quantity-note {
+
+  .details-grid .span-2 {
+      grid-column: 1 / -1;
+  }
+
+  input[type=text],
+  input[type=number],
+  input[type=date],
+  select,
+  input[type=file] {
+      width: 100%;
+      padding: 11px 12px;
+      margin-bottom: 14px;
+      border: 2px solid rgba(72, 140, 154, 0.14);
+      border-radius: 10px;
+      box-sizing: border-box;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.92em;
+  }
+
+  input:focus,
+  select:focus {
+      outline: none;
+      border-color: #488C9A;
+      box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.14);
+  }
+
+  input[readonly] {
+      background-color: #f8fafc;
+      color: #475569;
+      font-weight: 500;
+  }
+
+  .readonly-input {
+      border-style: dashed;
+  }
+
+  .form-help {
+      margin-top: -8px;
+      margin-bottom: 14px;
+      font-size: 0.82em;
+      color: #6b7280;
+      font-weight: 500;
+  }
+
+  .readonly-note {
+      margin-top: -8px;
+      margin-bottom: 12px;
+      font-size: 0.8em;
+      color: #6b7280;
+      font-weight: 500;
+  }
+
+  .table-responsive {
+      width: 100%;
+      overflow-x: auto;
+  }
+
+  #associatedPalletsTable {
+      width: 100%;
+      border-collapse: collapse;
+  }
+
+  #associatedPalletsTable th,
+  #associatedPalletsTable td {
+      padding: 12px;
+      border-bottom: 1px solid rgba(72, 140, 154, 0.12);
+  }
+
+  #associatedPalletsTable thead th {
+      background: rgba(72, 140, 154, 0.07);
+      font-weight: 600;
+  }
+
+  .manage-pallets-button {
+      background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+      color: white;
+      padding: 8px 12px;
       font-size: 0.85em;
-      color: #666;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+  }
+
+  .manage-pallets-button:hover {
+      background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+  }
+
+  .damaged-card {
+      border: 2px solid #e74c3c;
+      background: #fdf2f2;
+  }
+
+  .damaged-table {
+      width: 100%;
+      border-collapse: collapse;
+  }
+
+  .damaged-table th,
+  .damaged-table td {
+      padding: 8px;
+      border: 1px solid #f5c6cb;
+      text-align: left;
+  }
+
+  .damaged-table thead tr {
+      background: #f8d7da;
+  }
+
+  .damaged-status-pill {
+      background: #e74c3c;
+      color: #fff;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.88em;
+      font-weight: 600;
+  }
+
+  .quantity-note {
+      font-size: 0.83em;
+      color: #64748b;
       font-style: italic;
-      margin-top: -10px;
-      margin-bottom: 15px;
+      margin-top: -8px;
+      margin-bottom: 14px;
+  }
+
+  .pod-current-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #0f766e;
+      text-decoration: none;
+      font-weight: 600;
+      margin-bottom: 10px;
+  }
+
+  .pod-current-link:hover {
+      text-decoration: underline;
+  }
+
+  .checkbox-inline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      font-weight: 600;
+      color: #334155;
+  }
+
+  .checkbox-inline input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+  }
+
+  .section-title {
+      margin: 0 0 12px;
+      color: #293E4C;
+      font-size: 1.08em;
+      font-weight: 700;
+  }
+
+  button.form-submit-button {
+      background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+      color: #fff;
+      padding: 12px 18px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 0.95em;
+      font-weight: 600;
+      display: block;
+      width: fit-content;
+      margin: 20px auto 0;
+      grid-column: 1 / -1;
+  }
+
+  button.form-submit-button:hover {
+      background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+  }
+
+  @media (max-width: 960px) {
+      .form-columns {
+          grid-template-columns: 1fr;
+          gap: 16px;
+      }
+
+      .details-grid {
+          grid-template-columns: 1fr;
+      }
+
+      .details-grid .span-2 {
+          grid-column: auto;
+      }
+
+      .edit-header {
+          padding: 22px 18px;
+      }
+
+      .edit-header h1 {
+          font-size: 1.7em;
+      }
   }
 </style>
 </head>
 <body>
 
 <?php include 'header.php'; ?>
-<main>
+<main class="page-main">
 
     <?php
         require_once 'components/breadcrumbs.php';
         echo slp_render_breadcrumbs([
             'current_label' => 'Edit Delivery',
-            'extra' => [ ['label' => 'Manage Deliveries', 'url' => 'manage_deliveries.php'] ]
+            'extra' => [ ['label' => 'Delivery Tracker', 'url' => $tracker_url] ]
         ]);
     ?>
 
-<h1>
-  Edit Delivery
-  <?php 
-    if ($project_name_for_title) {
-        echo " – For " . htmlspecialchars($project_name_for_title);
-    } elseif ($is_unassigned_delivery) {
-        echo " – Unassigned Delivery";
-    } elseif ($delivery['project_id']) {
-        echo " – For Project ID: " . htmlspecialchars($delivery['project_id']); 
-    }
-  ?>
-</h1>
+<section class="edit-header">
+  <div class="edit-header-top">
+    <div>
+      <h1>Edit Delivery</h1>
+      <p class="edit-subtitle">
+        <?php
+          if ($project_name_for_title) {
+              echo "Project: " . htmlspecialchars($project_name_for_title);
+          } elseif ($is_unassigned_delivery) {
+              echo "Unassigned delivery";
+          } elseif (!empty($delivery['project_id'])) {
+              echo "Project ID: " . htmlspecialchars((string)$delivery['project_id']);
+          } else {
+              echo "Delivery details";
+          }
+        ?>
+      </p>
+    </div>
+    <div class="header-meta">
+      <span class="meta-pill">Delivery #<?php echo (int)$delivery_id; ?></span>
+      <span class="meta-pill">BOL: <?php echo htmlspecialchars((string)($delivery['bol_number'] ?: 'N/A')); ?></span>
+      <span class="meta-pill">Status: <?php echo htmlspecialchars((string)($delivery['status_of_delivery'] ?: 'N/A')); ?></span>
+    </div>
+  </div>
+</section>
 
 <!-- Display messages -->
-<?php if ($success_message): ?>
-    <p class="message success-message"><?php echo htmlspecialchars($success_message); ?></p>
-<?php endif; ?>
-<?php if ($error_message): ?>
-    <p class="message error-message"><?php echo htmlspecialchars($error_message); ?></p>
-<?php endif; ?>
+<div class="message-stack">
+  <?php if ($success_message): ?>
+      <p class="message success-message"><?php echo htmlspecialchars($success_message); ?></p>
+  <?php endif; ?>
+  <?php if ($error_message): ?>
+      <p class="message error-message"><?php echo htmlspecialchars($error_message); ?></p>
+  <?php endif; ?>
+</div>
 
 <!-- Associated Pallets as a table -->
-<fieldset>
-  <legend>Associated Pallets</legend>
-  <div class="table-responsive">
-    <table id="associatedPalletsTable">
-      <thead>
-        <tr>
-          <th>Number of Pallets</th>
-          <th>Wattage</th>
-          <th>Qty Per Pallet</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-      <?php if (!empty($associated_pallets)): ?>
-        <tr>
-          <!-- 1) Number of Pallets -->
-          <td><?php echo count($associated_pallets); ?></td>
-
-          <!-- 2) Wattage -->
-          <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
-
-          <!-- 3) Qty Per Pallet (assumes all pallets have the same quantity) -->
-          <td>
-            <?php
-              // Show quantity from the first pallet (if they differ, adjust logic as needed)
-              echo !empty($associated_pallets)
-                ? htmlspecialchars($associated_pallets[0]['quantity'] ?? 'N/A')
-                : 'N/A';
-            ?>
-          </td>
-
-          <!-- 4) Actions -->
-          <td>
-            <a 
-              href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery_id; ?>&wattage=<?php echo urlencode($delivery['wattage']); ?>" 
-              class="manage-pallets-button"
-            >
-              Add / Edit Associated Pallets
-            </a>
-          </td>
-        </tr>
-      <?php else: ?>
-        <tr>
-          <td colspan="4" style="text-align:center;">
-            No pallets are currently associated with this delivery. 
-            <a href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery_id; ?>&wattage=<?php echo urlencode($delivery['wattage']); ?>" 
-               class="manage-pallets-button" 
-               style="margin-left: 15px;">
-              Add Pallets to Delivery
-            </a>
-          </td>
-        </tr>
-      <?php endif; ?>
-      </tbody>
-    </table>
-  </div>
-</fieldset>
+<section class="content-card">
+  <fieldset>
+    <legend>Associated Pallets</legend>
+    <div class="table-responsive">
+      <table id="associatedPalletsTable">
+        <thead>
+          <tr>
+            <th>Number of Pallets</th>
+            <th>Wattage</th>
+            <th>Qty Per Pallet</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php if (!empty($associated_pallets)): ?>
+          <tr>
+            <td><?php echo count($associated_pallets); ?></td>
+            <td>
+              <?php
+                $pallet_wattages = [];
+                foreach ($associated_pallets as $pallet_row) {
+                    if (isset($pallet_row['wattage']) && $pallet_row['wattage'] !== '') {
+                        $pallet_wattages[] = (string)$pallet_row['wattage'];
+                    }
+                }
+                $pallet_wattages = array_values(array_unique($pallet_wattages));
+                if (count($pallet_wattages) === 1) {
+                    echo htmlspecialchars($pallet_wattages[0]) . "W";
+                } elseif (count($pallet_wattages) > 1) {
+                    echo "Mixed";
+                } else {
+                    echo "N/A";
+                }
+              ?>
+            </td>
+            <td>
+              <?php
+                $pallet_quantities = [];
+                foreach ($associated_pallets as $pallet_row) {
+                    if (isset($pallet_row['quantity']) && $pallet_row['quantity'] !== '') {
+                        $pallet_quantities[] = (string)$pallet_row['quantity'];
+                    }
+                }
+                $pallet_quantities = array_values(array_unique($pallet_quantities));
+                if (count($pallet_quantities) === 1) {
+                    echo htmlspecialchars($pallet_quantities[0]);
+                } elseif (count($pallet_quantities) > 1) {
+                    echo "Mixed";
+                } else {
+                    echo "N/A";
+                }
+              ?>
+            </td>
+            <td>
+              <a
+                href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery_id; ?>&wattage=<?php echo urlencode((string)$delivery['wattage']); ?>"
+                class="manage-pallets-button"
+              >
+                Add / Edit Associated Pallets
+              </a>
+            </td>
+          </tr>
+        <?php else: ?>
+          <tr>
+            <td colspan="4" style="text-align:center;">
+              No pallets are currently associated with this delivery.
+              <a href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery_id; ?>&wattage=<?php echo urlencode((string)$delivery['wattage']); ?>"
+                 class="manage-pallets-button"
+                 style="margin-left: 15px;">
+                Add Pallets to Delivery
+              </a>
+            </td>
+          </tr>
+        <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </fieldset>
+</section>
 
 <!-- Damaged Pallets Alert (if any exist) -->
 <?php if (!empty($damaged_pallets)): ?>
-<fieldset style="border: 2px solid #e74c3c; background-color: #fdf2f2;">
-  <legend style="color: #e74c3c; font-weight: bold;">⚠️ Damaged Pallets</legend>
-  <div style="margin-bottom: 15px;">
-    <p style="color: #721c24; font-weight: 500; margin-bottom: 10px;">
-      <strong>Note:</strong> The following pallets are marked as "Damaged" and will <strong>NOT</strong> be automatically updated when you change the delivery status.
+<section class="content-card damaged-card">
+  <fieldset>
+    <legend style="color: #e74c3c;">Damaged Pallets</legend>
+    <p style="color: #721c24; font-weight: 500; margin-bottom: 12px;">
+      These pallets stay in <strong>Damaged</strong> status and are not changed automatically from this screen.
     </p>
-  </div>
-  <div class="table-responsive">
-    <table style="width: 100%; border-collapse: collapse;">
-      <thead>
-        <tr style="background-color: #f8d7da;">
-          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Pallet ID</th>
-          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Wattage</th>
-          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Quantity</th>
-          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Current Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($damaged_pallets as $damaged_pallet): ?>
-        <tr>
-          <td style="padding: 8px; border: 1px solid #f5c6cb;">
-            <?php echo htmlspecialchars($damaged_pallet['pallet_identifier'] ?? 'ID: ' . $damaged_pallet['id']); ?>
-          </td>
-          <td style="padding: 8px; border: 1px solid #f5c6cb;">
-            <?php echo htmlspecialchars($damaged_pallet['wattage'] ?? 'N/A'); ?>W
-          </td>
-          <td style="padding: 8px; border: 1px solid #f5c6cb;">
-            <?php echo htmlspecialchars($damaged_pallet['quantity'] ?? 'N/A'); ?>
-          </td>
-          <td style="padding: 8px; border: 1px solid #f5c6cb;">
-            <span style="background-color: #e74c3c; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold;">
-              <?php echo htmlspecialchars($damaged_pallet['status']); ?>
-            </span>
-          </td>
-        </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-  <div style="margin-top: 10px; padding: 8px; background-color: #f8d7da; border-radius: 4px; font-size: 0.9em;">
-    <strong>💡 Tip:</strong> To change the status of damaged pallets, you'll need to update them individually through the pallet management system.
-  </div>
-</fieldset>
+    <div class="table-responsive">
+      <table class="damaged-table">
+        <thead>
+          <tr>
+            <th>Pallet ID</th>
+            <th>Wattage</th>
+            <th>Quantity</th>
+            <th>Current Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($damaged_pallets as $damaged_pallet): ?>
+          <tr>
+            <td><?php echo htmlspecialchars($damaged_pallet['pallet_identifier'] ?? ('ID: ' . $damaged_pallet['id'])); ?></td>
+            <td><?php echo htmlspecialchars((string)($damaged_pallet['wattage'] ?? 'N/A')); ?>W</td>
+            <td><?php echo htmlspecialchars((string)($damaged_pallet['quantity'] ?? 'N/A')); ?></td>
+            <td><span class="damaged-status-pill"><?php echo htmlspecialchars((string)$damaged_pallet['status']); ?></span></td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin: 10px 0 0; color: #7f1d1d; font-size: 0.9em;">
+      Use pallet management if you need to change damaged pallet status.
+    </p>
+  </fieldset>
+</section>
 <?php endif; ?>
 
 <!-- Main form for editing Delivery details -->
@@ -690,67 +1157,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
   <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token'];?>">
 
   <div class="form-columns">
-    <!-- Left Column -->
     <div class="column-left">
-      <!-- Delivery Details -->
       <fieldset>
         <legend>Delivery Details</legend>
-        <label>Manufacturer:
-          <input type="text" name="manufacturer" value="<?php echo htmlspecialchars($delivery['supplier']);?>" required>
-        </label>
-        <label>Wattage:
-          <input 
-            type="text" 
-            name="wattage" 
-            value="<?php echo htmlspecialchars($delivery['wattage']);?>" 
-            required 
-            readonly 
-            title="Wattage cannot be changed here. Manage associated pallets via the table above."
-          >
-        </label>
-        <label>Status:
-          <select name="status_of_delivery">
-            <?php
-            $statuses = ['Pending', 'In Transit to Warehouse', 'Delivered to Warehouse', 'In Transit to Project', 'Delivered to Project', 'Canceled'];
-            foreach ($statuses as $st):
-            ?>
-              <option value="<?php echo $st;?>" 
-                      <?php if ($delivery['status_of_delivery'] === $st) echo 'selected';?>>
-                <?php echo $st;?>
-              </option>
-            <?php endforeach;?>
-          </select>
-        </label>
-        <label>Quantity:
-          <input type="number" name="quantity" value="<?php echo $calculated_quantity;?>" readonly title="Quantity is automatically calculated from associated pallets">
-        </label>
-        <div class="quantity-note">Calculated from associated pallets (<?php echo count($associated_pallets);?> pallets)</div>
-        <label>BOL Number:
-          <input type="text" name="bol_number" value="<?php echo htmlspecialchars($delivery['bol_number']);?>">
-        </label>
-      </fieldset>
+        <div class="details-grid">
+          <div>
+            <label>Manufacturer:
+              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars((string)$delivery['supplier']);?>" readonly>
+            </label>
+          </div>
+          <div>
+            <label>Wattage:
+              <input
+                type="text"
+                class="readonly-input"
+                value="<?php echo htmlspecialchars((string)$delivery['wattage']);?>"
+                readonly
+              >
+            </label>
+          </div>
 
-      <!-- Dates -->
-      <fieldset>
-        <legend>Dates</legend>
-        <label>Anticipated Delivery Date:
-          <input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars($delivery['anticipated_delivery_date']);?>">
-        </label>
-        <label>Warehouse Arrival Date:
-          <input type="date" name="warehouse_arrival_date" value="<?php echo htmlspecialchars($delivery['warehouse_arrival_date']);?>">
-        </label>
-        <label>Actual Delivery Date:
-          <input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars($delivery['actual_delivery_date']);?>">
-        </label>
-        <label>Left Warehouse Date:
-          <input type="date" name="left_warehouse_date" value="<?php echo htmlspecialchars($delivery['left_warehouse_date']);?>">
-        </label>
+          <div class="span-2">
+            <label>Origin:
+              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($origin_display); ?>" readonly>
+            </label>
+          </div>
+          <div class="span-2">
+            <label>Origin Address:
+              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($origin_address_display); ?>" readonly>
+            </label>
+          </div>
+
+          <div class="span-2">
+            <label>Destination:
+              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($destination_display); ?>" readonly>
+            </label>
+          </div>
+          <div class="span-2">
+            <label>Destination Address:
+              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($destination_address_display); ?>" readonly>
+            </label>
+          </div>
+
+          <div>
+            <label>Status:
+              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars((string)$delivery['status_of_delivery']); ?>" readonly>
+            </label>
+          </div>
+          <div>
+            <label>Quantity:
+              <input type="number" class="readonly-input" value="<?php echo $calculated_quantity;?>" readonly title="Quantity is automatically calculated from associated pallets">
+            </label>
+          </div>
+
+          <div class="span-2">
+            <label>BOL Number:
+              <input type="text" name="bol_number" value="<?php echo htmlspecialchars((string)$delivery['bol_number']);?>">
+            </label>
+          </div>
+        </div>
+
+        <div class="form-help">Manufacturer and status are managed by upstream workflow and milestone actions.</div>
+        <div class="quantity-note">Quantity is calculated from associated pallets (<?php echo count($associated_pallets);?> pallets)</div>
       </fieldset>
     </div>
 
-    <!-- Right Column -->
     <div class="column-right">
-      <!-- Costs -->
+      <fieldset>
+        <legend>Dates</legend>
+        <label>Anticipated Delivery Date:
+          <input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars((string)$delivery['anticipated_delivery_date']);?>">
+        </label>
+        <label>Warehouse Arrival Date:
+          <input type="date" name="warehouse_arrival_date" value="<?php echo htmlspecialchars((string)$delivery['warehouse_arrival_date']);?>">
+        </label>
+        <label>Actual Delivery Date:
+          <input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars((string)$delivery['actual_delivery_date']);?>">
+        </label>
+        <label>Left Warehouse Date:
+          <input type="date" name="left_warehouse_date" value="<?php echo htmlspecialchars((string)$delivery['left_warehouse_date']);?>">
+        </label>
+      </fieldset>
+
       <fieldset>
         <legend>Costs</legend>
         <label>Freight Cost:
@@ -762,6 +1250,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
           >
         </label>
 
+        <?php if (!$is_customer_admin): ?>
         <?php
           $paidVal    = number_format((float)($delivery['accessorial_costs_paid'] ?? 0), 2, '.', '');
           $chargedVal = number_format((float)($delivery['accessorial_costs']       ?? 0), 2, '.', '');
@@ -777,17 +1266,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
           >
         </label>
 
-        <label style="display:flex;align-items:center;margin-bottom:15px">
+        <label class="checkbox-inline">
           <input 
             type="checkbox" 
             id="charge_customer_ckb" 
-            <?php echo $checked;?> 
-            style="width: auto; margin-right: 10px;"
+            <?php echo $checked;?>
           >
           Charge Customer This Amount?
         </label>
 
-        <!-- Hidden field for accessorial_costs -->
         <input 
           type="hidden" 
           id="accessorial_costs" 
@@ -813,24 +1300,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
             value="<?php echo number_format((float)($delivery['miles'] ?? 0), 2, '.', '');?>"
           >
         </label>
+        <?php else: ?>
+        <div class="form-help">
+          Customer admins only update the freight amount paid to carrier on this screen.
+        </div>
+        <?php endif; ?>
       </fieldset>
 
-      <!-- POD -->
       <fieldset>
         <legend>Proof of Delivery (POD)</legend>
         <?php if (!empty($delivery['proof_of_delivery'])): ?>
-          <p>
-            Current POD: 
-            <a href="view_pod?delivery_id=<?php echo $delivery['id'];?>" target="_blank">
-              view
-            </a>
-          </p>
-          <label style="display: flex; align-items: center;">
+          <a class="pod-current-link" href="view_pod?delivery_id=<?php echo (int)$delivery['id'];?>" target="_blank" rel="noopener">
+            View current POD
+          </a>
+          <label class="checkbox-inline">
             <input 
               type="checkbox" 
               name="remove_pod" 
-              value="1" 
-              style="width: auto; margin-right: 10px;"
+              value="1"
             >
             Remove current POD
           </label>
@@ -850,6 +1337,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 
 </main>
 
+<?php if (!$is_customer_admin): ?>
 <script>
 /**
  * Keep the hidden customer charge field in sync 
@@ -864,17 +1352,21 @@ const customerCostInput = document.getElementById('customer_cost');
 
 // Track whether user has manually entered customer cost
 let userHasSetCustomerCost = false;
-const originalCustomerCost = customerCostInput ? parseFloat(customerCostInput.value) || 0 : 0;
+const originalCustomerCost = customerCostInput ? (parseFloat(customerCostInput.value) || 0) : 0;
 
 function syncAccessorialCharge() {
-  if (!ckb || !paidInput || !hiddenCst) return;
+  if (!ckb || !paidInput || !hiddenCst) {
+    return;
+  }
   const paidValue = parseFloat(paidInput.value) || 0;
   hiddenCst.value = ckb.checked ? paidValue.toFixed(2) : '0.00';
   calculateCustomerCost();
 }
 
 function calculateCustomerCost() {
-  if (!freightCostInput || !customerCostInput || !hiddenCst) return;
+  if (!freightCostInput || !customerCostInput || !hiddenCst) {
+    return;
+  }
   
   // Only auto-calculate if user hasn't manually set the customer cost
   // or if the customer cost field is empty/zero
@@ -924,6 +1416,10 @@ if (freightCostInput) {
 
 // Initial sync on page load - only if customer cost is currently 0 or matches calculated value
 document.addEventListener('DOMContentLoaded', () => {
+  if (!freightCostInput || !hiddenCst) {
+    return;
+  }
+
   // Check if the current customer cost matches what would be auto-calculated
   if (originalCustomerCost > 0) {
     const freightCost = parseFloat(freightCostInput.value) || 0;
@@ -943,6 +1439,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 </script>
+<?php endif; ?>
 
 </body>
 </html>

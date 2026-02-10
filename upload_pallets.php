@@ -1268,6 +1268,18 @@ $conn->close();
                             <input type="number" step="0.000001" min="0" id="cost_per_watt" name="cost_per_watt" placeholder="e.g. 0.25">
                             <small style="color: #6c757d; font-size: 0.75rem;">Used for module cost reporting and milestone calculations. If no milestones are set, we assume 100% due on project delivery.</small>
                         </div>
+                        <h5 style="margin: 20px 0 12px 0; color: #293E4C; font-size: 0.95rem; border-bottom: 1px solid #e9ecef; padding-bottom: 8px;">Domestic Content</h5>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 0;">
+                                <input type="checkbox" id="track_domestic_content" name="track_domestic_content" value="1">
+                                Track Domestic Content %
+                            </label>
+                            <small style="color: #6c757d; font-size: 0.75rem;">Apply one domestic-content percentage to imported module rows in this batch.</small>
+                        </div>
+                        <div class="form-group" id="domesticContentPctGroup" style="display: none;">
+                            <label for="domestic_content_pct">Domestic Content %</label>
+                            <input type="number" step="0.01" min="0" max="100" id="domestic_content_pct" name="domestic_content_pct" placeholder="e.g. 45.50">
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -1669,6 +1681,23 @@ $conn->close();
     const btnConfirm = document.getElementById('btnConfirm');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
+    const trackDomesticCheckbox = document.getElementById('track_domestic_content');
+    const domesticContentPctGroup = document.getElementById('domesticContentPctGroup');
+    const domesticContentPctInput = document.getElementById('domestic_content_pct');
+
+    function toggleDomesticContentInput() {
+        const enabled = !!(trackDomesticCheckbox && trackDomesticCheckbox.checked);
+        if (domesticContentPctGroup) {
+            domesticContentPctGroup.style.display = enabled ? '' : 'none';
+        }
+        if (domesticContentPctInput) {
+            domesticContentPctInput.required = enabled;
+        }
+    }
+    if (trackDomesticCheckbox) {
+        trackDomesticCheckbox.addEventListener('change', toggleDomesticContentInput);
+        toggleDomesticContentInput();
+    }
 
     // Auto-calculate modules per truck
     document.getElementById('pallets_per_truck').addEventListener('input', function() {
@@ -2323,6 +2352,10 @@ $conn->close();
         formData.append('account_id', accountId());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
+        formData.append('track_domestic_content', trackDomesticCheckbox && trackDomesticCheckbox.checked ? '1' : '0');
+        if (trackDomesticCheckbox && trackDomesticCheckbox.checked && domesticContentPctInput && domesticContentPctInput.value) {
+            formData.append('domestic_content_pct', domesticContentPctInput.value);
+        }
 
         // Add all logistics specifications
         const logisticsFields = [

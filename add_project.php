@@ -399,6 +399,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($_POST['wattages'], $_POST['quantities'])) {
             $wattages   = $_POST['wattages'];
             $quantities = $_POST['quantities'];
+            $domestic_content_pcts = $_POST['domestic_content_pcts'] ?? [];
+            $track_domestic_content = !empty($_POST['track_domestic_content']);
             $manufacturer_id_for_batch = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
             $location_id_for_batch = isset($_POST['location_id']) ? intval($_POST['location_id']) : null;
 
@@ -433,7 +435,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception("Wattage and Quantity must be positive integers.");
                 }
 
-                $valid_pairs[] = ['wattage' => $w_int, 'quantity' => $q_int];
+                $domestic_content_pct = null;
+                if ($track_domestic_content) {
+                    $pct_raw = trim((string)($domestic_content_pcts[$i] ?? ''));
+                    if ($pct_raw === '' || !is_numeric($pct_raw)) {
+                        throw new Exception("Domestic Content % is required and must be numeric when tracking is enabled.");
+                    }
+                    $domestic_content_pct = (float)$pct_raw;
+                    if ($domestic_content_pct < 0 || $domestic_content_pct > 100) {
+                        throw new Exception("Domestic Content % must be between 0 and 100.");
+                    }
+                }
+
+                $valid_pairs[] = ['wattage' => $w_int, 'quantity' => $q_int, 'domestic_content_pct' => $domestic_content_pct];
             }
 
             // Only proceed with module batch creation if there are valid pairs
@@ -566,11 +580,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt_module->close();
 
             // Insert items into unassigned_module_items
-            $stmt_item = $conn->prepare("
+            $stmt_item_with_domestic = $conn->prepare("
+                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity, domestic_content_pct)
+                VALUES (?, ?, ?, ?)
+            ");
+            $stmt_item_no_domestic = $conn->prepare("
                 INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
                 VALUES (?, ?, ?)
             ");
-            if (!$stmt_item) {
+            if (!$stmt_item_with_domestic || !$stmt_item_no_domestic) {
                 throw new Exception("Error preparing module item insert: " . $conn->error);
             }
 
@@ -578,12 +596,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $w_int = $pair['wattage'];
                 $q_int = $pair['quantity'];
 
-                $stmt_item->bind_param("iii", $module_batch_id, $w_int, $q_int);
-                if (!$stmt_item->execute()) {
-                    throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item->error);
+                $domestic_content_pct = isset($pair['domestic_content_pct']) ? $pair['domestic_content_pct'] : null;
+                if ($domestic_content_pct !== null) {
+                    $stmt_item_with_domestic->bind_param("iiid", $module_batch_id, $w_int, $q_int, $domestic_content_pct);
+                    if (!$stmt_item_with_domestic->execute()) {
+                        throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item_with_domestic->error);
+                    }
+                } else {
+                    $stmt_item_no_domestic->bind_param("iii", $module_batch_id, $w_int, $q_int);
+                    if (!$stmt_item_no_domestic->execute()) {
+                        throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item_no_domestic->error);
+                    }
                 }
             }
-            $stmt_item->close();
+            $stmt_item_with_domestic->close();
+            $stmt_item_no_domestic->close();
 
             save_module_milestones($module_batch_id, $posted_milestones, $conn, $user_id);
             } // End of if (count($valid_pairs) > 0)

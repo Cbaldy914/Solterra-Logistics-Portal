@@ -601,10 +601,25 @@ function handleImport($conn, $user_id) {
     $project_id = intval($_POST['project_id'] ?? 0);
     $account_id = intval($_POST['account_id'] ?? 0) ?: getAccountIdForUser($conn, $user_id);
     $saveMapping = $_POST['save_mapping'] === '1';
+    $trackDomesticContent = !empty($_POST['track_domestic_content']);
+    $defaultDomesticContentPct = null;
 
     if (!$manufacturer_id || !$project_id || !$account_id) {
         echo json_encode(['error' => 'Missing required parameters']);
         return;
+    }
+
+    if ($trackDomesticContent) {
+        $pctRaw = trim((string)($_POST['domestic_content_pct'] ?? ''));
+        if ($pctRaw === '' || !is_numeric($pctRaw)) {
+            echo json_encode(['error' => 'Domestic Content % is required and must be numeric when tracking is enabled']);
+            return;
+        }
+        $defaultDomesticContentPct = (float)$pctRaw;
+        if ($defaultDomesticContentPct < 0 || $defaultDomesticContentPct > 100) {
+            echo json_encode(['error' => 'Domestic Content % must be between 0 and 100']);
+            return;
+        }
     }
 
     // Parse file fresh for import
@@ -728,7 +743,7 @@ function handleImport($conn, $user_id) {
                     }
 
                     // Find or create module item for new wattage and add quantity
-                    $newModuleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
+                    $newModuleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity, $defaultDomesticContentPct);
 
                     // Update or insert project_wattage_orders for new wattage
                     $stmt = $conn->prepare("
@@ -767,7 +782,7 @@ function handleImport($conn, $user_id) {
             } else {
                 // Create new pallet
                 // Find or create unassigned_module_item for this wattage
-                $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
+                $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity, $defaultDomesticContentPct);
 
                 // Update or insert project_wattage_orders
                 $stmt = $conn->prepare("
@@ -975,7 +990,7 @@ function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_
 /**
  * Find or create unassigned_module_item for wattage
  */
-function findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantityToAdd) {
+function findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantityToAdd, $domesticContentPct = null) {
     $stmt = $conn->prepare("
         SELECT id, quantity FROM unassigned_module_items
         WHERE unassigned_module_id = ? AND wattage = ?
@@ -987,18 +1002,31 @@ function findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantityToAdd)
 
     if ($existing) {
         $newQty = $existing['quantity'] + $quantityToAdd;
-        $stmt = $conn->prepare("UPDATE unassigned_module_items SET quantity = ? WHERE id = ?");
-        $stmt->bind_param("ii", $newQty, $existing['id']);
+        if ($domesticContentPct !== null) {
+            $stmt = $conn->prepare("UPDATE unassigned_module_items SET quantity = ?, domestic_content_pct = ? WHERE id = ?");
+            $stmt->bind_param("idi", $newQty, $domesticContentPct, $existing['id']);
+        } else {
+            $stmt = $conn->prepare("UPDATE unassigned_module_items SET quantity = ? WHERE id = ?");
+            $stmt->bind_param("ii", $newQty, $existing['id']);
+        }
         $stmt->execute();
         $stmt->close();
         return $existing['id'];
     }
 
-    $stmt = $conn->prepare("
-        INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
-        VALUES (?, ?, ?)
-    ");
-    $stmt->bind_param("iii", $moduleBatchId, $wattage, $quantityToAdd);
+    if ($domesticContentPct !== null) {
+        $stmt = $conn->prepare("
+            INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity, domestic_content_pct)
+            VALUES (?, ?, ?, ?)
+        ");
+        $stmt->bind_param("iiid", $moduleBatchId, $wattage, $quantityToAdd, $domesticContentPct);
+    } else {
+        $stmt = $conn->prepare("
+            INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
+            VALUES (?, ?, ?)
+        ");
+        $stmt->bind_param("iii", $moduleBatchId, $wattage, $quantityToAdd);
+    }
     $stmt->execute();
     $itemId = $conn->insert_id;
     $stmt->close();
