@@ -40,17 +40,165 @@ if ($role === 'global_admin') {
     $stmtAccts->close();
 }
 
+$accountIds = array_values(array_unique($accountIds));
+
 $unassigned_modules_count = 0;
+$unassigned_ordered_mw = 0.0;
 if (count($accountIds) > 0) {
     $placeholders_unassigned = implode(',', array_fill(0, count($accountIds), '?'));
-    $sqlUnassigned = "SELECT COUNT(DISTINCT umi.id) as unassigned_count FROM unassigned_module_items umi JOIN modules m ON umi.unassigned_module_id = m.id LEFT JOIN projects p ON p.account_id IN ($placeholders_unassigned) WHERE umi.id NOT IN (SELECT ip.unassigned_module_item_id FROM inventory_pallets ip WHERE ip.assigned_project_id IS NOT NULL AND ip.unassigned_module_item_id IS NOT NULL)";
+    $sqlUnassigned = "
+        SELECT
+            COALESCE(SUM(umi.quantity), 0) AS unassigned_count,
+            COALESCE(SUM(umi.wattage * umi.quantity) / 1000000, 0) AS unassigned_mw
+        FROM unassigned_module_items umi
+        JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE m.account_id IN ($placeholders_unassigned)
+          AND (m.project_id IS NULL OR m.project_id = 0)
+    ";
     $stmtUnassigned = $conn->prepare($sqlUnassigned);
     $stmtUnassigned->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
     $stmtUnassigned->execute();
-    $stmtUnassigned->bind_result($unassigned_modules_count);
+    $stmtUnassigned->bind_result($unassigned_modules_count, $unassigned_ordered_mw);
     $stmtUnassigned->fetch();
     $stmtUnassigned->close();
     $unassigned_modules_count = $unassigned_modules_count ?: 0;
+    $unassigned_ordered_mw = $unassigned_ordered_mw ?: 0;
+}
+
+$distribution_module_breakdown = [];
+if (count($accountIds) > 0) {
+    $placeholders_distribution = implode(',', array_fill(0, count($accountIds), '?'));
+    $distribution_key = static function ($manufacturer, $scope) {
+        return $manufacturer . "\x1F" . $scope;
+    };
+    $distribution_rows_by_key = [];
+
+    $sqlDistribution = "
+        SELECT
+            COALESCE(NULLIF(TRIM(m.vendor_name), ''), 'Unknown Manufacturer') AS manufacturer,
+            CASE WHEN m.project_id IS NULL OR m.project_id = 0 THEN 'Unassigned' ELSE 'Assigned' END AS assignment_scope,
+            COUNT(DISTINCT m.id) AS batch_count,
+            COUNT(DISTINCT CASE WHEN m.project_id IS NOT NULL AND m.project_id <> 0 THEN m.project_id END) AS project_count,
+            COALESCE(SUM(umi.quantity), 0) AS module_count,
+            COALESCE(SUM(umi.wattage * umi.quantity) / 1000000, 0) AS mw_total,
+            COALESCE(SUM(CASE WHEN umi.domestic_content_pct IS NOT NULL THEN umi.wattage * umi.quantity END), 0) AS domestic_tracked_watts,
+            COALESCE(SUM(CASE WHEN umi.domestic_content_pct IS NOT NULL THEN (umi.wattage * umi.quantity * umi.domestic_content_pct / 100) END), 0) AS domestic_weighted_watts
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.account_id IN ($placeholders_distribution)
+        GROUP BY manufacturer, assignment_scope
+        ORDER BY manufacturer ASC, assignment_scope DESC
+    ";
+    $stmtDistribution = $conn->prepare($sqlDistribution);
+    $stmtDistribution->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
+    $stmtDistribution->execute();
+    $resultDistribution = $stmtDistribution->get_result();
+    while ($row = $resultDistribution->fetch_assoc()) {
+        $domesticTrackedWatts = (float)($row['domestic_tracked_watts'] ?? 0);
+        $domesticWeightedWatts = (float)($row['domestic_weighted_watts'] ?? 0);
+        $domesticPct = null;
+        if ($domesticTrackedWatts > 0) {
+            $domesticPct = ($domesticWeightedWatts / $domesticTrackedWatts) * 100;
+        }
+
+        $manufacturer = $row['manufacturer'] ?? 'Unknown Manufacturer';
+        $assignmentScope = $row['assignment_scope'] ?? 'Unassigned';
+        $distribution_rows_by_key[$distribution_key($manufacturer, $assignmentScope)] = [
+            'manufacturer' => $manufacturer,
+            'assignment_scope' => $assignmentScope,
+            'batch_count' => (int)($row['batch_count'] ?? 0),
+            'project_count' => (int)($row['project_count'] ?? 0),
+            'module_count' => (int)($row['module_count'] ?? 0),
+            'mw_total' => (float)($row['mw_total'] ?? 0),
+            'domestic_content_pct' => $domesticPct,
+            'wattage_details' => []
+        ];
+    }
+    $stmtDistribution->close();
+
+    $sqlDistributionByWattage = "
+        SELECT
+            COALESCE(NULLIF(TRIM(m.vendor_name), ''), 'Unknown Manufacturer') AS manufacturer,
+            CASE WHEN m.project_id IS NULL OR m.project_id = 0 THEN 'Unassigned' ELSE 'Assigned' END AS assignment_scope,
+            umi.wattage AS wattage,
+            COUNT(DISTINCT m.id) AS batch_count,
+            COUNT(DISTINCT CASE WHEN m.project_id IS NOT NULL AND m.project_id <> 0 THEN m.project_id END) AS project_count,
+            COALESCE(SUM(umi.quantity), 0) AS module_count,
+            COALESCE(SUM(umi.wattage * umi.quantity) / 1000000, 0) AS mw_total,
+            COALESCE(SUM(CASE WHEN umi.domestic_content_pct IS NOT NULL THEN umi.wattage * umi.quantity END), 0) AS domestic_tracked_watts,
+            COALESCE(SUM(CASE WHEN umi.domestic_content_pct IS NOT NULL THEN (umi.wattage * umi.quantity * umi.domestic_content_pct / 100) END), 0) AS domestic_weighted_watts
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.account_id IN ($placeholders_distribution)
+        GROUP BY manufacturer, assignment_scope, umi.wattage
+        ORDER BY manufacturer ASC, assignment_scope DESC, umi.wattage ASC
+    ";
+    $stmtDistributionWattage = $conn->prepare($sqlDistributionByWattage);
+    $stmtDistributionWattage->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
+    $stmtDistributionWattage->execute();
+    $resultDistributionWattage = $stmtDistributionWattage->get_result();
+    while ($rowW = $resultDistributionWattage->fetch_assoc()) {
+        $manufacturer = $rowW['manufacturer'] ?? 'Unknown Manufacturer';
+        $assignmentScope = $rowW['assignment_scope'] ?? 'Unassigned';
+        $key = $distribution_key($manufacturer, $assignmentScope);
+        if (!isset($distribution_rows_by_key[$key])) {
+            continue;
+        }
+
+        $domesticTrackedWatts = (float)($rowW['domestic_tracked_watts'] ?? 0);
+        $domesticWeightedWatts = (float)($rowW['domestic_weighted_watts'] ?? 0);
+        $domesticPct = null;
+        if ($domesticTrackedWatts > 0) {
+            $domesticPct = ($domesticWeightedWatts / $domesticTrackedWatts) * 100;
+        }
+
+        $distribution_rows_by_key[$key]['wattage_details'][] = [
+            'wattage' => (int)($rowW['wattage'] ?? 0),
+            'batch_count' => (int)($rowW['batch_count'] ?? 0),
+            'project_count' => (int)($rowW['project_count'] ?? 0),
+            'module_count' => (int)($rowW['module_count'] ?? 0),
+            'mw_total' => (float)($rowW['mw_total'] ?? 0),
+            'domestic_content_pct' => $domesticPct
+        ];
+    }
+    $stmtDistributionWattage->close();
+
+    foreach ($distribution_rows_by_key as &$distributionRow) {
+        if (!empty($distributionRow['wattage_details'])) {
+            usort($distributionRow['wattage_details'], static function ($a, $b) {
+                return ($a['wattage'] ?? 0) <=> ($b['wattage'] ?? 0);
+            });
+        }
+    }
+    unset($distributionRow);
+
+    $distribution_module_breakdown = array_values($distribution_rows_by_key);
+}
+
+$portfolio_module_cost = 0.0;
+$portfolio_cost_per_watt = null;
+if (count($accountIds) > 0) {
+    $placeholders_cost = implode(',', array_fill(0, count($accountIds), '?'));
+    $sqlPortfolioCost = "
+        SELECT
+            COALESCE(SUM(m.cost_per_watt * umi.wattage * umi.quantity), 0) AS total_cost,
+            COALESCE(SUM(umi.wattage * umi.quantity), 0) AS total_watts
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.account_id IN ($placeholders_cost)
+          AND (p.status IS NULL OR p.status = 'active')
+          AND m.cost_per_watt IS NOT NULL
+    ";
+    $stmtPortfolioCost = $conn->prepare($sqlPortfolioCost);
+    $stmtPortfolioCost->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
+    $stmtPortfolioCost->execute();
+    $stmtPortfolioCost->bind_result($portfolio_module_cost, $portfolio_total_watts_with_cost);
+    $stmtPortfolioCost->fetch();
+    $stmtPortfolioCost->close();
+    if (!empty($portfolio_total_watts_with_cost)) {
+        $portfolio_cost_per_watt = $portfolio_module_cost / $portfolio_total_watts_with_cost;
+    }
 }
 
 $projects = [];
@@ -207,7 +355,13 @@ if (count($accountIds) > 0) {
     $stmt->close();
 }
 
-$mw_gap = $dashboard_totals['total_project_size_mw'] - $dashboard_totals['total_ordered_mw'];
+$assigned_ordered_mw = (float)$dashboard_totals['total_ordered_mw'];
+$total_ordered_with_unassigned_mw = $assigned_ordered_mw + (float)$unassigned_ordered_mw;
+$mw_gap_total = (float)$dashboard_totals['total_project_size_mw'] - $total_ordered_with_unassigned_mw;
+
+$coverage_target_mw = max(0, (float)$dashboard_totals['total_project_size_mw']);
+$coverage_total_mw = $coverage_target_mw > 0 ? min($coverage_target_mw, $total_ordered_with_unassigned_mw) : $total_ordered_with_unassigned_mw;
+$coverage_gap_mw = max(0, $coverage_target_mw - $coverage_total_mw);
 
 // Get open warranty claims count per project
 $warranty_counts = [];
@@ -459,7 +613,6 @@ $conn->close();
             <button onclick="setUnit('mw')" id="btn-mw">MW</button>
         </div>
     </div>
-
     <div class="stats-charts-row">
         <div class="stats-section">
             <div class="stat-card clickable" onclick="document.getElementById('projects-section').scrollIntoView({behavior:'smooth'})">
@@ -478,19 +631,19 @@ $conn->close();
             <a href="modules.php" class="stat-card clickable">
                 <div class="stat-icon">📦</div>
                 <h3 class="stat-number">
-                    <span class="unit-modules"><?php echo number_format($dashboard_totals['total_modules']); ?></span>
-                    <span class="unit-mw" style="display:none"><?php echo number_format($dashboard_totals['total_ordered_mw'], 2); ?></span>
+                    <span class="unit-modules"><?php echo number_format((int)$dashboard_totals['total_modules'] + (int)$unassigned_modules_count); ?></span>
+                    <span class="unit-mw" style="display:none"><?php echo number_format($total_ordered_with_unassigned_mw, 2); ?></span>
                 </h3>
                 <p class="stat-label">Total <span class="unit-label-modules">Modules</span><span class="unit-label-mw" style="display:none">MW</span></p>
             </a>
-            <div class="stat-card">
-                <div class="stat-icon">🚚</div>
+            <a href="module_cost_analysis.php" class="stat-card clickable">
+                <div class="stat-icon">💵</div>
                 <h3 class="stat-number">
-                    <span class="unit-modules"><?php echo number_format($dashboard_totals['total_delivered']); ?></span>
-                    <span class="unit-mw" style="display:none"><?php echo number_format($dashboard_totals['delivered_mw'], 2); ?></span>
+                    <span class="unit-modules"><?php echo $portfolio_module_cost > 0 ? '$' . number_format($portfolio_module_cost, 0) : 'N/A'; ?></span>
+                    <span class="unit-mw" style="display:none"><?php echo $portfolio_cost_per_watt !== null ? '$' . number_format($portfolio_cost_per_watt, 4) . '/W' : 'N/A'; ?></span>
                 </h3>
-                <p class="stat-label">Delivered</p>
-            </div>
+                <p class="stat-label">Portfolio Cost</p>
+            </a>
         </div>
         <div class="charts-section">
             <div class="chart-card" style="cursor:default">
@@ -512,8 +665,10 @@ $conn->close();
                     <div class="chart-legend">
                         <div class="coverage-summary">
                             <div class="coverage-row"><span>Project Needs</span><span><?php echo number_format($dashboard_totals['total_project_size_mw'], 1); ?> MW</span></div>
-                            <div class="coverage-row"><span>MW Ordered</span><span><?php echo number_format($dashboard_totals['total_ordered_mw'], 1); ?> MW</span></div>
-                            <div class="coverage-row <?php echo $mw_gap <= 0 ? 'highlight' : 'warning'; ?>"><span><?php echo $mw_gap <= 0 ? 'Surplus' : 'Gap'; ?></span><span><?php echo number_format(abs($mw_gap), 1); ?> MW</span></div>
+                            <div class="coverage-row"><span>Assigned Ordered</span><span><?php echo number_format($assigned_ordered_mw, 1); ?> MW</span></div>
+                            <div class="coverage-row"><span>Unassigned Ordered</span><span><?php echo number_format($unassigned_ordered_mw, 1); ?> MW</span></div>
+                            <div class="coverage-row"><span>Total Ordered</span><span><?php echo number_format($total_ordered_with_unassigned_mw, 1); ?> MW</span></div>
+                            <div class="coverage-row <?php echo $mw_gap_total <= 0 ? 'highlight' : 'warning'; ?>"><span><?php echo $mw_gap_total <= 0 ? 'Surplus' : 'Gap'; ?></span><span><?php echo number_format(abs($mw_gap_total), 1); ?> MW</span></div>
                         </div>
                     </div>
                 </div>
@@ -671,7 +826,7 @@ $conn->close();
 </div>
 
 <div class="modal-overlay" id="chart-modal-overlay" onclick="closeChartModal()">
-    <div class="modal-content" onclick="event.stopPropagation()" style="max-width:500px">
+    <div class="modal-content" onclick="event.stopPropagation()" style="width:min(980px, 96vw);max-width:980px">
         <div class="modal-header"><h3 id="chart-modal-title">Chart Details</h3><button class="modal-close" onclick="closeChartModal()">&times;</button></div>
         <div id="chart-modal-body"></div>
     </div>
@@ -681,6 +836,114 @@ $conn->close();
 const projectsData = <?php echo json_encode(array_map(function($p) {
     return ['name'=>$p['project_name'],'project_size'=>$p['project_size'],'ordered_mw'=>$p['ordered_mw'],'order_progress'=>$p['order_progress'],'delivered_mw'=>$p['delivered_mw'],'delivery_progress'=>$p['delivery_progress'],'total_modules'=>$p['total_modules'],'delivered_modules'=>$p['delivered_modules'],'wattage_breakdown'=>$p['wattage_breakdown'],'delivered_breakdown'=>$p['delivered_breakdown']];
 }, $projects)); ?>;
+const distributionData = {
+    projectNeedsMw: <?php echo json_encode((float)$dashboard_totals['total_project_size_mw']); ?>,
+    assignedOrderedMw: <?php echo json_encode((float)$assigned_ordered_mw); ?>,
+    unassignedOrderedMw: <?php echo json_encode((float)$unassigned_ordered_mw); ?>,
+    orderedTotalMw: <?php echo json_encode((float)$total_ordered_with_unassigned_mw); ?>,
+    coverageGapMw: <?php echo json_encode((float)$coverage_gap_mw); ?>,
+    surplusMw: <?php echo json_encode(max(0, (float)$total_ordered_with_unassigned_mw - (float)$dashboard_totals['total_project_size_mw'])); ?>
+};
+const distributionModuleBreakdown = <?php echo json_encode($distribution_module_breakdown); ?>;
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+let selectedDistributionRowIndex = null;
+
+function renderWattageSummaryCell(row) {
+    const details = Array.isArray(row?.wattage_details) ? row.wattage_details : [];
+    if (!details.length) return '—';
+
+    if (details.length === 1) {
+        return `<span style="font-size:0.88em;font-weight:600;color:#293E4C">${Number(details[0].wattage)}W</span>`;
+    }
+
+    const preview = details.slice(0, 3).map(d => `${Number(d.wattage)}W`).join(', ');
+    const remaining = details.length > 3 ? ` +${details.length - 3} more` : '';
+    return `
+        <div style="font-size:0.85em;font-weight:600;color:#293E4C;line-height:1.25">${preview}${remaining}</div>
+        <div style="font-size:0.7em;color:#6c757d;margin-top:2px">Click row to expand</div>
+    `;
+}
+
+function buildDistributionSubrowMarkup(row) {
+    const details = Array.isArray(row.wattage_details) ? row.wattage_details : [];
+    if (!details.length) {
+        return '<div style="padding:10px 12px;color:#6c757d;font-size:0.82em">No wattage-specific detail is available for this row.</div>';
+    }
+
+    const detailRowsHtml = details.map(d => {
+        const projectCount = row.assignment_scope === 'Assigned' ? Number(d.project_count || 0).toLocaleString() : '—';
+        const domestic = d.domestic_content_pct !== null ? `${Number(d.domestic_content_pct).toFixed(1)}%` : 'Not tracked';
+        return `
+            <tr>
+                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-weight:600;font-size:0.8em">${Number(d.wattage)}W</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${Number(d.module_count || 0).toLocaleString()}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${Number(d.mw_total || 0).toFixed(2)} MW</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${Number(d.batch_count || 0).toLocaleString()}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${projectCount}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${domestic}</td>
+            </tr>
+        `;
+    }).join('');
+
+    return `
+        <div style="padding:8px 10px;background:#f8fbfc;border-top:1px solid #e6edf1;border-bottom:1px solid #e6edf1">
+            <div style="padding:7px 8px;background:#f2f7f9;border:1px solid #e1eaef;border-radius:6px;font-size:0.78em;color:#4f5b65;margin-bottom:8px">
+                <strong style="color:#293E4C">${escapeHtml(row.manufacturer)}</strong> • ${escapeHtml(row.assignment_scope)} • Wattage breakout
+            </div>
+            <table style="width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;border:1px solid #e9ecef;border-radius:6px;overflow:hidden">
+                <thead>
+                    <tr>
+                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Wattage</th>
+                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Modules</th>
+                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">MW</th>
+                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Batches</th>
+                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Projects</th>
+                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Domestic %</th>
+                    </tr>
+                </thead>
+                <tbody>${detailRowsHtml}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function selectDistributionRow(index) {
+    const targetRow = document.querySelector(`.distribution-row[data-row-index="${index}"]`);
+    if (!targetRow) return;
+
+    const wasSelected = selectedDistributionRowIndex === index;
+    document.querySelectorAll('.distribution-subrow').forEach(row => row.remove());
+    document.querySelectorAll('.distribution-row').forEach(row => {
+        row.style.background = '';
+    });
+
+    if (wasSelected) {
+        selectedDistributionRowIndex = null;
+        return;
+    }
+
+    selectedDistributionRowIndex = index;
+    targetRow.style.background = '#f0f8fa';
+
+    const rowData = distributionModuleBreakdown[index];
+    const subRow = document.createElement('tr');
+    subRow.className = 'distribution-subrow';
+    const subCell = document.createElement('td');
+    subCell.colSpan = 7;
+    subCell.style.padding = '0';
+    subCell.innerHTML = buildDistributionSubrowMarkup(rowData);
+    subRow.appendChild(subCell);
+    targetRow.insertAdjacentElement('afterend', subRow);
+}
 
 function openModal(type, idx) {
     const p = projectsData[idx], modal = document.getElementById('modal-overlay'), circ = 2 * 3.14159 * 28;
@@ -737,26 +1000,97 @@ function openChartModal(type) {
         `;
     } else if (type === 'distribution') {
         title.textContent = 'Module Distribution - Coverage Guide';
+        const gapOrSurplus = distributionData.surplusMw > 0 ? 'surplus' : 'gap';
+        const gapOrSurplusValue = distributionData.surplusMw > 0 ? distributionData.surplusMw : distributionData.coverageGapMw;
+        const manufacturerCount = new Set(distributionModuleBreakdown.map(row => row.manufacturer)).size;
+        const totalBatches = distributionModuleBreakdown.reduce((sum, row) => sum + (Number(row.batch_count) || 0), 0);
+        const breakdownRowsHtml = distributionModuleBreakdown.length
+            ? distributionModuleBreakdown.map((row, idx) => {
+                const scope = row.assignment_scope === 'Assigned' ? 'Assigned' : 'Unassigned';
+                const scopeStyle = scope === 'Assigned'
+                    ? 'background:#e8f4f7;color:#1f4f5b;'
+                    : 'background:#fff4e5;color:#8a5a00;';
+                const moduleCount = Number(row.module_count || 0).toLocaleString();
+                const batchCount = Number(row.batch_count || 0).toLocaleString();
+                const projectCount = scope === 'Assigned' ? Number(row.project_count || 0).toLocaleString() : '—';
+                const domesticPct = row.domestic_content_pct !== null
+                    ? `${Number(row.domestic_content_pct).toFixed(1)}%`
+                    : 'Not tracked';
+                const wattageSummary = renderWattageSummaryCell(row);
+
+                return `
+                    <tr class="distribution-row" data-row-index="${idx}" onclick="selectDistributionRow(${idx})" style="cursor:pointer;transition:background 0.15s ease">
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;font-weight:600;color:#293E4C;font-size:0.82em;word-break:break-word">${escapeHtml(row.manufacturer)}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center"><span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:0.68em;font-weight:600;${scopeStyle}">${scope}</span></td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${moduleCount}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${batchCount}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${projectCount}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${wattageSummary}</td>
+                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${domesticPct}</td>
+                    </tr>
+                `;
+            }).join('')
+            : '<tr><td colspan="7" style="padding:12px;text-align:center;color:#6c757d">No module batches found for this account.</td></tr>';
+
         body.innerHTML = `
             <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px">
                 <h4 style="margin:0 0 8px;color:#293E4C;font-size:0.95em">What This Chart Shows</h4>
-                <p style="margin:0;font-size:0.85em;color:#495057">This chart compares your total ordered MW against your total project needs (combined project sizes) across all active projects.</p>
+                <p style="margin:0;font-size:0.85em;color:#495057">This chart compares project needs vs ordered modules and splits ordered MW into assigned and unassigned portions.</p>
             </div>
             <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #488C9A">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
                     <span style="width:12px;height:12px;border-radius:50%;background:#488C9A"></span>
-                    <strong style="color:#293E4C">Ordered (MW)</strong>
+                    <strong style="color:#293E4C">Assigned Ordered (MW)</strong>
                 </div>
-                <p style="margin:0;font-size:0.85em;color:#495057">Total megawatts of modules that have been ordered across all projects, calculated from module quantities and their wattages.</p>
+                <p style="margin:0;font-size:0.85em;color:#495057">Ordered MW tied directly to projects.</p>
+            </div>
+            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #f59e0b">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#f59e0b"></span>
+                    <strong style="color:#293E4C">Unassigned Ordered (MW)</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057">Ordered MW not yet tied to a specific project.</p>
             </div>
             <div style="padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #e9ecef">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                    <span style="width:12px;height:12px;border-radius:50%;background:#e9ecef;border:1px solid #dee2e6"></span>
-                    <strong style="color:#293E4C">Gap / Surplus</strong>
+                <div style="display:flex;justify-content:space-between;font-size:0.85em;color:#495057;margin-bottom:4px"><span>Project Needs</span><strong style="color:#293E4C">${distributionData.projectNeedsMw.toFixed(2)} MW</strong></div>
+                <div style="display:flex;justify-content:space-between;font-size:0.85em;color:#495057;margin-bottom:4px"><span>Total Ordered</span><strong style="color:#293E4C">${distributionData.orderedTotalMw.toFixed(2)} MW</strong></div>
+                <div style="display:flex;justify-content:space-between;font-size:0.85em;color:#495057"><span>${gapOrSurplus === 'surplus' ? 'Surplus' : 'Gap'}</span><strong style="color:${gapOrSurplus === 'surplus' ? '#28a745' : '#dc3545'}">${gapOrSurplusValue.toFixed(2)} MW</strong></div>
+            </div>
+            <div style="margin-top:16px;padding:14px;background:#f8f9fa;border-radius:10px">
+                <h4 style="margin:0 0 10px;color:#293E4C;font-size:0.95em">Manufacturer & Module Detail</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px">
+                    <div style="padding:8px 10px;background:#fff;border:1px solid #e9ecef;border-radius:8px">
+                        <div style="font-size:0.72em;color:#6c757d;text-transform:uppercase;font-weight:600">Manufacturers</div>
+                        <div style="font-size:1.1em;color:#293E4C;font-weight:700">${manufacturerCount.toLocaleString()}</div>
+                    </div>
+                    <div style="padding:8px 10px;background:#fff;border:1px solid #e9ecef;border-radius:8px">
+                        <div style="font-size:0.72em;color:#6c757d;text-transform:uppercase;font-weight:600">Batches</div>
+                        <div style="font-size:1.1em;color:#293E4C;font-weight:700">${totalBatches.toLocaleString()}</div>
+                    </div>
+                    <div style="padding:8px 10px;background:#fff;border:1px solid #e9ecef;border-radius:8px">
+                        <div style="font-size:0.72em;color:#6c757d;text-transform:uppercase;font-weight:600">Total Ordered</div>
+                        <div style="font-size:1.1em;color:#293E4C;font-weight:700">${distributionData.orderedTotalMw.toFixed(2)} MW</div>
+                    </div>
                 </div>
-                <p style="margin:0;font-size:0.85em;color:#495057"><strong style="color:#dc3545">Gap:</strong> You need to order more modules to meet project requirements.<br><strong style="color:#28a745">Surplus:</strong> You have ordered more than your current project needs.</p>
+                <div style="overflow-x:auto;border:1px solid #e9ecef;border-radius:8px;background:#fff">
+                    <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+                        <thead>
+                            <tr>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:25%">Manufacturer</th>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:13%">Scope</th>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:11%">Modules</th>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:10%">Batches</th>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:10%">Projects</th>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:20%">Wattage</th>
+                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:11%">Domestic %</th>
+                            </tr>
+                        </thead>
+                        <tbody>${breakdownRowsHtml}</tbody>
+                    </table>
+                </div>
             </div>
         `;
+        selectedDistributionRowIndex = null;
     }
 
     modal.classList.add('active');
@@ -867,10 +1201,91 @@ const pipelineChart = new Chart(document.getElementById('pipelineChart'), {
     }
 });
 document.getElementById('pipelineChart').style.cursor = 'pointer';
+function getCoverageTooltipEl() {
+    let tooltipEl = document.getElementById('coverage-chart-tooltip');
+    if (!tooltipEl) {
+        tooltipEl = document.createElement('div');
+        tooltipEl.id = 'coverage-chart-tooltip';
+        tooltipEl.style.position = 'absolute';
+        tooltipEl.style.pointerEvents = 'none';
+        tooltipEl.style.background = 'rgba(41, 62, 76, 0.95)';
+        tooltipEl.style.color = '#fff';
+        tooltipEl.style.padding = '8px 10px';
+        tooltipEl.style.borderRadius = '8px';
+        tooltipEl.style.fontSize = '12px';
+        tooltipEl.style.fontWeight = '600';
+        tooltipEl.style.whiteSpace = 'nowrap';
+        tooltipEl.style.zIndex = '3000';
+        tooltipEl.style.opacity = '0';
+        tooltipEl.style.transition = 'opacity 120ms ease';
+        document.body.appendChild(tooltipEl);
+    }
+    return tooltipEl;
+}
+
+function coverageExternalTooltip(context) {
+    const { chart, tooltip } = context;
+    const tooltipEl = getCoverageTooltipEl();
+
+    if (tooltip.opacity === 0) {
+        tooltipEl.style.opacity = '0';
+        return;
+    }
+
+    if (tooltip.body) {
+        const lines = tooltip.body.map(b => b.lines).flat();
+        tooltipEl.innerHTML = lines.map(line => `<div>${escapeHtml(line)}</div>`).join('');
+    }
+
+    const canvasRect = chart.canvas.getBoundingClientRect();
+    let left = canvasRect.left + window.scrollX + tooltip.caretX;
+    let top = canvasRect.top + window.scrollY + tooltip.caretY - 10;
+    let transform = 'translate(-50%, -100%)';
+
+    tooltipEl.style.left = `${left}px`;
+    tooltipEl.style.top = `${top}px`;
+    tooltipEl.style.transform = transform;
+    tooltipEl.style.opacity = '1';
+
+    const margin = 8;
+    const rect = tooltipEl.getBoundingClientRect();
+    if (rect.left < margin) left += (margin - rect.left);
+    if (rect.right > window.innerWidth - margin) left -= (rect.right - (window.innerWidth - margin));
+    if (rect.top < margin) {
+        top = canvasRect.top + window.scrollY + tooltip.caretY + 12;
+        transform = 'translate(-50%, 0)';
+    }
+
+    tooltipEl.style.left = `${left}px`;
+    tooltipEl.style.top = `${top}px`;
+    tooltipEl.style.transform = transform;
+}
+
 new Chart(document.getElementById('coverageChart'), {
     type: 'doughnut',
-    data: { labels: ['Ordered','Gap'], datasets: [{ data: [<?php echo min($dashboard_totals['total_ordered_mw'], $dashboard_totals['total_project_size_mw']).','.max(0, $dashboard_totals['total_project_size_mw'] - $dashboard_totals['total_ordered_mw']); ?>], backgroundColor: ['#488C9A','#e9ecef'], borderWidth: 0 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '60%' }
+    data: {
+        labels: ['Assigned Ordered', 'Unassigned Ordered', 'Gap'],
+        datasets: [{
+            data: [distributionData.assignedOrderedMw, distributionData.unassignedOrderedMw, distributionData.coverageGapMw],
+            backgroundColor: ['#488C9A', '#f59e0b', '#e9ecef'],
+            borderWidth: 0
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                enabled: false,
+                external: coverageExternalTooltip,
+                callbacks: {
+                    label: context => `${context.label}: ${Number(context.raw).toFixed(1)} MW`
+                }
+            }
+        },
+        cutout: '60%'
+    }
 });
 
 document.addEventListener('DOMContentLoaded', () => {

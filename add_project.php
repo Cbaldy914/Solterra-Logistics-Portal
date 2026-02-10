@@ -395,238 +395,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // If wattage and quantities are provided, create a module batch for them
-        if (isset($_POST['wattages'], $_POST['quantities'])) {
-            $wattages   = $_POST['wattages'];
-            $quantities = $_POST['quantities'];
-            $domestic_content_pcts = $_POST['domestic_content_pcts'] ?? [];
-            $track_domestic_content = !empty($_POST['track_domestic_content']);
-            $manufacturer_id_for_batch = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
-            $location_id_for_batch = isset($_POST['location_id']) ? intval($_POST['location_id']) : null;
-
-            if (count($wattages) !== count($quantities)) {
-                throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
-            }
-
-            // First, check if there are any valid wattage/quantity pairs
-            // Skip module batch creation entirely if all entries are empty
-            $valid_pairs = [];
-            for ($i = 0; $i < count($wattages); $i++) {
-                $w_val = trim($wattages[$i]);
-                $q_val = trim($quantities[$i]);
-
-                // Skip completely empty entries
-                if ($w_val === '' && $q_val === '') {
-                    continue;
-                }
-
-                // If one is filled but not the other, that's an error
-                if ($w_val === '' || $q_val === '') {
-                    throw new Exception("Both Wattage and Quantity must be provided for each entry, or leave both empty.");
-                }
-
-                $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
-                $q_int = filter_var($q_val, FILTER_VALIDATE_INT);
-
-                if ($w_int === false || $q_int === false) {
-                    throw new Exception("Wattage and Quantity must be valid integers.");
-                }
-                if ($w_int <= 0 || $q_int <= 0) {
-                    throw new Exception("Wattage and Quantity must be positive integers.");
-                }
-
-                $domestic_content_pct = null;
-                if ($track_domestic_content) {
-                    $pct_raw = trim((string)($domestic_content_pcts[$i] ?? ''));
-                    if ($pct_raw === '' || !is_numeric($pct_raw)) {
-                        throw new Exception("Domestic Content % is required and must be numeric when tracking is enabled.");
-                    }
-                    $domestic_content_pct = (float)$pct_raw;
-                    if ($domestic_content_pct < 0 || $domestic_content_pct > 100) {
-                        throw new Exception("Domestic Content % must be between 0 and 100.");
-                    }
-                }
-
-                $valid_pairs[] = ['wattage' => $w_int, 'quantity' => $q_int, 'domestic_content_pct' => $domestic_content_pct];
-            }
-
-            // Only proceed with module batch creation if there are valid pairs
-            if (count($valid_pairs) > 0) {
-                // Create entries in project_wattage_orders table for project size calculation
-                $stmt_wattage = $conn->prepare("
-                    INSERT INTO project_wattage_orders (project_id, wattage, total_order)
-                    VALUES (?, ?, ?)
-                ");
-                if (!$stmt_wattage) {
-                    throw new Exception("Error preparing wattage orders insert: " . $conn->error);
-                }
-
-                foreach ($valid_pairs as $pair) {
-                    $w_int = $pair['wattage'];
-                    $q_int = $pair['quantity'];
-                    $stmt_wattage->bind_param("iii", $project_id, $w_int, $q_int);
-                    if (!$stmt_wattage->execute()) {
-                        throw new Exception("Error inserting wattage order (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_wattage->error);
-                    }
-                }
-                $stmt_wattage->close();
-
-            // Define vendor_name and initial_location for the new module batch
-            $manufacturer_name = "Unknown Manufacturer";
-            $manufacturer_address = "";
-
-            if ($manufacturer_id_for_batch && $location_id_for_batch) {
-                // Get manufacturer details for vendor name and initial location (from selected location)
-                $stmt_mfg = $conn->prepare("
-                    SELECT
-                        m.name,
-                        ml.street_address,
-                        ml.city,
-                        ml.state,
-                        ml.zip_code
-                    FROM manufacturers m
-                    LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id
-                    WHERE m.id = ? AND ml.id = ?");
-                if ($stmt_mfg) {
-                    $stmt_mfg->bind_param("ii", $manufacturer_id_for_batch, $location_id_for_batch);
-                    $stmt_mfg->execute();
-                    $stmt_mfg->bind_result($mfg_name, $mfg_street, $mfg_city, $mfg_state, $mfg_zip);
-                    if ($stmt_mfg->fetch()) {
-                        $manufacturer_name = $mfg_name;
-                        $address_parts = array_filter([$mfg_street, $mfg_city, $mfg_state, $mfg_zip]);
-                        $manufacturer_address = implode(', ', $address_parts);
-                    }
-                    $stmt_mfg->close();
-                }
-            } else if ($manufacturer_id_for_batch) {
-                // Fallback to primary location if no specific location was selected
-                $stmt_mfg = $conn->prepare("
-                    SELECT
-                        m.name,
-                        ml.street_address,
-                        ml.city,
-                        ml.state,
-                        ml.zip_code
-                    FROM manufacturers m
-                    LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
-                    WHERE m.id = ?");
-                if ($stmt_mfg) {
-                    $stmt_mfg->bind_param("i", $manufacturer_id_for_batch);
-                    $stmt_mfg->execute();
-                    $stmt_mfg->bind_result($mfg_name, $mfg_street, $mfg_city, $mfg_state, $mfg_zip);
-                    if ($stmt_mfg->fetch()) {
-                        $manufacturer_name = $mfg_name;
-                        $address_parts = array_filter([$mfg_street, $mfg_city, $mfg_state, $mfg_zip]);
-                        $manufacturer_address = implode(', ', $address_parts);
-                    }
-                    $stmt_mfg->close();
-                }
-            }
-
-            $default_vendor_name = $manufacturer_name;
-
-            // Use manufacturer address as initial location, fallback to project address
-            if (!empty($manufacturer_address)) {
-                $default_initial_location = $manufacturer_address;
-            } else {
-                $address_parts = array_filter([$street_address, $city, $state, $zip_code]);
-                $default_initial_location = implode(', ', $address_parts);
-            }
-
-            // Insert into modules table for the initial batch with module information
-            $stmt_module = $conn->prepare("
-                INSERT INTO modules (
-                    account_id, vendor_name, initial_location, project_id,
-                    modules_per_pallet, pallets_per_truck, modules_per_truck,
-                    pallet_length_mm, pallet_depth_mm, pallet_double_stacked_height_mm, pallet_total_weight_kg,
-                    stacking_in_warehouse, stacking_during_transport,
-                    forklift_truck_long_side_mm, forklift_truck_short_side_mm,
-                    pallet_jack_long_side_mm, pallet_jack_short_side_mm,
-                    module_notes, module_docs_url, cost_per_watt, po_execution_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ");
-            if (!$stmt_module) {
-                throw new Exception("Error preparing module batch insert: " . $conn->error);
-            }
-            $stmt_module->bind_param(
-                "issiiiiiiiissiiiissds",
-                $account_id,
-                $default_vendor_name,
-                $default_initial_location,
-                $project_id,
-                $modules_per_pallet,
-                $pallets_per_truck,
-                $modules_per_truck,
-                $pallet_length_mm,
-                $pallet_depth_mm,
-                $pallet_double_stacked_height_mm,
-                $pallet_total_weight_kg,
-                $stacking_in_warehouse,
-                $stacking_during_transport,
-                $forklift_truck_long_side_mm,
-                $forklift_truck_short_side_mm,
-                $pallet_jack_long_side_mm,
-                $pallet_jack_short_side_mm,
-                $module_notes,
-                $module_docs_url,
-                $cost_per_watt,
-                $po_execution_date
-            );
-
-            if (!$stmt_module->execute()) {
-                throw new Exception("Error inserting module batch for project: " . $stmt_module->error);
-            }
-            $module_batch_id = $stmt_module->insert_id;
-            $stmt_module->close();
-
-            // Insert items into unassigned_module_items
-            $stmt_item_with_domestic = $conn->prepare("
-                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity, domestic_content_pct)
-                VALUES (?, ?, ?, ?)
-            ");
-            $stmt_item_no_domestic = $conn->prepare("
-                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
-                VALUES (?, ?, ?)
-            ");
-            if (!$stmt_item_with_domestic || !$stmt_item_no_domestic) {
-                throw new Exception("Error preparing module item insert: " . $conn->error);
-            }
-
-            foreach ($valid_pairs as $pair) {
-                $w_int = $pair['wattage'];
-                $q_int = $pair['quantity'];
-
-                $domestic_content_pct = isset($pair['domestic_content_pct']) ? $pair['domestic_content_pct'] : null;
-                if ($domestic_content_pct !== null) {
-                    $stmt_item_with_domestic->bind_param("iiid", $module_batch_id, $w_int, $q_int, $domestic_content_pct);
-                    if (!$stmt_item_with_domestic->execute()) {
-                        throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item_with_domestic->error);
-                    }
-                } else {
-                    $stmt_item_no_domestic->bind_param("iii", $module_batch_id, $w_int, $q_int);
-                    if (!$stmt_item_no_domestic->execute()) {
-                        throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item_no_domestic->error);
-                    }
-                }
-            }
-            $stmt_item_with_domestic->close();
-            $stmt_item_no_domestic->close();
-
-            save_module_milestones($module_batch_id, $posted_milestones, $conn, $user_id);
-            } // End of if (count($valid_pairs) > 0)
-        }
-
-        // Set a success message to be displayed with the form below
-        $successMessage = "Project added successfully! <a href='project_overview?project_id=" . $project_id . "' style='color: #488C9A; text-decoration: underline;'>View Project</a>.";
-
-        // If modules were created, enhance the success message with module count
-        if (isset($valid_pairs) && count($valid_pairs) > 0) {
-            $totalModulesCreated = 0;
-            foreach ($valid_pairs as $pair) {
-                $totalModulesCreated += $pair['quantity'];
-            }
-            $successMessage = "Project added successfully! " . number_format($totalModulesCreated) . " modules created for this project. <a href='project_overview?project_id=" . $project_id . "' style='color: #488C9A; text-decoration: underline;'>View Project</a>.";
-        }
+        // Set success - project_id is now available for CTA banner
+        $successMessage = "Project created successfully!";
+        $created_project_id = $project_id;
     } catch (Exception $ex) {
         // Set the error message to be displayed with the form below
         $errorMessage = $ex->getMessage();
@@ -1227,8 +998,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
         }
 
-        /* Module Setup uses component CSS from module_batch_section.php */
-
         /* Photo Upload - Profile Image Style */
         .photo-upload-container {
             display: flex;
@@ -1521,86 +1290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         .btn-modal-confirm:hover { background: #3d7a87; }
 
-        /* Module Setup Toggle - Enhanced */
-        .module-setup-toggle {
-            display: flex;
-            background: #e9ecef;
-            border-radius: 14px;
-            padding: 6px;
-            gap: 6px;
-            margin-bottom: 24px;
-        }
-        .module-setup-toggle button {
-            flex: 1;
-            padding: 16px 28px;
-            border-radius: 10px;
-            border: none;
-            background: transparent;
-            color: #6c757d;
-            font-weight: 700;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: all 0.25s ease;
-        }
-        .module-setup-toggle button:hover {
-            background: rgba(255,255,255,0.6);
-            color: #293E4C;
-        }
-        .module-setup-toggle button.active {
-            background: #fff;
-            color: #488C9A;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        .module-mode-content {
-            display: none;
-        }
-        .module-mode-content.active {
-            display: block;
-        }
-        .import-later-card {
-            padding: 32px;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            border-radius: 16px;
-            border: 2px solid #e9ecef;
-            text-align: center;
-        }
-        .import-later-card .icon {
-            font-size: 3rem;
-            margin-bottom: 16px;
-        }
-        .import-later-card h4 {
-            color: #293E4C;
-            margin: 0 0 12px 0;
-            font-size: 1.2rem;
-        }
-        .import-later-card p {
-            color: #6c757d;
-            margin: 0 0 8px 0;
-            font-size: 0.95rem;
-        }
-        .import-later-card .features {
-            display: flex;
-            justify-content: center;
-            gap: 24px;
-            margin-top: 20px;
-            flex-wrap: wrap;
-        }
-        .import-later-card .feature {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #488C9A;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-        .import-later-card .feature .check {
-            color: #28a745;
-        }
-
         @media (max-width: 768px) {
-            .module-options {
-                grid-template-columns: 1fr;
-            }
             .step-indicator {
                 flex-wrap: wrap;
                 gap: 10px;
@@ -1655,7 +1345,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <!-- Messages -->
-    <?php if (!empty($successMessage)): ?>
+    <?php if (!empty($successMessage) && isset($created_project_id)): ?>
+        <div style="background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745; border-radius: 16px; padding: 32px; margin-bottom: 24px; text-align: center;">
+            <div style="font-size: 2rem; margin-bottom: 12px;">&#10004;</div>
+            <h3 style="margin: 0 0 8px 0; color: #155724; font-size: 1.3em;">Project Created Successfully!</h3>
+            <p style="margin: 0 0 20px 0; color: #155724;">What would you like to do next?</p>
+            <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+                <a href="add_module_batch.php?project_id=<?php echo (int)$created_project_id; ?>" style="display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: linear-gradient(135deg, #488C9A 0%, #3a7086 100%); color: white; border-radius: 10px; text-decoration: none; font-weight: 600; transition: all 0.2s ease;">
+                    <i class="fas fa-plus"></i> Add Module Batch
+                </a>
+                <a href="project_overview.php?project_id=<?php echo (int)$created_project_id; ?>" style="display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: linear-gradient(135deg, #293E4C 0%, #3d5a6e 100%); color: white; border-radius: 10px; text-decoration: none; font-weight: 600; transition: all 0.2s ease;">
+                    <i class="fas fa-eye"></i> View Project
+                </a>
+            </div>
+        </div>
+    <?php elseif (!empty($successMessage)): ?>
         <div class="message success"><?php echo $successMessage; ?></div>
     <?php endif; ?>
     <?php if (!empty($errorMessage)): ?>
@@ -1676,14 +1380,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <span class="step-label">Site Info</span>
                 <span class="step-tag optional">Optional</span>
             </div>
-            <div class="step-connector"></div>
-            <div class="step" data-step="3" onclick="goToStep(3)">
-                <div class="step-number">3</div>
-                <span class="step-label">Modules</span>
-                <span class="step-tag optional">Optional</span>
-            </div>
             <div class="current-step-label">
-                <span>Step <span id="currentStepNum">1</span> of 3:</span>
+                <span>Step <span id="currentStepNum">1</span> of 2:</span>
                 <span class="step-name" id="currentStepName">Project Details</span>
             </div>
         </div>
@@ -1974,66 +1672,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <button type="button" class="btn-back-step" onclick="goToStep(1)">
                         <span>&larr;</span> Back
                     </button>
-                    <button type="button" class="btn-continue" onclick="goToStep(3)">
-                        Continue to Modules <span>&rarr;</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 3: Module Setup (Optional) -->
-        <div class="accordion-section" data-section="3">
-            <div class="accordion-header" onclick="toggleAccordion(3)">
-                <h2><span class="step-badge" id="badge-3">3</span> Module Setup <span class="step-tag optional">Optional</span></h2>
-                <span class="accordion-toggle">&#9660;</span>
-            </div>
-            <div class="accordion-content">
-                <div class="section-description">
-                    Choose how you want to set up modules for this project.
-                </div>
-
-                <div class="module-setup-toggle">
-                    <button type="button" class="active" onclick="setModuleMode('import')" id="btn-import-mode">Import Schedule Later</button>
-                    <button type="button" onclick="setModuleMode('manual')" id="btn-manual-mode">Manual Setup</button>
-                </div>
-
-                <!-- Import Later Mode (Default) -->
-                <div class="module-mode-content active" id="mode-import">
-                    <div class="import-later-card">
-                        <div class="icon">&#128230;</div>
-                        <h4>You're All Set!</h4>
-                        <p>Create your project now and import the manufacturer's shipping schedule later.</p>
-                        <p style="font-size: 0.85rem;">You can add modules anytime from the Project Overview page.</p>
-                        <div class="features">
-                            <span class="feature"><span class="check">&#10003;</span> Auto-creates pallets from BOL data</span>
-                            <span class="feature"><span class="check">&#10003;</span> Links deliveries automatically</span>
-                            <span class="feature"><span class="check">&#10003;</span> Tracks serial numbers</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Manual Setup Mode -->
-                <div class="module-mode-content" id="mode-manual">
-                    <?php
-                    // Include the shared module batch section component
-                    $prefManufacturerId = null;
-                    $prefLocationId = null;
-                    $existingWattages = [];
-                    $module = null; // No existing module data for new project
-                    include __DIR__ . '/components/module_batch_section.php';
-                    ?>
-                </div>
-
-                <div class="section-actions">
-                    <button type="button" class="btn-back-step" onclick="goToStep(2)">
-                        <span>&larr;</span> Back
-                    </button>
-                    <button type="submit" class="btn-submit" id="btn-create-project">
+                    <button type="submit" class="btn-continue" style="background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);">
                         Create Project <span>&#10003;</span>
                     </button>
                 </div>
             </div>
         </div>
+
 
         <!-- Site Documents Upload Modal -->
         <div id="siteDocsModal" class="site-docs-modal">
@@ -2218,44 +1863,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Initialize module fields - since default mode is 'import', remove required from manual fields
-    // Use setTimeout to ensure the module_batch_section.php component has initialized its fields
-    setTimeout(function() {
-        updateModuleFieldsRequired();
-    }, 100);
-
-    // Watch for dynamically added wattage/quantity inputs and update their required attribute
-    const manualSection = document.getElementById('mode-manual');
-    if (manualSection) {
-        const observer = new MutationObserver(function(mutations) {
-            mutations.forEach(function(mutation) {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    // Check if we're in import mode and need to remove required
-                    updateModuleFieldsRequired();
-                }
-            });
-        });
-
-        observer.observe(manualSection, { childList: true, subtree: true });
-    }
 });
 
-// Helper function to update required attributes on module fields based on current mode
-function updateModuleFieldsRequired() {
-    const manualSection = document.getElementById('mode-manual');
-    if (manualSection) {
-        const isManualMode = typeof currentModuleMode !== 'undefined' && currentModuleMode === 'manual';
-        const wattageInputs = manualSection.querySelectorAll('input[name="wattages[]"]');
-        const quantityInputs = manualSection.querySelectorAll('input[name="quantities[]"]');
-
-        wattageInputs.forEach(input => {
-            input.required = isManualMode;
-        });
-        quantityInputs.forEach(input => {
-            input.required = isManualMode;
-        });
-    }
-}
 
 let selectedSiteFiles = [];
 
@@ -2371,7 +1980,7 @@ function removeUploadedDoc(index) {
     }
 }
 
-const stepNames = {1: 'Project Details', 2: 'Site Info', 3: 'Modules'};
+const stepNames = {1: 'Project Details', 2: 'Site Info'};
 
 function goToStep(step) {
     // Validate current step before moving forward
@@ -2525,25 +2134,6 @@ function submitForm() {
     }
 }
 
-// Module mode uses the shared component from module_batch_section.php
-// Functions like mb_addWattageField, mb_handleManufacturerChange are provided by the component
-
-let currentModuleMode = 'import';
-
-function setModuleMode(mode) {
-    currentModuleMode = mode;
-
-    // Update toggle buttons
-    document.getElementById('btn-import-mode').classList.toggle('active', mode === 'import');
-    document.getElementById('btn-manual-mode').classList.toggle('active', mode === 'manual');
-
-    // Show/hide content
-    document.getElementById('mode-import').classList.toggle('active', mode === 'import');
-    document.getElementById('mode-manual').classList.toggle('active', mode === 'manual');
-
-    // Toggle required attributes on module fields based on mode
-    updateModuleFieldsRequired();
-}
 
 // Photo upload handling
 (function() {

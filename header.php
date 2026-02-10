@@ -240,8 +240,9 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
             <div class="slp-submenu" role="menu">
               <a href="modules" role="menuitem">Manage Modules</a>
+              <a href="add_module_batch" role="menuitem">Add Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
-              
+
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
             </div>
           </li>
@@ -325,6 +326,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
             <div class="slp-submenu" role="menu">
               <a href="modules" role="menuitem">Manage Modules</a>
+              <a href="add_module_batch" role="menuitem">Add Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
             </div>
           </li>
@@ -406,6 +408,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
             <div class="slp-submenu" role="menu">
               <a href="modules" role="menuitem">Manage Modules</a>
+              <a href="add_module_batch" role="menuitem">Add Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
             </div>
           </li>
