@@ -2005,7 +2005,7 @@ $conn->close();
                 'project_id' => (int)$project_id
             ]);
         } else {
-            $label = 'Batch: '.($batch_data ? ($batch_data['vendor_name'] ?? 'Module Batch') : 'Module Batch');
+            $label = 'Batch: '.($batch_data ? (!empty($batch_data['batch_name']) ? $batch_data['batch_name'] : ($batch_data['vendor_name'] ?? 'Module Batch')) : 'Module Batch');
             $batch_project_id = (int)($batch_data['project_id'] ?? 0);
             if ($batch_project_id > 0) {
                 // Link back to project overview when batch has a project
@@ -2102,10 +2102,9 @@ $conn->close();
                                 <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
                                 <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
                             </div>
-                            <div style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef;">
+                            <div style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef;" title="<?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% of MW tracked for domestic content">
                                 <div style="font-size: 1.4rem; font-weight: 700; color: #6f42c1;"><?php echo $quick_stats['domestic_content_pct'] !== null ? number_format($quick_stats['domestic_content_pct'], 1) . '%' : 'N/A'; ?></div>
-                                <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content</div>
-                                <div style="font-size: 0.72rem; color: #9aa0a6;"><?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% MW tracked</div>
+                                <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content <span style="color: #9aa0a6;">(<?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% tracked)</span></div>
                             </div>
                             <?php if ($isAdmin): ?>
                             <a href="edit_project.php?id=<?php echo (int)$project_id; ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">
@@ -2121,7 +2120,7 @@ $conn->close();
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
                     <div>
                         <h1 style="margin: 0;">Module Overview</h1>
-                        <p style="margin: 4px 0 0 0; color: #6c757d; font-size: 1.1em; font-weight: 500;"><?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></p>
+                        <p style="margin: 4px 0 0 0; color: #6c757d; font-size: 1.1em; font-weight: 500;"><?php echo htmlspecialchars(!empty($batch_data['batch_name']) ? $batch_data['batch_name'] : $batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></p>
                     </div>
 
                     <!-- Inline Stats and Edit Button on Right -->
@@ -2134,10 +2133,9 @@ $conn->close();
                             <div style="font-size: 1.4rem; font-weight: 700; color: #28a745;"><?php echo $quick_stats['contract_value'] > 0 ? '$' . number_format($quick_stats['contract_value'], 0) : 'N/A'; ?></div>
                             <div style="font-size: 0.75rem; color: #6c757d;">Contract Value</div>
                         </div>
-                        <div style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef;">
+                        <div style="background: white; border-radius: 10px; padding: 12px 20px; text-align: center; border: 1px solid #e9ecef;" title="<?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% of MW tracked for domestic content">
                             <div style="font-size: 1.4rem; font-weight: 700; color: #6f42c1;"><?php echo $quick_stats['domestic_content_pct'] !== null ? number_format($quick_stats['domestic_content_pct'], 1) . '%' : 'N/A'; ?></div>
-                            <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content</div>
-                            <div style="font-size: 0.72rem; color: #9aa0a6;"><?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% MW tracked</div>
+                            <div style="font-size: 0.75rem; color: #6c757d;">Domestic Content <span style="color: #9aa0a6;">(<?php echo number_format($quick_stats['domestic_coverage_pct'], 1); ?>% tracked)</span></div>
                         </div>
                         <?php if ($isAdmin): ?>
                         <a href="<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>" class="quick-action-btn secondary" style="padding: 10px 16px;">

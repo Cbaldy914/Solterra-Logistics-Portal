@@ -684,22 +684,18 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
                     </p>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
-        <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to update modules?</h3>
-        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
-            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
-                <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
-                <strong style="color: #293E4C;">Manual Entry</strong>
-                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Edit generic module batch information manually. System-generated pallet IDs.</p>
-            </label>
-            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
-                <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
-                <strong style="color: #293E4C;">Import Pallets</strong>
-                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload real manufacturer pallet data from a CSV/Excel file.</p>
-            </label>
+            <div class="entry-method-toggle" style="display: flex; background: #f0f0f0; border-radius: 10px; padding: 4px; gap: 4px;">
+                <label class="method-option" style="padding: 10px 20px; border-radius: 8px; cursor: pointer; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                    <input type="radio" name="entry_method" value="manual" checked style="display: none;">
+                    <i class="fas fa-edit" style="color: #488C9A;"></i>
+                    <span style="font-weight: 600; color: #293E4C; font-size: 0.9rem;">Manual Entry</span>
+                </label>
+                <label class="method-option" style="padding: 10px 20px; border-radius: 8px; cursor: pointer; background: transparent; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                    <input type="radio" name="entry_method" value="import" style="display: none;">
+                    <i class="fas fa-file-import" style="color: #6c757d;"></i>
+                    <span style="font-weight: 500; color: #6c757d; font-size: 0.9rem;">Import Pallets</span>
+                </label>
+            </div>
         </div>
     </div>
 
@@ -753,22 +749,22 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
             <!-- Step Indicator -->
             <div class="step-indicator-wrapper">
                 <div class="step-indicator">
-                    <div class="step current" data-step="1">
+                    <div class="step current" data-step="1" onclick="goToStep(1)">
                         <div class="step-number">1</div>
                         <div class="step-title">Manufacturer &amp; Modules</div>
                     </div>
                     <div class="step-connector"></div>
-                    <div class="step" data-step="2">
+                    <div class="step" data-step="2" onclick="goToStep(2)">
                         <div class="step-number">2</div>
                         <div class="step-title">Pricing &amp; Milestones</div>
                     </div>
                     <div class="step-connector"></div>
-                    <div class="step" data-step="3">
+                    <div class="step" data-step="3" onclick="goToStep(3)">
                         <div class="step-number">3</div>
                         <div class="step-title">Logistics &amp; Docs</div>
                     </div>
                     <div class="step-connector"></div>
-                    <div class="step" data-step="4">
+                    <div class="step" data-step="4" onclick="goToStep(4)">
                         <div class="step-number">4</div>
                         <div class="step-title">Palletization</div>
                     </div>
@@ -981,11 +977,24 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     </div>
 </main>
 
+<?php
+    // Determine which steps have data (for completed indicators)
+    $step1_complete = !empty($current_wattages); // has wattages
+    $step2_complete = !empty($module['cost_per_watt']) || !empty($existingMilestones);
+    $step3_complete = !empty($module['forklift_truck_long_side_mm']) || !empty($module['stacking_in_warehouse']) || !empty($module['stacking_during_transport']) || !empty($module['module_notes']);
+    $step4_complete = !empty($module['modules_per_pallet']) || !empty($module['pallet_length_mm']);
+    $completedSteps = [];
+    if ($step1_complete) $completedSteps[] = 1;
+    if ($step2_complete) $completedSteps[] = 2;
+    if ($step3_complete) $completedSteps[] = 3;
+    if ($step4_complete) $completedSteps[] = 4;
+?>
 <?php include __DIR__ . '/components/module_batch_scripts.php'; ?>
 <script>
     // ========== Wizard Navigation ==========
     var stepNames = { 1: 'Manufacturer & Modules', 2: 'Pricing & Milestones', 3: 'Logistics & Docs', 4: 'Palletization' };
     var currentStep = 1;
+    var completedSteps = <?php echo json_encode($completedSteps); ?>;
 
     function goToStep(step) {
         if (step < 1 || step > 4) return;
@@ -1079,20 +1088,21 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         var methodOptions = document.querySelectorAll('.method-option');
         methodRadios.forEach(function(radio) {
             radio.addEventListener('change', function() {
+                methodOptions.forEach(function(opt) {
+                    var isActive = opt.querySelector('input').checked;
+                    opt.style.background = isActive ? '#fff' : 'transparent';
+                    opt.style.boxShadow = isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none';
+                    var icon = opt.querySelector('i');
+                    var label = opt.querySelector('span');
+                    if (icon) icon.style.color = isActive ? '#488C9A' : '#6c757d';
+                    if (label) { label.style.color = isActive ? '#293E4C' : '#6c757d'; label.style.fontWeight = isActive ? '600' : '500'; }
+                });
                 if (this.value === 'manual') {
                     manualContainer.style.display = 'block';
                     importContainer.style.display = 'none';
-                    methodOptions[0].style.border = '2px solid #488C9A';
-                    methodOptions[0].style.background = 'rgba(72,140,154,0.05)';
-                    methodOptions[1].style.border = '2px solid #e9ecef';
-                    methodOptions[1].style.background = '#f8f9fa';
                 } else {
                     manualContainer.style.display = 'none';
                     importContainer.style.display = 'block';
-                    methodOptions[1].style.border = '2px solid #488C9A';
-                    methodOptions[1].style.background = 'rgba(72,140,154,0.05)';
-                    methodOptions[0].style.border = '2px solid #e9ecef';
-                    methodOptions[0].style.background = '#f8f9fa';
                 }
             });
         });
@@ -1358,6 +1368,17 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
 
         hideLoadingModal();
         closeResultModal();
+
+        // Mark steps that already have data as completed (visual indicator only)
+        if (completedSteps && completedSteps.length > 0) {
+            completedSteps.forEach(function(stepNum) {
+                if (stepNum === currentStep) return; // Don't mark active step as completed
+                var stepEl = document.querySelector('.step-indicator .step[data-step="' + stepNum + '"]');
+                if (stepEl && !stepEl.classList.contains('current')) stepEl.classList.add('completed');
+                var accSection = document.querySelector('.accordion-section[data-section="' + stepNum + '"]');
+                if (accSection && !accSection.classList.contains('active')) accSection.classList.add('completed');
+            });
+        }
 
         if (deleteBatchBtn) { deleteBatchBtn.addEventListener('click', function() { deleteBatchModal.style.display = 'flex'; }); }
         if (cancelDeleteBatch) { cancelDeleteBatch.addEventListener('click', function() { deleteBatchModal.style.display = 'none'; }); }

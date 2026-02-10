@@ -1373,6 +1373,7 @@ if ($conn && $conn instanceof mysqli) {
                                 <div class="dropdown">
                                     <button class="kebab-trigger" onclick="toggleDropdown(event, 'dropdown-menu-p<?php echo $batch['id']; ?>')" title="More actions">&#8942;</button>
                                     <div id="dropdown-menu-p<?php echo $batch['id']; ?>" class="dropdown-menu">
+                                        <a href="module_overview.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item">View</a>
                                         <a href="edit_module_batch.php?project_id=<?php echo (int)$batch['project_id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
@@ -1468,6 +1469,7 @@ if ($conn && $conn instanceof mysqli) {
                                 <div class="dropdown">
                                     <button class="kebab-trigger" onclick="toggleDropdown(event, 'dropdown-menu-u<?php echo $batch['id']; ?>')" title="More actions">&#8942;</button>
                                     <div id="dropdown-menu-u<?php echo $batch['id']; ?>" class="dropdown-menu">
+                                        <a href="module_overview.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item">View</a>
                                         <a href="edit_module_batch.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
