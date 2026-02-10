@@ -2347,18 +2347,16 @@ include 'components/module_batch_scripts.php';
             }
 
             pricingSummaryDiv.innerHTML = `
-                <div style="display: grid; grid-template-columns: auto 1px 1fr 1px auto; gap: 0; margin-bottom: 24px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-radius: 12px; padding: 20px 24px;">
-                    <div style="padding-right: 24px;">
+                <div style="display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 16px; margin-bottom: 24px;">
+                    <div style="background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
                         <div style="font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 10px;">Cost Per Watt</div>
                         <div style="font-size: 1.4rem; font-weight: 700; color: ${hasCpw ? '#488C9A' : '#6c757d'};">${hasCpw ? '$' + parseFloat(cpw).toFixed(4) + '/W' : 'Not set'}</div>
                     </div>
-                    <div style="background: #e9ecef;"></div>
-                    <div style="padding: 0 24px;">
+                    <div style="background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-radius: 12px; padding: 20px;">
                         <div style="font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 10px;">Payment Milestones</div>
                         ${milestoneHtml}
                     </div>
-                    <div style="background: #e9ecef;"></div>
-                    <div style="padding-left: 24px;">
+                    <div style="background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
                         <div style="font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 10px;">Domestic Content</div>
                         <div style="font-size: 1.4rem; font-weight: 700;">${dcHtml}</div>
                     </div>
