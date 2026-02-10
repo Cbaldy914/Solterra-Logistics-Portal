@@ -17,6 +17,7 @@ if (!$conn) {
 
 $role    = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
+$isAdmin = in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
 
 // --- Account and Project Fetching Logic ---
 $account_id_for_admin = null;
@@ -336,35 +337,35 @@ if ($conn) { // Check connection is still valid
     $paramsModules     = [];
     
     if ($role === 'global_admin') {
-        $sqlModules = "SELECT 
-                         um.id, um.vendor_name, um.initial_location, um.project_id,
+        $sqlModules = "SELECT
+                         um.id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
                          c.name AS account_name,
-                         p.project_name 
-                       FROM modules um 
+                         p.project_name
+                       FROM modules um
                        JOIN customer_accounts c ON um.account_id = c.id
                        LEFT JOIN projects p ON um.project_id = p.id
                        ORDER BY c.name ASC, um.vendor_name ASC";
     } elseif (in_array($role, ['admin', 'customer_admin'], true) && !empty($account_id_for_admin)) {
-         $sqlModules = "SELECT 
-                          um.id, um.vendor_name, um.initial_location, um.project_id,
+         $sqlModules = "SELECT
+                          um.id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
                           c.name AS account_name,
-                          p.project_name 
-                        FROM modules um 
+                          p.project_name
+                        FROM modules um
                         JOIN customer_accounts c ON um.account_id = c.id
                         LEFT JOIN projects p ON um.project_id = p.id
-                        WHERE um.account_id = ? 
+                        WHERE um.account_id = ?
                         ORDER BY um.vendor_name ASC";
         $paramTypesModules = "i";
         $paramsModules     = [$account_id_for_admin];
     } elseif ($role === 'user' && !empty($account_id_for_user)) { // Added condition for 'user' role
-         $sqlModules = "SELECT 
-                          um.id, um.vendor_name, um.initial_location, um.project_id,
+         $sqlModules = "SELECT
+                          um.id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
                           c.name AS account_name,
-                          p.project_name 
-                        FROM modules um 
+                          p.project_name
+                        FROM modules um
                         JOIN customer_accounts c ON um.account_id = c.id
                         LEFT JOIN projects p ON um.project_id = p.id
-                        WHERE um.account_id = ? 
+                        WHERE um.account_id = ?
                         ORDER BY um.vendor_name ASC";
         $paramTypesModules = "i";
         $paramsModules     = [$account_id_for_user];
@@ -590,6 +591,14 @@ if ($conn && $conn instanceof mysqli) {
             border-bottom: none;
         }
 
+        /* Clickable row styling */
+        .clickable-row {
+            cursor: pointer;
+        }
+        .clickable-row:hover {
+            background-color: #f0f7f8 !important;
+        }
+
         /* Modern Action Buttons */
         .btn-action {
             display: inline-flex;
@@ -629,78 +638,16 @@ if ($conn && $conn instanceof mysqli) {
             background: linear-gradient(135deg, #e8690b 0%, #d45d0a 100%);
         }
 
-        /* Legacy button classes for backwards compatibility */
-        .action-buttons.add-new {
-            display: inline-block;
-            padding: 8px 15px;
-            background-color: #488C9A;
-            color: white;
-            text-decoration: none;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1em;
+        /* Batch name styling */
+        .batch-name {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 0.95rem;
         }
-        .action-buttons.add-new:hover {
-            background-color: #293E4C;
-        }
-        .action-buttons.edit {
-            background-color: #488C9A;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
-        }
-        .action-buttons.edit:hover {
-            background-color: #293E4C;
-        }
-        .action-buttons.delete {
-            background-color: #dc3545;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-        }
-        .action-buttons.delete:hover {
-            background-color: #c82333;
-        }
-        .action-buttons.view {
-            background-color: #488C9A;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
-        }
-        .action-buttons.view:hover {
-            background-color: #293E4C;
-        }
-        .action-buttons.warehouse {
-            background-color: #fd7e14;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
-        }
-        .action-buttons.warehouse:hover {
-            background-color: #e8690b;
-        }
-        .action-buttons.project {
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
-        }
-        .action-buttons.project:hover {
-            background-color: #293E4C;
+        .batch-vendor {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-top: 2px;
         }
 
         /* Empty State Styling */
@@ -805,39 +752,51 @@ if ($conn && $conn instanceof mysqli) {
             position: relative;
             display: inline-block;
         }
-        .dropdown-toggle {
+        .kebab-trigger {
             background: none;
-            border: none;
-            color: #488C9A;
-            padding: 4px;
+            border: 1px solid transparent;
+            color: #6c757d;
+            padding: 6px 8px;
             cursor: pointer;
-            font-size: 1.1em;
-            border-radius: 3px;
+            font-size: 1.3em;
+            border-radius: 8px;
             transition: all 0.2s ease;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
-        .dropdown-toggle:hover {
-            background-color: #f8f9fa;
+        .kebab-trigger:hover {
+            background-color: #e9ecef;
             color: #293E4C;
+            border-color: #dee2e6;
         }
         .dropdown-menu {
             display: none;
-            position: absolute;
-            right: 0;
-            top: 100%;
+            position: fixed;
             background-color: white;
-            min-width: 120px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            border-radius: 4px;
-            z-index: 1000;
-            border: 1px solid #ddd;
+            min-width: 140px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.12), 0 4px 10px rgba(0,0,0,0.08);
+            border-radius: 10px;
+            z-index: 9999;
+            border: 1px solid rgba(0,0,0,0.06);
+            padding: 4px;
+            backdrop-filter: blur(8px);
         }
         .dropdown-menu.show {
             display: block;
+            animation: dropdownFadeIn 0.15s ease-out;
+        }
+        @keyframes dropdownFadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         .dropdown-item {
-            display: block;
+            display: flex;
+            align-items: center;
+            gap: 8px;
             width: 100%;
-            padding: 8px 12px;
+            padding: 10px 14px;
             text-decoration: none;
             color: #333;
             border: none;
@@ -845,31 +804,27 @@ if ($conn && $conn instanceof mysqli) {
             text-align: left;
             cursor: pointer;
             font-size: 0.9em;
+            border-radius: 6px;
+            transition: background-color 0.15s ease;
         }
         .dropdown-item:hover {
-            background-color: #f8f9fa;
+            background-color: #f0f7f8;
         }
         .dropdown-item.edit {
-            color: #488C9A;
+            color: #293E4C;
         }
         .dropdown-item.delete {
             color: #dc3545;
         }
-        .dropdown-item:first-child {
-            border-radius: 4px 4px 0 0;
-        }
-        .dropdown-item:last-child {
-            border-radius: 0 0 4px 4px;
+        .dropdown-item.delete:hover {
+            background-color: #fdf0f0;
         }
         
         /* Actions cell styling */
         .actions-cell {
             position: relative;
-        }
-        .actions-cell .dropdown {
-            position: absolute;
-            top: 4px;
-            right: 4px;
+            text-align: center;
+            width: 60px;
         }
         
         /* Form styles for modal */
@@ -1143,28 +1098,64 @@ if ($conn && $conn instanceof mysqli) {
                  }
             }
             
-            // Dropdown functionality
+            // Dropdown functionality with smart positioning
             window.toggleDropdown = function(event, dropdownId) {
                 event.stopPropagation();
-                
+
                 // Close all other dropdowns
-                document.querySelectorAll('.dropdown-menu').forEach(menu => {
+                document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
                     if (menu.id !== dropdownId) {
                         menu.classList.remove('show');
                     }
                 });
-                
-                // Toggle the clicked dropdown
+
                 const dropdown = document.getElementById(dropdownId);
-                dropdown.classList.toggle('show');
+                const isOpen = dropdown.classList.contains('show');
+
+                if (isOpen) {
+                    dropdown.classList.remove('show');
+                    return;
+                }
+
+                // Position the dropdown relative to the trigger button
+                const trigger = event.currentTarget;
+                const rect = trigger.getBoundingClientRect();
+
+                // Show briefly off-screen to measure height
+                dropdown.style.visibility = 'hidden';
+                dropdown.classList.add('show');
+                const menuHeight = dropdown.offsetHeight;
+                const menuWidth = dropdown.offsetWidth;
+                dropdown.style.visibility = '';
+
+                // Decide whether to open above or below
+                const spaceBelow = window.innerHeight - rect.bottom;
+                const openAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight + 8;
+
+                if (openAbove) {
+                    dropdown.style.top = (rect.top - menuHeight - 4) + 'px';
+                } else {
+                    dropdown.style.top = (rect.bottom + 4) + 'px';
+                }
+
+                // Align to the right edge of the trigger
+                const leftPos = rect.right - menuWidth;
+                dropdown.style.left = Math.max(8, leftPos) + 'px';
             }
-            
+
             // Close dropdowns when clicking outside
             document.addEventListener('click', function() {
-                document.querySelectorAll('.dropdown-menu').forEach(menu => {
+                document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
                     menu.classList.remove('show');
                 });
             });
+
+            // Close dropdowns on scroll to prevent stale positioning
+            window.addEventListener('scroll', function() {
+                document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+                    menu.classList.remove('show');
+                });
+            }, true);
         });
     </script>
 </head>
@@ -1180,7 +1171,7 @@ if ($conn && $conn instanceof mysqli) {
                 <h1>Manage Modules</h1>
                 <p class="subtitle">Track and manage module batches across your projects</p>
             </div>
-            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
+            <?php if ($isAdmin): ?>
             <a href="add_module_batch.php" class="btn-add-batch">
                 <span>+</span> Add Module Batch
             </a>
@@ -1325,29 +1316,30 @@ if ($conn && $conn instanceof mysqli) {
                     <th>Assigned Project</th>
                     <th>Module Details</th>
                     <th>Palletization Status</th>
-                    <th>Actions</th>
+                    <?php if ($isAdmin): ?><th style="width: 60px;"></th><?php endif; ?>
                 </tr>
             </thead>
             <tbody>
                 <?php if (!empty($projectModulesData)): ?>
                     <?php foreach ($projectModulesData as $batch): ?>
-                        <tr>
+                        <tr class="clickable-row" data-href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" onclick="window.location='module_overview.php?batch_id=<?php echo $batch['id']; ?>'">
                             <td>
-                                <strong>Batch #<?php echo $batch['id']; ?></strong>
+                                <div class="batch-name"><?php echo !empty($batch['batch_name']) ? htmlspecialchars($batch['batch_name']) : 'Batch #' . $batch['id']; ?></div>
+                                <div class="batch-vendor"><?php echo htmlspecialchars($batch['vendor_name']); ?></div>
                                 <div class="module-info"><?php echo htmlspecialchars($batch['account_name']); ?></div>
                             </td>
                             <td class="module-info">
                                 <strong><?php echo htmlspecialchars($batch['vendor_name']); ?></strong><br>
-                                📍 <?php echo htmlspecialchars($batch['initial_location']); ?>
+                                <?php echo htmlspecialchars($batch['initial_location']); ?>
                             </td>
                             <td>
                                 <div class="assignment-status assigned">
-                                    ✓ <?php echo htmlspecialchars($batch['project_name'] ?? 'Error: Missing project name'); ?>
+                                    <?php echo htmlspecialchars($batch['project_name'] ?? 'Error: Missing project name'); ?>
                                 </div>
                             </td>
                             <td>
                                 <div class="quantity-display">
-                                    📦 <?php echo number_format($batch['total_quantity']); ?> total
+                                    <?php echo number_format($batch['total_quantity']); ?> total
                                 </div>
                                 <div style="font-size: 0.85em; color: #666;">
                                     <?php
@@ -1366,21 +1358,20 @@ if ($conn && $conn instanceof mysqli) {
                                 </div>
                             </td>
                             <td>
-                                <div class="palletization-status <?php 
-                                    echo strtolower(str_replace(' ', '-', $batch['palletization_status'])); 
+                                <div class="palletization-status <?php
+                                    echo strtolower(str_replace(' ', '-', $batch['palletization_status']));
                                 ?>">
                                     <?php echo htmlspecialchars($batch['palletization_status']); ?>
                                 </div>
                                 <div class="palletization-details">
-                                    <?php echo number_format($batch['palletization_percentage'], 1); ?>% 
+                                    <?php echo number_format($batch['palletization_percentage'], 1); ?>%
                                     (<?php echo number_format($batch['total_palletized']); ?>/<?php echo number_format($batch['total_quantity']); ?>)
                                 </div>
                             </td>
-                            <td class="actions-cell">
-                                <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">View Details</a>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
-                                <div class="dropdown" style="display: inline-block;">
-                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-p<?php echo $batch['id']; ?>')" title="More actions">✏️</button>
+                            <?php if ($isAdmin): ?>
+                            <td class="actions-cell" onclick="event.stopPropagation();">
+                                <div class="dropdown">
+                                    <button class="kebab-trigger" onclick="toggleDropdown(event, 'dropdown-menu-p<?php echo $batch['id']; ?>')" title="More actions">&#8942;</button>
                                     <div id="dropdown-menu-p<?php echo $batch['id']; ?>" class="dropdown-menu">
                                         <a href="edit_module_batch.php?project_id=<?php echo (int)$batch['project_id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
@@ -1389,18 +1380,16 @@ if ($conn && $conn instanceof mysqli) {
                                         </form>
                                     </div>
                                 </div>
-                                <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user' && !empty($batch['project_id'])): ?>
-                                <a href="project_overview.php?project_id=<?php echo $batch['project_id']; ?>" class="action-buttons project">Project Overview</a>
-                                <?php endif; ?>
                             </td>
+                            <?php endif; ?>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr class="empty-row">
-                        <td colspan="6">
+                        <td colspan="<?php echo $isAdmin ? 6 : 5; ?>">
                             <div class="empty-state-content">
                                 <span class="empty-icon">📦</span>
-                                <p>No project-assigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'], true)): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
+                                <p>No project-assigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if ($isAdmin): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
                             </div>
                         </td>
                     </tr>
@@ -1422,29 +1411,30 @@ if ($conn && $conn instanceof mysqli) {
                     <th>Status</th>
                     <th>Module Details</th>
                     <th>Palletization Status</th>
-                    <th>Actions</th>
+                    <?php if ($isAdmin): ?><th style="width: 60px;"></th><?php endif; ?>
                 </tr>
             </thead>
             <tbody>
                 <?php if (!empty($unassignedModulesData)): ?>
                     <?php foreach ($unassignedModulesData as $batch): ?>
-                        <tr>
+                        <tr class="clickable-row" data-href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" onclick="window.location='module_overview.php?batch_id=<?php echo $batch['id']; ?>'">
                             <td>
-                                <strong>Batch #<?php echo $batch['id']; ?></strong>
+                                <div class="batch-name"><?php echo !empty($batch['batch_name']) ? htmlspecialchars($batch['batch_name']) : 'Batch #' . $batch['id']; ?></div>
+                                <div class="batch-vendor"><?php echo htmlspecialchars($batch['vendor_name']); ?></div>
                                 <div class="module-info"><?php echo htmlspecialchars($batch['account_name']); ?></div>
                             </td>
                             <td class="module-info">
                                 <strong><?php echo htmlspecialchars($batch['vendor_name']); ?></strong><br>
-                                📍 <?php echo htmlspecialchars($batch['initial_location']); ?>
+                                <?php echo htmlspecialchars($batch['initial_location']); ?>
                             </td>
                             <td>
                                 <div class="assignment-status unassigned">
-                                    ⚪ Unassigned Stock
+                                    Unassigned Stock
                                 </div>
                             </td>
                             <td>
                                 <div class="quantity-display">
-                                    📦 <?php echo number_format($batch['total_quantity']); ?> total
+                                    <?php echo number_format($batch['total_quantity']); ?> total
                                 </div>
                                 <div style="font-size: 0.85em; color: #666;">
                                     <?php
@@ -1463,21 +1453,20 @@ if ($conn && $conn instanceof mysqli) {
                                 </div>
                             </td>
                             <td>
-                                <div class="palletization-status <?php 
-                                    echo strtolower(str_replace(' ', '-', $batch['palletization_status'])); 
+                                <div class="palletization-status <?php
+                                    echo strtolower(str_replace(' ', '-', $batch['palletization_status']));
                                 ?>">
                                     <?php echo htmlspecialchars($batch['palletization_status']); ?>
                                 </div>
                                 <div class="palletization-details">
-                                    <?php echo number_format($batch['palletization_percentage'], 1); ?>% 
+                                    <?php echo number_format($batch['palletization_percentage'], 1); ?>%
                                     (<?php echo number_format($batch['total_palletized']); ?>/<?php echo number_format($batch['total_quantity']); ?>)
                                 </div>
                             </td>
-                            <td class="actions-cell">
-                                <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">View Details</a>
-                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
-                                <div class="dropdown" style="display: inline-block;">
-                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-u<?php echo $batch['id']; ?>')" title="More actions">✏️</button>
+                            <?php if ($isAdmin): ?>
+                            <td class="actions-cell" onclick="event.stopPropagation();">
+                                <div class="dropdown">
+                                    <button class="kebab-trigger" onclick="toggleDropdown(event, 'dropdown-menu-u<?php echo $batch['id']; ?>')" title="More actions">&#8942;</button>
                                     <div id="dropdown-menu-u<?php echo $batch['id']; ?>" class="dropdown-menu">
                                         <a href="edit_module_batch.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
@@ -1486,19 +1475,16 @@ if ($conn && $conn instanceof mysqli) {
                                         </form>
                                     </div>
                                 </div>
-                                <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user'): ?>
-                                <a href="warehouse_info.php?module_batch_id=<?php echo $batch['id']; ?>" class="action-buttons warehouse">Warehouse</a>
-                                <a href="view_project.php?origin_batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">Deliveries</a>
-                                <?php endif; ?>
                             </td>
+                            <?php endif; ?>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr class="empty-row">
-                        <td colspan="6">
+                        <td colspan="<?php echo $isAdmin ? 6 : 5; ?>">
                             <div class="empty-state-content">
                                 <span class="empty-icon">📦</span>
-                                <p>No unassigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'], true)): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
+                                <p>No unassigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if ($isAdmin): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
                             </div>
                         </td>
                     </tr>

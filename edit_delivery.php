@@ -306,8 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $miles              = isset($_POST['miles']) ? (float)$_POST['miles'] : $delivery['miles'];
 
         if ($is_customer_admin) {
-            // Customer admins only maintain what they paid carrier on this screen.
-            $access_paid = (float)$delivery['accessorial_costs_paid'];
+            // Customer admins can edit freight and paid accessorials only.
             $access_charged = (float)$delivery['accessorial_costs'];
             $customer_cost = (float)$delivery['customer_cost'];
             $miles = (float)$delivery['miles'];
@@ -777,6 +776,35 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
       grid-column: 1 / -1;
   }
 
+  .location-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 8px;
+  }
+
+  .location-card {
+      border: 1px solid rgba(72, 140, 154, 0.2);
+      border-radius: 12px;
+      padding: 12px 12px 2px;
+      background: #f8fbfd;
+  }
+
+  .location-card h4 {
+      margin: 0 0 8px;
+      color: #293E4C;
+      font-size: 0.9em;
+      font-weight: 700;
+  }
+
+  .accessorial-help {
+      margin-top: -8px;
+      margin-bottom: 14px;
+      font-size: 0.82em;
+      color: #6b7280;
+      font-weight: 500;
+  }
+
   input[type=text],
   input[type=number],
   input[type=date],
@@ -968,6 +996,10 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
 
       .details-grid .span-2 {
           grid-column: auto;
+      }
+
+      .location-row {
+          grid-template-columns: 1fr;
       }
 
       .edit-header {
@@ -1177,26 +1209,25 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
             </label>
           </div>
 
-          <div class="span-2">
-            <label>Origin:
-              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($origin_display); ?>" readonly>
-            </label>
-          </div>
-          <div class="span-2">
-            <label>Origin Address:
-              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($origin_address_display); ?>" readonly>
-            </label>
-          </div>
-
-          <div class="span-2">
-            <label>Destination:
-              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($destination_display); ?>" readonly>
-            </label>
-          </div>
-          <div class="span-2">
-            <label>Destination Address:
-              <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($destination_address_display); ?>" readonly>
-            </label>
+          <div class="span-2 location-row">
+            <div class="location-card">
+              <h4>Origin</h4>
+              <label>Location:
+                <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($origin_display); ?>" readonly>
+              </label>
+              <label>Address:
+                <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($origin_address_display); ?>" readonly>
+              </label>
+            </div>
+            <div class="location-card">
+              <h4>Destination</h4>
+              <label>Location:
+                <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($destination_display); ?>" readonly>
+              </label>
+              <label>Address:
+                <input type="text" class="readonly-input" value="<?php echo htmlspecialchars($destination_address_display); ?>" readonly>
+              </label>
+            </div>
           </div>
 
           <div>
@@ -1241,6 +1272,9 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
 
       <fieldset>
         <legend>Costs</legend>
+        <?php
+          $paidVal = number_format((float)($delivery['accessorial_costs_paid'] ?? 0), 2, '.', '');
+        ?>
         <label>Freight Cost:
           <input 
             type="number" 
@@ -1252,7 +1286,6 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
 
         <?php if (!$is_customer_admin): ?>
         <?php
-          $paidVal    = number_format((float)($delivery['accessorial_costs_paid'] ?? 0), 2, '.', '');
           $chargedVal = number_format((float)($delivery['accessorial_costs']       ?? 0), 2, '.', '');
           $checked    = ((float)$delivery['accessorial_costs'] > 0) ? 'checked' : '';
         ?>
@@ -1265,6 +1298,7 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
             value="<?php echo $paidVal;?>"
           >
         </label>
+        <div class="accessorial-help">Use this for TONU, driver detention, layover, redelivery, lumper, and similar extra carrier charges.</div>
 
         <label class="checkbox-inline">
           <input 
@@ -1301,9 +1335,16 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
           >
         </label>
         <?php else: ?>
-        <div class="form-help">
-          Customer admins only update the freight amount paid to carrier on this screen.
-        </div>
+        <label>Accessorial Cost (Paid to Carrier):
+          <input
+            type="number"
+            step="0.01"
+            id="accessorial_costs_paid"
+            name="accessorial_costs_paid"
+            value="<?php echo $paidVal;?>"
+          >
+        </label>
+        <div class="accessorial-help">Use this for TONU, driver detention, layover, redelivery, lumper, and similar extra carrier charges.</div>
         <?php endif; ?>
       </fieldset>
 

@@ -255,6 +255,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Read posted values
+    $batch_name = isset($_POST['batch_name']) && trim($_POST['batch_name']) !== '' ? trim($_POST['batch_name']) : null;
     $manufacturer_id = isset($_POST['manufacturer_id']) && $_POST['manufacturer_id'] !== '' ? (int)$_POST['manufacturer_id'] : null;
     $location_id = isset($_POST['location_id']) && $_POST['location_id'] !== '' ? (int)$_POST['location_id'] : null;
 
@@ -346,9 +347,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Update modules
-            $stmtU = $conn->prepare('UPDATE modules SET vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, cost_per_watt=?, po_execution_date=?, last_updated_at=NOW() WHERE id=?');
-            $stmtU->bind_param('ssiiiiiiissiiiisdsi',
-                $vendor_name, $initial_location, $modules_per_pallet, $pallets_per_truck, $modules_per_truck,
+            $stmtU = $conn->prepare('UPDATE modules SET batch_name=?, vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, cost_per_watt=?, po_execution_date=?, last_updated_at=NOW() WHERE id=?');
+            $stmtU->bind_param('sssiiiiiiissiiiisdsi',
+                $batch_name, $vendor_name, $initial_location, $modules_per_pallet, $pallets_per_truck, $modules_per_truck,
                 $pallet_length_mm, $pallet_depth_mm, $pallet_double_stacked_height_mm, $pallet_total_weight_kg,
                 $stacking_in_warehouse, $stacking_during_transport,
                 $forklift_truck_long_side_mm, $forklift_truck_short_side_mm, $pallet_jack_long_side_mm, $pallet_jack_short_side_mm,
@@ -591,6 +592,7 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
 }
 
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -601,293 +603,61 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <?php include __DIR__ . '/components/module_batch_styles.php'; ?>
     <style>
-        .breadcrumb {
-            display: flex;
-            align-items: center;
-            margin-bottom: 30px;
-            margin-top: 10px;
-            font-size: 0.95em;
-            color: #6c757d;
-        }
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
-            transition: color 0.3s ease;
-            font-weight: 500;
-        }
-        .breadcrumb a:hover {
-            color: #293E4C;
-        }
-        .breadcrumb .separator {
-            margin: 0 12px;
-            color: #d1d5db;
-            font-weight: 300;
-        }
-
-        /* Header Section */
         .form-header {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            border-radius: 24px;
-            padding: 32px;
-            margin-bottom: 20px;
+            border-radius: 24px; padding: 32px; margin-bottom: 20px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
             border: 1px solid rgba(72, 140, 154, 0.08);
-            position: relative;
-            overflow: hidden;
+            position: relative; overflow: hidden;
         }
-
         .form-header::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
             background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
-
-        .header-content {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 24px;
-        }
-
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 24px;
-        }
-
+        .header-content { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; }
+        .header-left { display: flex; align-items: center; gap: 24px; }
         .header-info h1 {
-            font-size: 2.5em;
-            font-weight: 700;
+            font-size: 2.5em; font-weight: 700;
             background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin: 0 0 8px 0;
-            line-height: 1.2;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text; margin: 0 0 8px 0; line-height: 1.2;
         }
-
-        .header-subtitle {
-            color: #6c757d;
-            font-size: 1.1em;
-            font-weight: 500;
-            margin: 0;
-        }
-        
-        .form-container {
-            margin: 20px 0;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        
-        .form-content {
-            padding: 40px;
-        }
-        
-        .form-section {
-            margin-bottom: 40px;
-            padding: 30px;
-            background: #f8f9fa;
-            border-radius: 12px;
-            border-left: 4px solid #488C9A;
-        }
-        
-        .error-message {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .button-group {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 40px;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-
-        .button-group-left {
-            display: flex;
-            align-items: center;
-        }
-
-        .button-group-right {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
+        .header-subtitle { color: #6c757d; font-size: 1.1em; font-weight: 500; margin: 0; }
+        .error-message { background: #f8d7da; color: #721c24; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #f5c6cb; }
         .btn-delete {
-            background: #dc3545;
-            color: white;
-            padding: 14px 24px;
-            border: none;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.95rem;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+            background: #dc3545; color: white; padding: 14px 24px; border: none; border-radius: 8px;
+            text-decoration: none; font-weight: 600; font-size: 0.95rem; cursor: pointer;
+            transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px;
         }
-
-        .btn-delete:hover {
-            background: #c82333;
-            transform: translateY(-1px);
-        }
-
-        .btn-cancel {
-            background: #6c757d;
-            color: white;
-            padding: 14px 28px;
-            border: none;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.95rem;
-            transition: all 0.3s ease;
-            display: inline-flex;
-            align-items: center;
-        }
-
-        .btn-cancel:hover {
-            background: #5a6268;
-            transform: translateY(-1px);
-        }
-
-        .btn-submit {
-            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
-            color: white;
-            border: none;
-            padding: 14px 36px;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 16px rgba(40, 62, 76, 0.2);
-        }
-
-        .btn-submit:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 24px rgba(40, 62, 76, 0.3);
-        }
-
+        .btn-delete:hover { background: #c82333; transform: translateY(-1px); }
         @media (max-width: 768px) {
-            .form-container {
-                margin: 10px 0;
-            }
-
-            .form-content {
-                padding: 20px;
-            }
-
-            .form-section {
-                padding: 20px;
-            }
-
-            .button-group {
-                flex-direction: column;
-                align-items: stretch;
-                gap: 12px;
-            }
-
-            .button-group-left,
-            .button-group-right {
-                justify-content: center;
-            }
-
-            .button-group-right {
-                flex-direction: column;
-                gap: 12px;
-            }
-
-            .btn-delete, .btn-cancel, .btn-submit {
-                width: 100%;
-                justify-content: center;
-                text-align: center;
-            }
-            
-            .form-header {
-                padding: 20px;
-                margin-bottom: 20px;
-            }
-            
-            .header-content {
-                gap: 16px;
-            }
-            
-            .header-left {
-                gap: 16px;
-            }
-            
-            .header-info h1 {
-                font-size: 2em;
-            }
-
-            .header-subtitle {
-                font-size: 1em;
-            }
+            .form-header { padding: 20px; margin-bottom: 20px; }
+            .header-content { gap: 16px; }
+            .header-left { gap: 16px; }
+            .header-info h1 { font-size: 2em; }
+            .header-subtitle { font-size: 1em; }
         }
-
-        /* Loading spinner modal styles */
         .loading-modal {
-            display: none;
-            position: fixed;
-            z-index: 2000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
+            display: none; position: fixed; z-index: 2000;
+            left: 0; top: 0; width: 100%; height: 100%;
             background-color: rgba(0,0,0,0.7);
         }
         .loading-content {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 40px 50px;
-            border-radius: 16px;
-            text-align: center;
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%); background: white;
+            padding: 40px 50px; border-radius: 16px; text-align: center;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
-        .loading-content h3 {
-            margin: 0 0 8px 0;
-            color: #293E4C;
-            font-size: 1.3em;
-        }
-        .loading-content p {
-            margin: 0;
-            color: #6c757d;
-            font-size: 0.95em;
-        }
+        .loading-content h3 { margin: 0 0 8px 0; color: #293E4C; font-size: 1.3em; }
+        .loading-content p { margin: 0; color: #6c757d; font-size: 0.95em; }
         .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #488C9A;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px auto;
+            border: 4px solid #f3f3f3; border-top: 4px solid #488C9A;
+            border-radius: 50%; width: 50px; height: 50px;
+            animation: spin 1s linear infinite; margin: 0 auto 20px auto;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -900,7 +670,6 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         echo slp_render_breadcrumbs(['current_label' => 'Edit Module Batch', 'extra' => $extra]);
     ?>
 
-    <!-- Beautiful Header Section -->
     <div class="form-header">
         <div class="header-content">
             <div class="header-left">
@@ -918,7 +687,6 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         </div>
     </div>
 
-    <!-- Entry Method Toggle -->
     <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
         <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to update modules?</h3>
         <div style="display: flex; gap: 16px; flex-wrap: wrap;">
@@ -936,7 +704,6 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     </div>
 
     <?php if ($project_id > 0 && $project_size_mw > 0): ?>
-    <!-- Project Capacity Info Banner -->
     <div id="capacityBanner" style="background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
         <h3 style="margin: 0 0 16px 0; color: #0056b3; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 1.2em;">&#9889;</span> Project Capacity Status
@@ -959,9 +726,7 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
                 <div style="font-size: 0.85rem; color: #6c757d;">Remaining</div>
             </div>
         </div>
-        <?php
-        $capacity_pct = $project_size_mw > 0 ? min(100, ($current_ordered_mw / $project_size_mw) * 100) : 0;
-        ?>
+        <?php $capacity_pct = $project_size_mw > 0 ? min(100, ($current_ordered_mw / $project_size_mw) * 100) : 0; ?>
         <div style="background: #e9ecef; border-radius: 8px; height: 20px; overflow: hidden;">
             <div style="background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%); height: 100%; width: <?php echo $capacity_pct; ?>%; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 600;">
                 <?php echo number_format($capacity_pct, 1); ?>%
@@ -971,84 +736,200 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     </div>
     <?php endif; ?>
 
-    <div class="form-container" id="manualEntryContainer">
-        <div class="form-content">
-            <?php if (!empty($errors)): ?>
-                <div class="error-message"><ul style="margin:0; padding-left:20px; ">
-                    <?php foreach ($errors as $e): ?><li><?php echo htmlspecialchars($e); ?></li><?php endforeach; ?>
-                </ul></div>
-            <?php endif; ?>
+    <div id="manualEntryContainer">
+        <?php if (!empty($errors)): ?>
+            <div class="error-message"><ul style="margin:0; padding-left:20px;">
+                <?php foreach ($errors as $e): ?><li><?php echo htmlspecialchars($e); ?></li><?php endforeach; ?>
+            </ul></div>
+        <?php endif; ?>
 
-            <?php $formAction = 'edit_module_batch.php?batch_id='.(int)$batch_id; ?>
-            <form method="POST" id="editBatchForm" action="<?php echo $formAction; ?>">
-                <input type="hidden" name="confirm_delete_pallets" id="confirmDeletePallets" value="no">
-                <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
-                <?php include __DIR__ . '/components/module_batch_section.php'; ?>
+        <?php $formAction = 'edit_module_batch.php?batch_id='.(int)$batch_id; ?>
+        <form method="POST" id="editBatchForm" action="<?php echo $formAction; ?>" enctype="multipart/form-data">
+            <input type="hidden" name="confirm_delete_pallets" id="confirmDeletePallets" value="no">
+            <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
 
-                <div class="button-group">
-                    <div class="button-group-left">
-                        <button type="button" id="deleteBatchBtn" class="btn-delete">
-                            <i class="fas fa-trash-alt"></i> Delete Batch
-                        </button>
+            <?php $prefManufacturerId = null; $prefLocationId = null; ?>
+
+            <!-- Step Indicator -->
+            <div class="step-indicator-wrapper">
+                <div class="step-indicator">
+                    <div class="step current" data-step="1">
+                        <div class="step-number">1</div>
+                        <div class="step-title">Manufacturer &amp; Modules</div>
                     </div>
-                    <div class="button-group-right">
-                        <a href="<?php echo $project_id ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
-                        <button type="submit" class="btn-submit">Save Module Batch</button>
+                    <div class="step-connector"></div>
+                    <div class="step" data-step="2">
+                        <div class="step-number">2</div>
+                        <div class="step-title">Pricing &amp; Milestones</div>
+                    </div>
+                    <div class="step-connector"></div>
+                    <div class="step" data-step="3">
+                        <div class="step-number">3</div>
+                        <div class="step-title">Logistics &amp; Docs</div>
+                    </div>
+                    <div class="step-connector"></div>
+                    <div class="step" data-step="4">
+                        <div class="step-number">4</div>
+                        <div class="step-title">Palletization</div>
                     </div>
                 </div>
-            </form>
+                <div class="current-step-label">Step 1: Manufacturer &amp; Modules</div>
+            </div>
 
-            <!-- Delete Batch Form (hidden) -->
-            <form id="deleteBatchForm" method="POST" action="<?php echo $formAction; ?>" style="display: none;">
-                <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
-            </form>
-
-            <!-- Delete Batch Confirmation Modal -->
-            <div id="deleteBatchModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
-                <div style="background: #fff; border-radius: 12px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
-                    <h3 style="margin: 0 0 15px; color: #dc3545; display: flex; align-items: center; gap: 10px;">
-                        <span style="font-size: 24px;">🗑️</span> Delete Module Batch?
-                    </h3>
-                    <p style="color: #495057; margin-bottom: 15px;">You are about to permanently delete this module batch:</p>
-                    <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                        <div style="margin-bottom: 8px;"><strong>Manufacturer:</strong> <?php echo htmlspecialchars($module['vendor_name'] ?? 'Unknown'); ?></div>
-                        <div style="margin-bottom: 8px;"><strong>Location:</strong> <?php echo htmlspecialchars($module['initial_location'] ?? 'Unknown'); ?></div>
-                        <div style="margin-bottom: 8px;"><strong>Total MW:</strong> <?php echo number_format($this_batch_mw, 2); ?> MW</div>
-                        <?php
-                        $total_pallets = 0;
-                        $total_pallet_modules = 0;
-                        foreach ($current_wattages as $cw) {
-                            $total_pallets += $cw['pallet_count'];
-                            $total_pallet_modules += $cw['pallet_modules'];
-                        }
-                        if ($total_pallets > 0): ?>
-                        <div style="color: #dc3545; font-weight: 500; margin-top: 10px; padding-top: 10px; border-top: 1px solid #dee2e6;">
-                            <i class="fas fa-exclamation-triangle"></i> <?php echo $total_pallets; ?> pallet(s) with <?php echo number_format($total_pallet_modules); ?> modules will also be deleted!
+            <!-- Step 1: Manufacturer & Modules -->
+            <div class="accordion-section active" data-section="1">
+                <div class="accordion-header" onclick="toggleAccordion(1)">
+                    <div class="accordion-header-left">
+                        <span class="accordion-number">1</span>
+                        <div>
+                            <div class="accordion-title">Manufacturer &amp; Modules</div>
+                            <div class="section-description">Batch name, manufacturer, wattage and quantity</div>
                         </div>
-                        <?php endif; ?>
                     </div>
-                    <p style="color: #dc3545; font-weight: 500; margin-bottom: 20px;">This action cannot be undone.</p>
-                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                        <button type="button" id="cancelDeleteBatch" style="padding: 10px 20px; border: 1px solid #dee2e6; background: #fff; color: #495057; border-radius: 6px; cursor: pointer; font-size: 14px;">Cancel</button>
-                        <button type="button" id="confirmDeleteBatch" style="padding: 10px 20px; border: none; background: #dc3545; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">Delete Permanently</button>
+                    <span class="accordion-tag required-tag">Required</span>
+                    <span class="accordion-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="accordion-content" style="max-height: 2000px;">
+                    <div class="accordion-body">
+                        <?php include __DIR__ . '/components/module_batch_step1.php'; ?>
+                        <div class="section-actions">
+                            <button type="button" class="btn-continue" onclick="goToStep(2)">Continue <i class="fas fa-arrow-right"></i></button>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Pallet Deletion Confirmation Modal -->
-            <div id="palletDeleteModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;">
-                <div style="background: #fff; border-radius: 12px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
-                    <h3 style="margin: 0 0 15px; color: #dc3545; display: flex; align-items: center; gap: 10px;">
-                        <span style="font-size: 24px;">⚠️</span> Warning: Pallets Will Be Deleted
-                    </h3>
-                    <p style="color: #495057; margin-bottom: 15px;">You are about to remove the following wattage(s) that have existing pallets:</p>
-                    <div id="palletDeleteList" style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px; max-height: 200px; overflow-y: auto;"></div>
-                    <p style="color: #dc3545; font-weight: 500; margin-bottom: 20px;">This action cannot be undone. All associated pallets and their modules will be permanently deleted.</p>
-                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                        <button type="button" id="cancelPalletDelete" style="padding: 10px 20px; border: 1px solid #dee2e6; background: #fff; color: #495057; border-radius: 6px; cursor: pointer; font-size: 14px;">Cancel</button>
-                        <button type="button" id="confirmPalletDelete" style="padding: 10px 20px; border: none; background: #dc3545; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">Delete Pallets & Save</button>
+            <!-- Step 2: Pricing & Milestones -->
+            <div class="accordion-section" data-section="2">
+                <div class="accordion-header" onclick="toggleAccordion(2)">
+                    <div class="accordion-header-left">
+                        <span class="accordion-number">2</span>
+                        <div>
+                            <div class="accordion-title">Pricing &amp; Milestones</div>
+                            <div class="section-description">Cost per watt and payment milestone configuration</div>
+                        </div>
                     </div>
+                    <span class="accordion-tag recommended-tag">Recommended</span>
+                    <span class="accordion-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="accordion-content">
+                    <div class="accordion-body">
+                        <?php include __DIR__ . '/components/module_batch_step2.php'; ?>
+                        <div class="section-actions">
+                            <button type="button" class="btn-back-step" onclick="goToStep(1)"><i class="fas fa-arrow-left"></i> Back</button>
+                            <button type="button" class="btn-continue" onclick="goToStep(3)">Continue <i class="fas fa-arrow-right"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Logistics & Documentation -->
+            <div class="accordion-section" data-section="3">
+                <div class="accordion-header" onclick="toggleAccordion(3)">
+                    <div class="accordion-header-left">
+                        <span class="accordion-number">3</span>
+                        <div>
+                            <div class="accordion-title">Logistics &amp; Documentation</div>
+                            <div class="section-description">Handling, stacking, notes, and document upload</div>
+                        </div>
+                    </div>
+                    <span class="accordion-tag optional-tag">Optional</span>
+                    <span class="accordion-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="accordion-content">
+                    <div class="accordion-body">
+                        <?php include __DIR__ . '/components/module_batch_step3.php'; ?>
+                        <div class="section-actions">
+                            <button type="button" class="btn-back-step" onclick="goToStep(2)"><i class="fas fa-arrow-left"></i> Back</button>
+                            <button type="button" class="btn-continue" onclick="goToStep(4)">Continue <i class="fas fa-arrow-right"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: Palletization -->
+            <div class="accordion-section" data-section="4">
+                <div class="accordion-header" onclick="toggleAccordion(4)">
+                    <div class="accordion-header-left">
+                        <span class="accordion-number">4</span>
+                        <div>
+                            <div class="accordion-title">Palletization</div>
+                            <div class="section-description">Pallet configuration and dimensions</div>
+                        </div>
+                    </div>
+                    <span class="accordion-tag optional-tag">Optional</span>
+                    <span class="accordion-chevron"><i class="fas fa-chevron-down"></i></span>
+                </div>
+                <div class="accordion-content">
+                    <div class="accordion-body">
+                        <?php include __DIR__ . '/components/module_batch_step4.php'; ?>
+                        <div class="section-actions">
+                            <button type="button" class="btn-back-step" onclick="goToStep(3)"><i class="fas fa-arrow-left"></i> Back</button>
+                            <button type="submit" class="btn-submit"><i class="fas fa-check"></i> Save Module Batch</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Delete Batch (footer) -->
+            <div style="margin-top: 24px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+                <button type="button" id="deleteBatchBtn" class="btn-delete">
+                    <i class="fas fa-trash-alt"></i> Delete Batch
+                </button>
+                <a href="<?php echo $project_id ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" style="color: #6c757d; text-decoration: none; font-weight: 500;">Cancel &amp; Go Back</a>
+            </div>
+        </form>
+
+        <!-- Delete Batch Form (hidden) -->
+        <form id="deleteBatchForm" method="POST" action="<?php echo $formAction; ?>" style="display: none;">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
+        </form>
+
+        <!-- Delete Batch Confirmation Modal -->
+        <div id="deleteBatchModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
+            <div style="background: #fff; border-radius: 12px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+                <h3 style="margin: 0 0 15px; color: #dc3545; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">&#128465;</span> Delete Module Batch?
+                </h3>
+                <p style="color: #495057; margin-bottom: 15px;">You are about to permanently delete this module batch:</p>
+                <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                    <div style="margin-bottom: 8px;"><strong>Manufacturer:</strong> <?php echo htmlspecialchars($module['vendor_name'] ?? 'Unknown'); ?></div>
+                    <div style="margin-bottom: 8px;"><strong>Location:</strong> <?php echo htmlspecialchars($module['initial_location'] ?? 'Unknown'); ?></div>
+                    <div style="margin-bottom: 8px;"><strong>Total MW:</strong> <?php echo number_format($this_batch_mw, 2); ?> MW</div>
+                    <?php
+                    $total_pallets = 0;
+                    $total_pallet_modules = 0;
+                    foreach ($current_wattages as $cw) {
+                        $total_pallets += $cw['pallet_count'];
+                        $total_pallet_modules += $cw['pallet_modules'];
+                    }
+                    if ($total_pallets > 0): ?>
+                    <div style="color: #dc3545; font-weight: 500; margin-top: 10px; padding-top: 10px; border-top: 1px solid #dee2e6;">
+                        <i class="fas fa-exclamation-triangle"></i> <?php echo $total_pallets; ?> pallet(s) with <?php echo number_format($total_pallet_modules); ?> modules will also be deleted!
+                    </div>
+                    <?php endif; ?>
+                </div>
+                <p style="color: #dc3545; font-weight: 500; margin-bottom: 20px;">This action cannot be undone.</p>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" id="cancelDeleteBatch" style="padding: 10px 20px; border: 1px solid #dee2e6; background: #fff; color: #495057; border-radius: 6px; cursor: pointer; font-size: 14px;">Cancel</button>
+                    <button type="button" id="confirmDeleteBatch" style="padding: 10px 20px; border: none; background: #dc3545; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">Delete Permanently</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pallet Deletion Confirmation Modal -->
+        <div id="palletDeleteModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;">
+            <div style="background: #fff; border-radius: 12px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+                <h3 style="margin: 0 0 15px; color: #dc3545; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">&#9888;&#65039;</span> Warning: Pallets Will Be Deleted
+                </h3>
+                <p style="color: #495057; margin-bottom: 15px;">You are about to remove the following wattage(s) that have existing pallets:</p>
+                <div id="palletDeleteList" style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px; max-height: 200px; overflow-y: auto;"></div>
+                <p style="color: #dc3545; font-weight: 500; margin-bottom: 20px;">This action cannot be undone. All associated pallets and their modules will be permanently deleted.</p>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" id="cancelPalletDelete" style="padding: 10px 20px; border: 1px solid #dee2e6; background: #fff; color: #495057; border-radius: 6px; cursor: pointer; font-size: 14px;">Cancel</button>
+                    <button type="button" id="confirmPalletDelete" style="padding: 10px 20px; border: none; background: #dc3545; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">Delete Pallets &amp; Save</button>
                 </div>
             </div>
         </div>
@@ -1057,14 +938,14 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     <!-- Import Container (hidden by default) -->
     <div id="importContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 40px; margin-bottom: 20px;">
         <div style="text-align: center; padding: 40px 20px;">
-            <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">📦</div>
+            <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">&#128230;</div>
             <h2 style="color: #293E4C; margin-bottom: 12px;">Import Pallets</h2>
             <p style="color: #6c757d; margin-bottom: 24px; max-width: 500px; margin-left: auto; margin-right: auto;">
                 Upload a CSV or Excel file with pallet data from your manufacturer to add pallets to inventory.
             </p>
             <a href="upload_pallets.php<?php echo $project_id ? '?project_id='.$project_id : ''; ?>"
                class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
-                Import Pallets →
+                Import Pallets &rarr;
             </a>
         </div>
     </div>
@@ -1078,7 +959,7 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         </div>
     </div>
 
-    <!-- Result Modal (Success/Error) -->
+    <!-- Result Modal -->
     <div id="resultModal" class="loading-modal" style="display: none;">
         <div class="loading-content" style="max-width: 480px; padding: 32px 40px;">
             <div id="resultIcon" style="font-size: 56px; margin-bottom: 16px;"></div>
@@ -1100,15 +981,103 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     </div>
 </main>
 
+<?php include __DIR__ . '/components/module_batch_scripts.php'; ?>
 <script>
-    // Entry method toggle
-    document.addEventListener('DOMContentLoaded', function() {
-        const methodRadios = document.querySelectorAll('input[name="entry_method"]');
-        const manualContainer = document.getElementById('manualEntryContainer');
-        const importContainer = document.getElementById('importContainer');
-        const methodOptions = document.querySelectorAll('.method-option');
+    // ========== Wizard Navigation ==========
+    var stepNames = { 1: 'Manufacturer & Modules', 2: 'Pricing & Milestones', 3: 'Logistics & Docs', 4: 'Palletization' };
+    var currentStep = 1;
 
-        methodRadios.forEach(radio => {
+    function goToStep(step) {
+        if (step < 1 || step > 4) return;
+        if (step > currentStep && !validateStep(currentStep)) return;
+        var currentSection = document.querySelector('.accordion-section[data-section="' + currentStep + '"]');
+        if (currentSection) {
+            currentSection.classList.remove('active');
+            var content = currentSection.querySelector('.accordion-content');
+            if (content) content.style.maxHeight = '0';
+        }
+        var targetSection = document.querySelector('.accordion-section[data-section="' + step + '"]');
+        if (targetSection) {
+            targetSection.classList.add('active');
+            var content = targetSection.querySelector('.accordion-content');
+            if (content) content.style.maxHeight = (content.scrollHeight + 200) + 'px';
+        }
+        document.querySelectorAll('.step-indicator .step').forEach(function(s) {
+            var sNum = parseInt(s.dataset.step);
+            s.classList.remove('current', 'completed');
+            if (sNum === step) s.classList.add('current');
+            else if (sNum < step) s.classList.add('completed');
+        });
+        document.querySelectorAll('.step-connector').forEach(function(c, i) {
+            if (i < step - 1) c.classList.add('completed');
+            else c.classList.remove('completed');
+        });
+        var label = document.querySelector('.current-step-label');
+        if (label) label.textContent = 'Step ' + step + ': ' + stepNames[step];
+        currentStep = step;
+        if (targetSection) {
+            setTimeout(function() { targetSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
+        }
+    }
+
+    function validateStep(step) {
+        if (step === 1) {
+            var wattages = document.querySelectorAll('input[name="wattages[]"]');
+            var quantities = document.querySelectorAll('input[name="quantities[]"]');
+            var hasValid = false;
+            wattages.forEach(function(w, i) {
+                var wVal = parseInt(w.value) || 0;
+                var qVal = parseInt(quantities[i] ? quantities[i].value : '') || 0;
+                if (wVal > 0 && qVal > 0) hasValid = true;
+            });
+            if (!hasValid) { alert('Please enter at least one wattage and quantity pair.'); return false; }
+        }
+        if (step === 2) {
+            if (!mb_validateMilestoneTotal()) return false;
+            if (!mb_validatePoExecutionDate()) return false;
+        }
+        return true;
+    }
+
+    function toggleAccordion(section) {
+        var accordion = document.querySelector('.accordion-section[data-section="' + section + '"]');
+        if (!accordion) return;
+        if (accordion.classList.contains('active')) {
+            accordion.classList.remove('active');
+            var content = accordion.querySelector('.accordion-content');
+            if (content) content.style.maxHeight = '0';
+        } else {
+            goToStep(section);
+        }
+    }
+
+    // Sticky step indicator (IntersectionObserver)
+    (function() {
+        var wrapper = document.querySelector('.step-indicator-wrapper');
+        if (!wrapper) return;
+        var sentinel = document.createElement('div');
+        sentinel.style.height = '1px';
+        sentinel.style.visibility = 'hidden';
+        wrapper.parentNode.insertBefore(sentinel, wrapper);
+        var observer = new IntersectionObserver(function(entries) {
+            entries.forEach(function(entry) {
+                if (!entry.isIntersecting) {
+                    wrapper.classList.add('is-fixed');
+                } else {
+                    wrapper.classList.remove('is-fixed');
+                }
+            });
+        }, { threshold: 0 });
+        observer.observe(sentinel);
+    })();
+
+    // ========== Entry Method Toggle ==========
+    document.addEventListener('DOMContentLoaded', function() {
+        var methodRadios = document.querySelectorAll('input[name="entry_method"]');
+        var manualContainer = document.getElementById('manualEntryContainer');
+        var importContainer = document.getElementById('importContainer');
+        var methodOptions = document.querySelectorAll('.method-option');
+        methodRadios.forEach(function(radio) {
             radio.addEventListener('change', function() {
                 if (this.value === 'manual') {
                     manualContainer.style.display = 'block';
@@ -1129,24 +1098,22 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         });
     });
 
-    // MW Capacity tracking for edit mode
-    const capacityData = {
+    // ========== MW Capacity Tracking (Edit Mode) ==========
+    var capacityData = {
         projectSizeMw: <?php echo json_encode($project_size_mw); ?>,
         currentOrderedMw: <?php echo json_encode($current_ordered_mw); ?>,
         thisBatchMw: <?php echo json_encode($this_batch_mw); ?>
     };
 
-    // Original wattages with pallet info for removal confirmation
-    const originalWattages = <?php echo json_encode($existingWattages); ?>;
+    var originalWattages = <?php echo json_encode($existingWattages); ?>;
 
     function calculateNewBatchMw() {
-        let batchMw = 0;
-        const wattageInputs = document.querySelectorAll('input[name="wattages[]"]');
-        const quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
-
-        wattageInputs.forEach((wInput, i) => {
-            const wattage = parseFloat(wInput.value) || 0;
-            const quantity = parseInt(quantityInputs[i]?.value) || 0;
+        var batchMw = 0;
+        var wattageInputs = document.querySelectorAll('input[name="wattages[]"]');
+        var quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
+        wattageInputs.forEach(function(wInput, i) {
+            var wattage = parseFloat(wInput.value) || 0;
+            var quantity = parseInt(quantityInputs[i] ? quantityInputs[i].value : '') || 0;
             batchMw += (wattage * quantity) / 1000000;
         });
         return batchMw;
@@ -1154,47 +1121,36 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
 
     function updateMwPreview() {
         if (capacityData.projectSizeMw <= 0) return;
-
-        const newBatchMw = calculateNewBatchMw();
-        // New total = current total - old batch MW + new batch MW
-        const newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
-        const previewDiv = document.getElementById('newMwPreview');
-
+        var newBatchMw = calculateNewBatchMw();
+        var newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
+        var previewDiv = document.getElementById('newMwPreview');
         if (previewDiv) {
-            const difference = newBatchMw - capacityData.thisBatchMw;
-
+            var difference = newBatchMw - capacityData.thisBatchMw;
             if (Math.abs(difference) > 0.001) {
                 previewDiv.style.display = 'block';
-
                 if (newTotalMw > capacityData.projectSizeMw) {
-                    const excessMw = newTotalMw - capacityData.projectSizeMw;
-                    const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+                    var excessMw = newTotalMw - capacityData.projectSizeMw;
+                    var excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
                     previewDiv.style.borderColor = '#dc3545';
                     previewDiv.style.background = '#f8d7da';
-                    previewDiv.innerHTML = `
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="color: #721c24; font-weight: 600;">&#9888; Over Capacity Warning</span>
-                            <span style="font-weight: 700; color: #721c24;">${newTotalMw.toFixed(2)} MW total</span>
-                        </div>
-                        <div style="font-size: 0.9rem; color: #721c24;">
-                            This change will exceed the project target by ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}% over).
-                        </div>
-                    `;
+                    previewDiv.innerHTML =
+                        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+                        '<span style="color: #721c24; font-weight: 600;">&#9888; Over Capacity Warning</span>' +
+                        '<span style="font-weight: 700; color: #721c24;">' + newTotalMw.toFixed(2) + ' MW total</span></div>' +
+                        '<div style="font-size: 0.9rem; color: #721c24;">This change will exceed the project target by ' +
+                        excessMw.toFixed(2) + ' MW (' + excessPct.toFixed(1) + '% over).</div>';
                 } else {
-                    const changeSign = difference > 0 ? '+' : '';
-                    const changeColor = difference > 0 ? '#856404' : '#155724';
+                    var changeSign = difference > 0 ? '+' : '';
+                    var changeColor = difference > 0 ? '#856404' : '#155724';
                     previewDiv.style.borderColor = difference > 0 ? '#ffc107' : '#28a745';
                     previewDiv.style.background = difference > 0 ? '#fff3cd' : '#d4edda';
-                    const remainingAfter = capacityData.projectSizeMw - newTotalMw;
-                    previewDiv.innerHTML = `
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="color: ${changeColor}; font-weight: 500;">After Changes:</span>
-                            <span style="font-weight: 700; color: ${changeColor};">${newTotalMw.toFixed(2)} MW total (${changeSign}${difference.toFixed(2)} MW)</span>
-                        </div>
-                        <div style="font-size: 0.85rem; color: ${changeColor}; margin-top: 4px;">
-                            ${remainingAfter.toFixed(2)} MW remaining capacity
-                        </div>
-                    `;
+                    var remainingAfter = capacityData.projectSizeMw - newTotalMw;
+                    previewDiv.innerHTML =
+                        '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<span style="color: ' + changeColor + '; font-weight: 500;">After Changes:</span>' +
+                        '<span style="font-weight: 700; color: ' + changeColor + ';">' + newTotalMw.toFixed(2) + ' MW total (' + changeSign + difference.toFixed(2) + ' MW)</span></div>' +
+                        '<div style="font-size: 0.85rem; color: ' + changeColor + '; margin-top: 4px;">' +
+                        remainingAfter.toFixed(2) + ' MW remaining capacity</div>';
                 }
             } else {
                 previewDiv.style.display = 'none';
@@ -1202,26 +1158,24 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         }
     }
 
-    // Add listeners to wattage container for dynamic updates
     document.addEventListener('DOMContentLoaded', function() {
-        const wattageContainer = document.getElementById('wattage-container');
+        var wattageContainer = document.getElementById('wattage-container');
         if (wattageContainer) {
             wattageContainer.addEventListener('input', updateMwPreview);
-            const observer = new MutationObserver(updateMwPreview);
+            var observer = new MutationObserver(updateMwPreview);
             observer.observe(wattageContainer, { childList: true, subtree: true });
         }
     });
 
-    // Check for removed wattages that have pallets
+    // ========== Pallet Deletion Check ==========
     function getRemovedWattagesWithPallets() {
-        const currentWattages = new Set();
-        document.querySelectorAll('input[name="wattages[]"]').forEach(input => {
-            const val = parseInt(input.value);
+        var currentWattages = new Set();
+        document.querySelectorAll('input[name="wattages[]"]').forEach(function(input) {
+            var val = parseInt(input.value);
             if (val > 0) currentWattages.add(val);
         });
-
-        const removedWithPallets = [];
-        originalWattages.forEach(orig => {
+        var removedWithPallets = [];
+        originalWattages.forEach(function(orig) {
             if (!currentWattages.has(orig.wattage) && orig.pallet_count > 0) {
                 removedWithPallets.push(orig);
             }
@@ -1229,24 +1183,17 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         return removedWithPallets;
     }
 
-    // Form submission confirmation for over-capacity and pallet deletion
+    // ========== Form Submission with Pallet Confirmation ==========
     document.addEventListener('DOMContentLoaded', function() {
-        const form = document.getElementById('editBatchForm');
-        const modal = document.getElementById('palletDeleteModal');
-        const confirmBtn = document.getElementById('confirmPalletDelete');
-        const cancelBtn = document.getElementById('cancelPalletDelete');
-        const palletList = document.getElementById('palletDeleteList');
-        const confirmInput = document.getElementById('confirmDeletePallets');
-
+        var form = document.getElementById('editBatchForm');
+        var modal = document.getElementById('palletDeleteModal');
+        var confirmBtn = document.getElementById('confirmPalletDelete');
+        var cancelBtn = document.getElementById('cancelPalletDelete');
+        var palletList = document.getElementById('palletDeleteList');
+        var confirmInput = document.getElementById('confirmDeletePallets');
         if (!form) return;
 
-        // Handle modal buttons
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', function() {
-                modal.style.display = 'none';
-            });
-        }
-
+        if (cancelBtn) { cancelBtn.addEventListener('click', function() { modal.style.display = 'none'; }); }
         if (confirmBtn) {
             confirmBtn.addEventListener('click', function() {
                 confirmInput.value = 'yes';
@@ -1254,172 +1201,112 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
                 submitFormViaAjax(form);
             });
         }
-
-        // Close modal on background click
-        if (modal) {
-            modal.addEventListener('click', function(e) {
-                if (e.target === modal) {
-                    modal.style.display = 'none';
-                }
-            });
-        }
+        if (modal) { modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display = 'none'; }); }
 
         form.addEventListener('submit', function(e) {
             e.preventDefault();
-
-            // Check for removed wattages with pallets
-            const removedWithPallets = getRemovedWattagesWithPallets();
-
+            var removedWithPallets = getRemovedWattagesWithPallets();
             if (removedWithPallets.length > 0 && confirmInput.value !== 'yes') {
-                // Build the list of affected wattages
-                let listHtml = '';
-                let totalPallets = 0;
-                let totalModules = 0;
-
-                removedWithPallets.forEach(item => {
+                var listHtml = '';
+                var totalPallets = 0;
+                var totalModules = 0;
+                removedWithPallets.forEach(function(item) {
                     totalPallets += item.pallet_count;
                     totalModules += item.pallet_modules;
-                    listHtml += `<div style="padding: 8px 0; border-bottom: 1px solid #e9ecef;">
-                        <strong>${item.wattage}W</strong>: ${item.pallet_count} pallet(s) containing ${item.pallet_modules.toLocaleString()} modules
-                    </div>`;
+                    listHtml += '<div style="padding: 8px 0; border-bottom: 1px solid #e9ecef;">' +
+                        '<strong>' + item.wattage + 'W</strong>: ' + item.pallet_count + ' pallet(s) containing ' + item.pallet_modules.toLocaleString() + ' modules</div>';
                 });
-
-                listHtml += `<div style="padding: 10px 0 0; font-weight: 600; color: #dc3545;">
-                    Total: ${totalPallets} pallet(s), ${totalModules.toLocaleString()} modules
-                </div>`;
-
+                listHtml += '<div style="padding: 10px 0 0; font-weight: 600; color: #dc3545;">Total: ' + totalPallets + ' pallet(s), ' + totalModules.toLocaleString() + ' modules</div>';
                 palletList.innerHTML = listHtml;
                 modal.style.display = 'flex';
                 return false;
             }
-
-            // Check for over-capacity
             if (capacityData.projectSizeMw > 0) {
-                const newBatchMw = calculateNewBatchMw();
-                const newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
-
+                var newBatchMw = calculateNewBatchMw();
+                var newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
                 if (newTotalMw > capacityData.projectSizeMw) {
-                    const excessMw = newTotalMw - capacityData.projectSizeMw;
-                    const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
-
-                    const confirmMsg = `WARNING: This change will exceed the project capacity!\n\n` +
-                        `New Total: ${newTotalMw.toFixed(2)} MW\n` +
-                        `Target: ${capacityData.projectSizeMw.toFixed(2)} MW\n\n` +
-                        `This is ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}%) over the target.\n\n` +
-                        `Are you sure you want to proceed?`;
-
-                    if (!confirm(confirmMsg)) {
-                        return false;
-                    }
+                    var excessMw = newTotalMw - capacityData.projectSizeMw;
+                    var excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+                    var confirmMsg = 'WARNING: This change will exceed the project capacity!\n\n' +
+                        'New Total: ' + newTotalMw.toFixed(2) + ' MW\nTarget: ' + capacityData.projectSizeMw.toFixed(2) + ' MW\n\n' +
+                        'This is ' + excessMw.toFixed(2) + ' MW (' + excessPct.toFixed(1) + '%) over the target.\n\nAre you sure you want to proceed?';
+                    if (!confirm(confirmMsg)) return false;
                 }
             }
-
-            // All checks passed, submit via AJAX
             submitFormViaAjax(form);
         });
     });
 
     // ========== Loading Modal Functions ==========
-    function showLoadingModal(title = 'Saving Changes...', subtitle = 'Please wait while we process your request.') {
-        const modal = document.getElementById('loadingModal');
-        const titleEl = document.getElementById('loadingTitle');
-        const subtitleEl = document.getElementById('loadingSubtitle');
-
+    function showLoadingModal(title, subtitle) {
+        var modal = document.getElementById('loadingModal');
+        var titleEl = document.getElementById('loadingTitle');
+        var subtitleEl = document.getElementById('loadingSubtitle');
         if (modal) {
-            if (titleEl) titleEl.textContent = title;
-            if (subtitleEl) subtitleEl.textContent = subtitle;
+            if (titleEl) titleEl.textContent = title || 'Saving Changes...';
+            if (subtitleEl) subtitleEl.textContent = subtitle || 'Please wait while we process your request.';
             modal.style.display = 'block';
             document.body.style.overflow = 'hidden';
         }
     }
 
     function hideLoadingModal() {
-        const modal = document.getElementById('loadingModal');
-        if (modal) {
-            modal.style.display = 'none';
-            document.body.style.overflow = '';
-        }
+        var modal = document.getElementById('loadingModal');
+        if (modal) { modal.style.display = 'none'; document.body.style.overflow = ''; }
     }
 
     // ========== Result Modal Functions ==========
     function showResultModal(success, data) {
         hideLoadingModal();
-
-        const modal = document.getElementById('resultModal');
-        const icon = document.getElementById('resultIcon');
-        const title = document.getElementById('resultTitle');
-        const message = document.getElementById('resultMessage');
-        const details = document.getElementById('resultDetails');
-        const modulesEl = document.getElementById('resultModules');
-        const goBackBtn = document.getElementById('resultGoBackBtn');
-        const closeBtn = document.getElementById('resultCloseBtn');
-
-        const redirectTarget = data.redirect_url || (data.project_id ? `project_overview.php?project_id=${data.project_id}` : 'modules.php');
+        var modal = document.getElementById('resultModal');
+        var icon = document.getElementById('resultIcon');
+        var title = document.getElementById('resultTitle');
+        var message = document.getElementById('resultMessage');
+        var details = document.getElementById('resultDetails');
+        var modulesEl = document.getElementById('resultModules');
+        var goBackBtn = document.getElementById('resultGoBackBtn');
+        var closeBtn = document.getElementById('resultCloseBtn');
+        var redirectTarget = data.redirect_url || (data.project_id ? 'project_overview.php?project_id=' + data.project_id : 'modules.php');
 
         if (success) {
-            icon.innerHTML = '&#10004;';
-            icon.style.color = '#28a745';
-
-            if (data.action === 'delete') {
-                title.textContent = 'Module Batch Deleted!';
-            } else {
-                title.textContent = 'Module Batch Updated!';
-            }
-
+            icon.innerHTML = '&#10004;'; icon.style.color = '#28a745';
+            title.textContent = data.action === 'delete' ? 'Module Batch Deleted!' : 'Module Batch Updated!';
             title.style.color = '#28a745';
             message.textContent = data.message || 'Your changes have been saved successfully.';
-
-            // Show details for update action
             if (data.action === 'update' && data.total_modules) {
                 details.style.display = 'block';
                 modulesEl.textContent = (data.total_modules || 0).toLocaleString();
-            } else {
-                details.style.display = 'none';
-            }
-
-            // Update go back button
+            } else { details.style.display = 'none'; }
             if (redirectTarget) {
                 goBackBtn.href = redirectTarget;
-                if (data.project_id) {
-                    goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview';
-                } else {
-                    goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
-                }
+                goBackBtn.innerHTML = data.project_id
+                    ? '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview'
+                    : '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
                 goBackBtn.style.display = 'inline-flex';
             }
             closeBtn.style.display = 'none';
         } else {
-            icon.innerHTML = '&#10006;';
-            icon.style.color = '#dc3545';
-            title.textContent = 'Error';
-            title.style.color = '#dc3545';
+            icon.innerHTML = '&#10006;'; icon.style.color = '#dc3545';
+            title.textContent = 'Error'; title.style.color = '#dc3545';
             message.textContent = data.message || 'An error occurred. Please try again.';
-
-            details.style.display = 'none';
-            goBackBtn.style.display = 'none';
+            details.style.display = 'none'; goBackBtn.style.display = 'none';
             closeBtn.style.display = 'inline-flex';
         }
-
         modal.style.display = 'block';
         document.body.style.overflow = 'hidden';
     }
 
     function closeResultModal() {
-        const modal = document.getElementById('resultModal');
-        if (modal) {
-            modal.style.display = 'none';
-            document.body.style.overflow = '';
-        }
+        var modal = document.getElementById('resultModal');
+        if (modal) { modal.style.display = 'none'; document.body.style.overflow = ''; }
     }
 
     // ========== AJAX Form Submission ==========
     function parseJsonResponse(response) {
-        const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-            return response.json();
-        }
-        return response.text().then(text => {
-            const error = new Error('Non-JSON response');
+        var contentType = response.headers.get('content-type') || '';
+        if (contentType.indexOf('application/json') !== -1) { return response.json(); }
+        return response.text().then(function(text) {
+            var error = new Error('Non-JSON response');
             error.rawText = text;
             throw error;
         });
@@ -1427,104 +1314,62 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
 
     function buildFriendlyErrorMessage(error) {
         if (error && error.rawText) {
-            const temp = document.createElement('div');
+            var temp = document.createElement('div');
             temp.innerHTML = error.rawText;
-            const plain = (temp.textContent || temp.innerText || '').trim();
-            if (plain) {
-                return plain.substring(0, 500);
-            }
+            var plain = (temp.textContent || temp.innerText || '').trim();
+            if (plain) return plain.substring(0, 500);
         }
-        if (error && error.message) {
-            return error.message;
-        }
-        return 'An unexpected error occurred. Please try again.';
+        return (error && error.message) ? error.message : 'An unexpected error occurred. Please try again.';
     }
 
     function submitFormViaAjax(form) {
         showLoadingModal('Saving Changes...', 'Please wait while we update your module batch.');
-
-        const formData = new FormData(form);
-        const actionUrl = form.getAttribute('action') || window.location.href;
-
+        var formData = new FormData(form);
+        var actionUrl = form.getAttribute('action') || window.location.href;
         fetch(actionUrl, {
-            method: 'POST',
-            body: formData,
-            credentials: 'same-origin',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
+            method: 'POST', body: formData, credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
         })
         .then(parseJsonResponse)
-        .then(data => {
-            showResultModal(data.success, data);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showResultModal(false, { message: buildFriendlyErrorMessage(error) });
-        });
+        .then(function(data) { showResultModal(data.success, data); })
+        .catch(function(error) { console.error('Error:', error); showResultModal(false, { message: buildFriendlyErrorMessage(error) }); });
     }
 
     function submitDeleteViaAjax(form) {
         showLoadingModal('Deleting Module Batch...', 'Please wait while we remove the batch and associated pallets.');
-
-        const formData = new FormData(form);
-        const actionUrl = form.getAttribute('action') || window.location.href;
-
+        var formData = new FormData(form);
+        var actionUrl = form.getAttribute('action') || window.location.href;
         fetch(actionUrl, {
-            method: 'POST',
-            body: formData,
-            credentials: 'same-origin',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
+            method: 'POST', body: formData, credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
         })
         .then(parseJsonResponse)
-        .then(data => {
-            showResultModal(data.success, data);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showResultModal(false, { message: buildFriendlyErrorMessage(error) });
-        });
+        .then(function(data) { showResultModal(data.success, data); })
+        .catch(function(error) { console.error('Error:', error); showResultModal(false, { message: buildFriendlyErrorMessage(error) }); });
     }
 
-    // Delete batch modal handling
+    // ========== Delete Batch Modal ==========
     document.addEventListener('DOMContentLoaded', function() {
-        const deleteBatchBtn = document.getElementById('deleteBatchBtn');
-        const deleteBatchModal = document.getElementById('deleteBatchModal');
-        const cancelDeleteBatch = document.getElementById('cancelDeleteBatch');
-        const confirmDeleteBatch = document.getElementById('confirmDeleteBatch');
-        const deleteBatchForm = document.getElementById('deleteBatchForm');
+        var deleteBatchBtn = document.getElementById('deleteBatchBtn');
+        var deleteBatchModal = document.getElementById('deleteBatchModal');
+        var cancelDeleteBatch = document.getElementById('cancelDeleteBatch');
+        var confirmDeleteBatch = document.getElementById('confirmDeleteBatch');
+        var deleteBatchForm = document.getElementById('deleteBatchForm');
 
-        // Hide modals on page load
         hideLoadingModal();
         closeResultModal();
 
-        if (deleteBatchBtn) {
-            deleteBatchBtn.addEventListener('click', function() {
-                deleteBatchModal.style.display = 'flex';
-            });
-        }
-
-        if (cancelDeleteBatch) {
-            cancelDeleteBatch.addEventListener('click', function() {
-                deleteBatchModal.style.display = 'none';
-            });
-        }
-
+        if (deleteBatchBtn) { deleteBatchBtn.addEventListener('click', function() { deleteBatchModal.style.display = 'flex'; }); }
+        if (cancelDeleteBatch) { cancelDeleteBatch.addEventListener('click', function() { deleteBatchModal.style.display = 'none'; }); }
         if (confirmDeleteBatch) {
             confirmDeleteBatch.addEventListener('click', function() {
                 deleteBatchModal.style.display = 'none';
                 submitDeleteViaAjax(deleteBatchForm);
             });
         }
-
-        // Close modal on background click
         if (deleteBatchModal) {
             deleteBatchModal.addEventListener('click', function(e) {
-                if (e.target === deleteBatchModal) {
-                    deleteBatchModal.style.display = 'none';
-                }
+                if (e.target === deleteBatchModal) deleteBatchModal.style.display = 'none';
             });
         }
     });
