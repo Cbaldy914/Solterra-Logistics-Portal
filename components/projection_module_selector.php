@@ -558,7 +558,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 <!-- Edit Module Allocation Modal -->
 <div id="editModuleAllocationModal" class="modal" style="display: none;">
     <div class="modal-overlay" onclick="closeEditModuleAllocationModal()"></div>
-    <div class="modal-content modal-sm">
+    <div class="modal-content modal-lg edit-module-modal">
         <div class="modal-header">
             <h3>Edit Module Allocation</h3>
             <button type="button" class="modal-close" onclick="closeEditModuleAllocationModal()">
@@ -573,6 +573,27 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
             <input type="hidden" id="editAllocationIsProjectionOnly" value="0">
 
             <div id="editAllocationHint" class="manual-entry-intro" style="margin-bottom: 16px; display: none;"></div>
+
+            <div class="manual-form-grid edit-manufacturer-controls" id="editManufacturerControls" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Manufacturer/Vendor</label>
+                    <select id="editManufacturerId" class="form-input" onchange="handleEditManufacturerChange(this)">
+                        <option value="">Select Manufacturer</option>
+                        <?php foreach ($manufacturers_for_manual ?? [] as $m): ?>
+                            <option value="<?php echo (int)$m['id']; ?>">
+                                <?php echo htmlspecialchars($m['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                        <option value="add_new" style="background-color: #f0f8ff; font-style: italic;">+ Add New Manufacturer</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Location/Origin</label>
+                    <select id="editLocationId" class="form-input" disabled onchange="handleEditLocationChange(this)">
+                        <option value="">Select a manufacturer first</option>
+                    </select>
+                </div>
+            </div>
 
             <div class="form-group" id="editBatchGroup">
                 <label class="form-label">Manufacturer Batch</label>
@@ -1858,6 +1879,39 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     display: inline-flex;
     align-items: center;
     gap: 6px;
+}
+
+.edit-module-modal {
+    max-width: 980px;
+}
+
+.edit-module-modal .modal-body {
+    max-height: calc(85vh - 120px);
+    overflow-y: auto;
+}
+
+.edit-module-modal .manual-form-grid {
+    grid-template-columns: repeat(3, minmax(170px, 1fr));
+}
+
+.edit-module-modal #editBatchGroup {
+    margin-bottom: 14px;
+}
+
+.edit-module-modal #editAllocationHint {
+    margin-bottom: 14px !important;
+}
+
+@media (max-width: 900px) {
+    .edit-module-modal .manual-form-grid {
+        grid-template-columns: repeat(2, minmax(170px, 1fr));
+    }
+}
+
+@media (max-width: 600px) {
+    .edit-module-modal .manual-form-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .batch-item.just-added {
