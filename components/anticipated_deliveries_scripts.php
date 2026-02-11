@@ -879,6 +879,133 @@
             return !/^\d+$/.test(moduleId);
         }
 
+        function resetEditLocationSelect(message = 'Select a manufacturer first') {
+            const locationSelect = document.getElementById('editLocationId');
+            if (!locationSelect) return;
+            locationSelect.innerHTML = `<option value="">${escapeHtml(message)}</option>`;
+            locationSelect.disabled = true;
+        }
+
+        function handleEditManufacturerChange(select, preferredAddress = '') {
+            const manufacturerSelect = select || document.getElementById('editManufacturerId');
+            const locationSelect = document.getElementById('editLocationId');
+            const vendorInput = document.getElementById('editVendorName');
+            const addressInput = document.getElementById('editManufacturerAddress');
+            if (!manufacturerSelect || !locationSelect || !vendorInput || !addressInput) return;
+
+            if (manufacturerSelect.value === 'add_new') {
+                window.open('add_manufacturer.php', '_blank');
+                manufacturerSelect.value = '';
+                resetEditLocationSelect();
+                return;
+            }
+
+            const selectedName = manufacturerSelect.options[manufacturerSelect.selectedIndex]?.text?.trim() || '';
+            if (selectedName) {
+                vendorInput.value = selectedName;
+            }
+
+            if (!manufacturerSelect.value) {
+                resetEditLocationSelect();
+                if (!preferredAddress) {
+                    addressInput.value = '';
+                }
+                return;
+            }
+
+            locationSelect.disabled = true;
+            locationSelect.innerHTML = '<option>Loading locations...</option>';
+
+            fetch('get_manufacturer_locations.php?manufacturer_id=' + encodeURIComponent(manufacturerSelect.value))
+                .then(r => r.json())
+                .then(data => {
+                    locationSelect.innerHTML = '';
+                    const locations = (data && Array.isArray(data.locations)) ? data.locations : [];
+                    if (locations.length > 0) {
+                        const placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = 'Select a location';
+                        locationSelect.appendChild(placeholder);
+
+                        locations.forEach(loc => {
+                            const opt = document.createElement('option');
+                            opt.value = loc.id;
+                            opt.textContent = (loc.location_name ? (loc.location_name + ' — ') : '') + (loc.formatted_address || '');
+                            opt.dataset.address = loc.formatted_address || '';
+                            locationSelect.appendChild(opt);
+                        });
+
+                        locationSelect.disabled = false;
+
+                        const normalizedPreferred = (preferredAddress || addressInput.value || '').trim().toLowerCase();
+                        if (normalizedPreferred) {
+                            let matchedIndex = -1;
+                            Array.from(locationSelect.options).forEach((opt, idx) => {
+                                const optAddress = (opt.dataset.address || '').trim().toLowerCase();
+                                if (matchedIndex === -1 && optAddress && optAddress === normalizedPreferred) {
+                                    matchedIndex = idx;
+                                }
+                            });
+                            if (matchedIndex > 0) {
+                                locationSelect.selectedIndex = matchedIndex;
+                                handleEditLocationChange(locationSelect);
+                            } else {
+                                addressInput.value = preferredAddress || addressInput.value || '';
+                            }
+                        } else if (locations.length === 1) {
+                            locationSelect.selectedIndex = 1;
+                            handleEditLocationChange(locationSelect);
+                        }
+                    } else {
+                        locationSelect.innerHTML = '<option value="">No active locations</option>';
+                        locationSelect.disabled = false;
+                        if (preferredAddress) {
+                            addressInput.value = preferredAddress;
+                        }
+                    }
+                })
+                .catch(() => {
+                    locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+                    locationSelect.disabled = false;
+                    if (preferredAddress) {
+                        addressInput.value = preferredAddress;
+                    }
+                });
+        }
+
+        function handleEditLocationChange(select) {
+            const locationSelect = select || document.getElementById('editLocationId');
+            const addressInput = document.getElementById('editManufacturerAddress');
+            if (!locationSelect || !addressInput) return;
+            const selectedOpt = locationSelect.options[locationSelect.selectedIndex];
+            const address = (selectedOpt && selectedOpt.value)
+                ? ((selectedOpt.dataset.address || selectedOpt.textContent || '').trim())
+                : '';
+            addressInput.value = address;
+        }
+
+        function preselectEditManufacturer(vendorName, preferredAddress = '') {
+            const manufacturerSelect = document.getElementById('editManufacturerId');
+            if (!manufacturerSelect) return;
+            const normalizedVendor = (vendorName || '').trim().toLowerCase();
+            let matchedValue = '';
+
+            Array.from(manufacturerSelect.options).forEach(opt => {
+                if (matchedValue || !opt.value || opt.value === 'add_new') return;
+                if (opt.textContent.trim().toLowerCase() === normalizedVendor) {
+                    matchedValue = opt.value;
+                }
+            });
+
+            if (matchedValue) {
+                manufacturerSelect.value = matchedValue;
+                handleEditManufacturerChange(manufacturerSelect, preferredAddress || '');
+            } else {
+                manufacturerSelect.value = '';
+                resetEditLocationSelect();
+            }
+        }
+
         function openEditModuleAllocationModal(allocationId) {
             const entry = findModuleAllocationEntry(allocationId);
             const modal = document.getElementById('editModuleAllocationModal');
@@ -893,6 +1020,7 @@
             const isProjectionOnlyInput = document.getElementById('editAllocationIsProjectionOnly');
             const hint = document.getElementById('editAllocationHint');
             const batchGroup = document.getElementById('editBatchGroup');
+            const manufacturerControls = document.getElementById('editManufacturerControls');
             const batchSelect = document.getElementById('editLinkedBatchId');
 
             const vendorInput = document.getElementById('editVendorName');
@@ -914,6 +1042,7 @@
 
             if (isProjectionOnly) {
                 if (batchGroup) batchGroup.style.display = 'none';
+                if (manufacturerControls) manufacturerControls.style.display = 'grid';
                 if (hint) {
                     hint.style.display = 'flex';
                     hint.innerHTML = `
@@ -932,6 +1061,7 @@
                 costPerWattInput.disabled = false;
             } else {
                 if (batchGroup) batchGroup.style.display = 'block';
+                if (manufacturerControls) manufacturerControls.style.display = 'none';
                 if (hint) {
                     hint.style.display = 'flex';
                     hint.innerHTML = `
@@ -986,6 +1116,7 @@
             if (!isProjectionOnly) {
                 handleEditBatchChange();
             } else {
+                preselectEditManufacturer(allocation.vendor_name || allocation.manufacturer_name || '', allocation.manufacturer_address || '');
                 updateEditModulePreview();
             }
 
@@ -1278,10 +1409,10 @@
                 const actionsHtml = canEdit
                     ? `
                         <div class="module-item-actions">
-                            <button type="button" class="btn btn-sm btn-edit" onclick="openEditModuleAllocationModal(${allocationKeyLiteral})">
+                            <button type="button" class="btn btn-sm btn-edit" onclick='openEditModuleAllocationModal(${allocationKeyLiteral})'>
                                 Edit
                             </button>
-                            <button type="button" class="btn btn-sm btn-danger" onclick="removeModuleAllocation(${allocationKeyLiteral})">
+                            <button type="button" class="btn btn-sm btn-danger" onclick='removeModuleAllocation(${allocationKeyLiteral})'>
                                 Remove Batch
                             </button>
                         </div>
@@ -1290,7 +1421,7 @@
 
                 html += `
                     <div class="module-item ${isCollapsed}" data-allocation-id="${allocationKeyAttr}">
-                        <div class="module-item-header" onclick="toggleModuleItem(${allocationKeyLiteral})">
+                        <div class="module-item-header" onclick='toggleModuleItem(${allocationKeyLiteral})'>
                             <div class="module-header-left">
                                 <div class="module-vendor-name">${escapeHtml(vendorName)}</div>
                                 ${alloc.manufacturer_address ? `

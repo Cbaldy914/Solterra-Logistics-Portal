@@ -1498,6 +1498,7 @@ function get_general_projections($conn, $user_id, $role) {
             LEFT JOIN users u ON u.id = dp.created_by
             LEFT JOIN projection_cost_summary pcs ON pcs.projection_id = dp.id
             WHERE dp.is_general = 1 AND dp.is_template = 0
+              AND (dp.project_id IS NULL OR dp.project_id = 0)
             ORDER BY dp.created_at DESC
         ");
         if (!$stmt) return [];
@@ -1512,6 +1513,7 @@ function get_general_projections($conn, $user_id, $role) {
             LEFT JOIN users u ON u.id = dp.created_by
             LEFT JOIN projection_cost_summary pcs ON pcs.projection_id = dp.id
             WHERE dp.is_general = 1 AND dp.is_template = 0
+              AND (dp.project_id IS NULL OR dp.project_id = 0)
               AND dp.created_by IN (
                   SELECT cau2.user_id FROM customer_account_users cau
                   JOIN customer_account_users cau2 ON cau2.account_id = cau.account_id

@@ -102,6 +102,23 @@ if (isset($_GET['projection_id']) && !empty($_GET['projection_id']) &&
         die("Invalid general projection.");
     }
 
+    // If this "general" projection is already linked to a real project,
+    // treat it as a normal project projection experience.
+    $linked_project_id = (int)($current_projection['project_id'] ?? 0);
+    if ($linked_project_id > 0) {
+        $redirect_params = [
+            'project_id' => $linked_project_id,
+            'projection_id' => $requested_projection_id
+        ];
+        foreach (['section', 'tab', 'view'] as $param) {
+            if (isset($_GET[$param]) && $_GET[$param] !== '') {
+                $redirect_params[$param] = $_GET[$param];
+            }
+        }
+        header('Location: anticipated_deliveries.php?' . http_build_query($redirect_params));
+        exit();
+    }
+
     // Set up variables the editor template expects
     $project_id = 0;
     $project = [
@@ -111,7 +128,20 @@ if (isset($_GET['projection_id']) && !empty($_GET['projection_id']) &&
         'account_name' => 'General Projection'
     ];
     $can_edit = true;
-    $projections = [$current_projection];
+    $projections = get_general_projections($conn, $user_id, $role);
+    if (!empty($projections)) {
+        // Keep selector focused on "same general project" scenarios.
+        $current_general_name = trim((string)($current_projection['general_project_name'] ?? $current_projection['projection_name'] ?? ''));
+        $current_general_address = trim((string)($current_projection['general_project_address'] ?? ''));
+        $filtered = array_values(array_filter($projections, static function ($proj) use ($current_general_name, $current_general_address) {
+            $proj_name = trim((string)($proj['general_project_name'] ?? $proj['projection_name'] ?? ''));
+            $proj_address = trim((string)($proj['general_project_address'] ?? ''));
+            return $proj_name === $current_general_name && $proj_address === $current_general_address;
+        }));
+        $projections = !empty($filtered) ? $filtered : [$current_projection];
+    } else {
+        $projections = [$current_projection];
+    }
     $available_batches = [];
 
     // Prepare data for initial load
