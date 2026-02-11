@@ -437,31 +437,16 @@
             });
         }
 
-        function saveProjection() {
-            if (!canEdit) {
-                showToast('You do not have permission to save', 'error');
-                return;
-            }
-
-            if (!workingState.projectionId) {
-                showToast('Please create a projection first', 'error');
-                return;
-            }
-
-            if (!validateModulePoDates()) {
-                return;
-            }
-
+        function buildProjectionPayload(options = {}) {
+            const includeProjectionId = options.includeProjectionId !== false;
             syncPlanState();
-            showLoading('Saving projection...');
 
             const payload = {
                 project_id: isGeneralMode ? 0 : projectId,
-                projection_id: workingState.projectionId,
-                projection_name: workingState.projectionName,
-                status: workingState.status,
-                notes: workingState.notes,
-                is_primary: workingState.isPrimary,
+                projection_name: options.projectionName || workingState.projectionName,
+                status: options.status || workingState.status,
+                notes: options.notes !== undefined ? options.notes : workingState.notes,
+                is_primary: options.isPrimary !== undefined ? options.isPrimary : workingState.isPrimary,
                 is_general: isGeneralMode,
                 po_execution_date: workingState.poExecutionDate || null,
                 module_allocations: workingState.moduleAllocations.map(a => ({
@@ -471,7 +456,6 @@
                     pallets: a.pallets,
                     po_execution_date: a.po_execution_date || null,
                     milestones: a.milestones || [],
-                    // Include additional fields for manual entries
                     vendor_name: a.vendor_name,
                     manufacturer_address: a.manufacturer_address,
                     modules_per_pallet: a.modules_per_pallet,
@@ -480,7 +464,7 @@
                     is_manual: a.is_manual || false,
                     is_projection_module: a.is_projection_module || false
                 })),
-                stops: workingState.stops.map((s, i) => ({
+                stops: workingState.stops.map(s => ({
                     id: s.id,
                     stop_type: s.stop_type,
                     location_name: s.location_name,
@@ -511,6 +495,39 @@
                     notes: l.notes
                 }))
             };
+
+            if (includeProjectionId) {
+                payload.projection_id = workingState.projectionId;
+            }
+
+            if (isGeneralMode && options.generalProjectName) {
+                payload.general_project_name = options.generalProjectName;
+            }
+            if (isGeneralMode && options.generalProjectAddress) {
+                payload.general_project_address = options.generalProjectAddress;
+            }
+
+            return payload;
+        }
+
+        function saveProjection() {
+            if (!canEdit) {
+                showToast('You do not have permission to save', 'error');
+                return;
+            }
+
+            if (!workingState.projectionId) {
+                showToast('Please create a projection first', 'error');
+                return;
+            }
+
+            if (!validateModulePoDates()) {
+                return;
+            }
+
+            showLoading('Saving projection...');
+
+            const payload = buildProjectionPayload({ includeProjectionId: true });
 
             fetch('api/projection_save.php', {
                 method: 'POST',
@@ -554,6 +571,58 @@
             .catch(error => {
                 hideLoading();
                 showToast('Error saving projection: ' + error.message, 'error');
+                console.error(error);
+            });
+        }
+
+        function duplicateProjection() {
+            if (!canEdit || !workingState.projectionId) {
+                return;
+            }
+
+            if (!validateModulePoDates()) {
+                return;
+            }
+
+            const defaultName = `${workingState.projectionName} Copy`;
+            const projectionNameInput = prompt('Enter a name for the duplicated projection:', defaultName);
+            const projectionName = projectionNameInput ? projectionNameInput.trim() : '';
+            if (!projectionName) {
+                return;
+            }
+
+            showLoading('Duplicating projection...');
+
+            const payload = buildProjectionPayload({
+                includeProjectionId: false,
+                projectionName: projectionName,
+                isPrimary: false,
+                generalProjectName: projectInfo.name || workingState.projectionName,
+                generalProjectAddress: projectInfo.address || ''
+            });
+
+            fetch('api/projection_save.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success && data.projection_id) {
+                    showToast('Projection duplicated successfully', 'success');
+                    if (isGeneralMode) {
+                        window.location.href = `anticipated_deliveries.php?projection_id=${data.projection_id}&is_general=1`;
+                    } else {
+                        window.location.href = `anticipated_deliveries.php?project_id=${projectId}&projection_id=${data.projection_id}`;
+                    }
+                } else {
+                    showToast('Failed to duplicate projection: ' + (data.error || 'Unknown error'), 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showToast('Error duplicating projection', 'error');
                 console.error(error);
             });
         }
@@ -771,6 +840,304 @@
             updateBadges();
         }
 
+        function getAllocationLookupKey(allocation, index = null) {
+            if (allocation && allocation.id !== undefined && allocation.id !== null) {
+                return String(allocation.id);
+            }
+            if (allocation && allocation.module_id !== undefined && allocation.module_id !== null) {
+                return String(allocation.module_id);
+            }
+            if (index !== null) {
+                return `allocation_${index}`;
+            }
+            return '';
+        }
+
+        function findModuleAllocationEntry(allocationId) {
+            const key = String(allocationId);
+            const index = workingState.moduleAllocations.findIndex((allocation, i) => {
+                return getAllocationLookupKey(allocation, i) === key;
+            });
+            if (index < 0) {
+                return null;
+            }
+            return {
+                index: index,
+                allocation: workingState.moduleAllocations[index]
+            };
+        }
+
+        function isProjectionOnlyAllocation(allocation) {
+            if (!allocation) return false;
+            const moduleId = String(allocation.module_id ?? '');
+            if (allocation.is_projection_module || allocation.is_manual) {
+                return true;
+            }
+            if (moduleId.startsWith('manual_')) {
+                return true;
+            }
+            return !/^\d+$/.test(moduleId);
+        }
+
+        function openEditModuleAllocationModal(allocationId) {
+            const entry = findModuleAllocationEntry(allocationId);
+            const modal = document.getElementById('editModuleAllocationModal');
+            if (!entry || !modal) {
+                showToast('Module allocation not found', 'error');
+                return;
+            }
+
+            const allocation = entry.allocation;
+            const isProjectionOnly = isProjectionOnlyAllocation(allocation);
+            const allocationIdInput = document.getElementById('editAllocationId');
+            const isProjectionOnlyInput = document.getElementById('editAllocationIsProjectionOnly');
+            const hint = document.getElementById('editAllocationHint');
+            const batchGroup = document.getElementById('editBatchGroup');
+            const batchSelect = document.getElementById('editLinkedBatchId');
+
+            const vendorInput = document.getElementById('editVendorName');
+            const addressInput = document.getElementById('editManufacturerAddress');
+            const wattageInput = document.getElementById('editWattage');
+            const quantityInput = document.getElementById('editQuantity');
+            const modulesPerPalletInput = document.getElementById('editModulesPerPallet');
+            const palletsPerTruckInput = document.getElementById('editPalletsPerTruck');
+            const costPerWattInput = document.getElementById('editCostPerWatt');
+
+            allocationIdInput.value = String(allocationId);
+            isProjectionOnlyInput.value = isProjectionOnly ? '1' : '0';
+
+            const selectedBatchIds = new Set(
+                (workingState.moduleAllocations || [])
+                    .filter((item, idx) => idx !== entry.index && !isProjectionOnlyAllocation(item))
+                    .map(item => String(item.module_id))
+            );
+
+            if (isProjectionOnly) {
+                if (batchGroup) batchGroup.style.display = 'none';
+                if (hint) {
+                    hint.style.display = 'flex';
+                    hint.innerHTML = `
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M12 16v-4"/>
+                            <path d="M12 8h.01"/>
+                        </svg>
+                        <span>This is a projection-only module. You can edit vendor, location, and quantity details.</span>
+                    `;
+                }
+                vendorInput.disabled = false;
+                addressInput.disabled = false;
+                modulesPerPalletInput.disabled = false;
+                palletsPerTruckInput.disabled = false;
+                costPerWattInput.disabled = false;
+            } else {
+                if (batchGroup) batchGroup.style.display = 'block';
+                if (hint) {
+                    hint.style.display = 'flex';
+                    hint.innerHTML = `
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M12 16v-4"/>
+                            <path d="M12 8h.01"/>
+                        </svg>
+                        <span>For linked module batches, you can change the selected batch, wattage, and quantity for this projection.</span>
+                    `;
+                }
+
+                const currentBatchId = String(allocation.module_id ?? '');
+                const optionRows = (availableBatches || []).map(batch => {
+                    return {
+                        id: String(batch.id),
+                        label: `${batch.vendor_name || 'Vendor'}${batch.manufacturer_address ? ` - ${batch.manufacturer_address}` : ''}`,
+                        disabled: selectedBatchIds.has(String(batch.id))
+                    };
+                });
+
+                if (!optionRows.some(option => option.id === currentBatchId)) {
+                    optionRows.unshift({
+                        id: currentBatchId,
+                        label: `${allocation.vendor_name || 'Current batch'}${allocation.manufacturer_address ? ` - ${allocation.manufacturer_address}` : ''}`,
+                        disabled: false
+                    });
+                }
+
+                batchSelect.innerHTML = optionRows.map(option => `
+                    <option value="${escapeHtml(option.id)}" ${option.disabled ? 'disabled' : ''}>
+                        ${escapeHtml(option.label)}${option.disabled ? ' (already used)' : ''}
+                    </option>
+                `).join('');
+                batchSelect.value = currentBatchId;
+
+                vendorInput.disabled = true;
+                addressInput.disabled = true;
+                modulesPerPalletInput.disabled = true;
+                palletsPerTruckInput.disabled = true;
+                costPerWattInput.disabled = true;
+            }
+
+            vendorInput.value = allocation.vendor_name || allocation.manufacturer_name || '';
+            addressInput.value = allocation.manufacturer_address || '';
+            wattageInput.value = allocation.wattage || '';
+            quantityInput.value = allocation.quantity || '';
+            modulesPerPalletInput.value = allocation.modules_per_pallet || 30;
+            palletsPerTruckInput.value = allocation.pallets_per_truck || 20;
+            costPerWattInput.value = allocation.cost_per_watt || '';
+
+            if (!isProjectionOnly) {
+                handleEditBatchChange();
+            } else {
+                updateEditModulePreview();
+            }
+
+            modal.style.display = 'flex';
+            setTimeout(() => {
+                wattageInput.focus();
+                wattageInput.select();
+            }, 50);
+        }
+
+        function closeEditModuleAllocationModal() {
+            const modal = document.getElementById('editModuleAllocationModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        function handleEditBatchChange() {
+            const isProjectionOnly = document.getElementById('editAllocationIsProjectionOnly')?.value === '1';
+            if (isProjectionOnly) {
+                updateEditModulePreview();
+                return;
+            }
+
+            const batchId = document.getElementById('editLinkedBatchId')?.value;
+            const selectedBatch = (availableBatches || []).find(batch => String(batch.id) === String(batchId));
+            if (!selectedBatch) {
+                updateEditModulePreview();
+                return;
+            }
+
+            const vendorInput = document.getElementById('editVendorName');
+            const addressInput = document.getElementById('editManufacturerAddress');
+            const modulesPerPalletInput = document.getElementById('editModulesPerPallet');
+            const palletsPerTruckInput = document.getElementById('editPalletsPerTruck');
+            const costPerWattInput = document.getElementById('editCostPerWatt');
+            const wattageInput = document.getElementById('editWattage');
+
+            vendorInput.value = selectedBatch.vendor_name || selectedBatch.manufacturer_name || '';
+            addressInput.value = selectedBatch.manufacturer_address || selectedBatch.initial_location || '';
+            modulesPerPalletInput.value = selectedBatch.modules_per_pallet || 30;
+            palletsPerTruckInput.value = selectedBatch.pallets_per_truck || 20;
+            costPerWattInput.value = selectedBatch.cost_per_watt || 0;
+
+            if (!wattageInput.value && Array.isArray(selectedBatch.wattage_list) && selectedBatch.wattage_list.length > 0) {
+                wattageInput.value = selectedBatch.wattage_list[0];
+            }
+
+            updateEditModulePreview();
+        }
+
+        function updateEditModulePreview() {
+            const wattage = parseFloat(document.getElementById('editWattage')?.value) || 0;
+            const quantity = parseFloat(document.getElementById('editQuantity')?.value) || 0;
+            const modulesPerPallet = parseFloat(document.getElementById('editModulesPerPallet')?.value) || 0;
+            const costPerWatt = parseFloat(document.getElementById('editCostPerWatt')?.value) || 0;
+
+            const pallets = modulesPerPallet > 0 ? Math.ceil(quantity / modulesPerPallet) : 0;
+            const contractValue = costPerWatt > 0 ? (wattage * quantity * costPerWatt) : 0;
+
+            const palletsOutput = document.getElementById('editProjectedPallets');
+            const contractOutput = document.getElementById('editProjectedContractValue');
+            if (palletsOutput) {
+                palletsOutput.value = pallets ? pallets.toLocaleString() : '0';
+            }
+            if (contractOutput) {
+                contractOutput.value = '$' + contractValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            }
+        }
+
+        function saveModuleAllocationEdits() {
+            const allocationId = document.getElementById('editAllocationId')?.value;
+            const entry = findModuleAllocationEntry(allocationId);
+            if (!entry) {
+                showToast('Module allocation not found', 'error');
+                return;
+            }
+
+            const allocation = entry.allocation;
+            const isProjectionOnly = document.getElementById('editAllocationIsProjectionOnly')?.value === '1';
+
+            const vendorName = (document.getElementById('editVendorName')?.value || '').trim();
+            const manufacturerAddress = (document.getElementById('editManufacturerAddress')?.value || '').trim();
+            const wattage = parseInt(document.getElementById('editWattage')?.value, 10) || 0;
+            const quantity = parseInt(document.getElementById('editQuantity')?.value, 10) || 0;
+            const modulesPerPallet = parseInt(document.getElementById('editModulesPerPallet')?.value, 10) || 0;
+            const palletsPerTruck = parseInt(document.getElementById('editPalletsPerTruck')?.value, 10) || 0;
+            const costPerWatt = parseFloat(document.getElementById('editCostPerWatt')?.value) || 0;
+
+            if (wattage <= 0 || quantity <= 0) {
+                showToast('Wattage and quantity must be greater than 0', 'error');
+                return;
+            }
+            if (modulesPerPallet <= 0 || palletsPerTruck <= 0) {
+                showToast('Modules/pallet and pallets/truck must be greater than 0', 'error');
+                return;
+            }
+
+            let selectedBatch = null;
+            if (!isProjectionOnly) {
+                const selectedBatchId = String(document.getElementById('editLinkedBatchId')?.value || '');
+                if (!selectedBatchId) {
+                    showToast('Please select a manufacturer batch', 'error');
+                    return;
+                }
+
+                const duplicate = (workingState.moduleAllocations || []).some((item, idx) => {
+                    if (idx === entry.index) return false;
+                    return !isProjectionOnlyAllocation(item) && String(item.module_id) === selectedBatchId;
+                });
+                if (duplicate) {
+                    showToast('That manufacturer batch is already in this projection', 'error');
+                    return;
+                }
+
+                selectedBatch = (availableBatches || []).find(batch => String(batch.id) === selectedBatchId);
+                allocation.module_id = selectedBatch ? selectedBatch.id : parseInt(selectedBatchId, 10);
+                allocation.vendor_name = selectedBatch?.vendor_name || allocation.vendor_name;
+                allocation.manufacturer_name = selectedBatch?.manufacturer_name || allocation.manufacturer_name || allocation.vendor_name;
+                allocation.manufacturer_address = selectedBatch?.manufacturer_address || allocation.manufacturer_address;
+                allocation.modules_per_pallet = selectedBatch?.modules_per_pallet || modulesPerPallet;
+                allocation.pallets_per_truck = selectedBatch?.pallets_per_truck || palletsPerTruck;
+                allocation.cost_per_watt = selectedBatch?.cost_per_watt || costPerWatt;
+                allocation.milestones = selectedBatch?.milestones || allocation.milestones || [];
+                allocation.has_milestones = !!(selectedBatch?.has_milestones || (allocation.milestones || []).length > 0);
+                allocation.is_projection_module = false;
+                allocation.is_manual = false;
+            } else {
+                allocation.vendor_name = vendorName || 'Manual Entry';
+                allocation.manufacturer_name = allocation.vendor_name;
+                allocation.manufacturer_address = manufacturerAddress;
+                allocation.modules_per_pallet = modulesPerPallet;
+                allocation.pallets_per_truck = palletsPerTruck;
+                allocation.cost_per_watt = costPerWatt;
+            }
+
+            allocation.wattage = wattage;
+            allocation.quantity = quantity;
+            const effectiveModulesPerPallet = parseInt(allocation.modules_per_pallet, 10) || modulesPerPallet;
+            allocation.pallets = Math.ceil(quantity / effectiveModulesPerPallet);
+
+            const effectiveCostPerWatt = parseFloat(allocation.cost_per_watt) || 0;
+            allocation.contract_value = effectiveCostPerWatt > 0 ? (effectiveCostPerWatt * wattage * quantity) : 0;
+
+            closeEditModuleAllocationModal();
+            markAsUnsaved();
+            renderModuleAllocations();
+            updateBadges();
+            updateStepperState();
+            showToast('Module allocation updated. Remember to save!', 'success');
+        }
+
         function renderModuleAllocations() {
             const container = document.getElementById('moduleAllocationsList');
             if (!container) return;
@@ -911,6 +1278,9 @@
                 const actionsHtml = canEdit
                     ? `
                         <div class="module-item-actions">
+                            <button type="button" class="btn btn-sm btn-edit" onclick="openEditModuleAllocationModal(${allocationKeyLiteral})">
+                                Edit
+                            </button>
                             <button type="button" class="btn btn-sm btn-danger" onclick="removeModuleAllocation(${allocationKeyLiteral})">
                                 Remove Batch
                             </button>
@@ -5663,6 +6033,12 @@
             }, 5000);
         }
 
+        function closeModuleSelectorModal() {
+            if (typeof closeAddModulesModal === 'function') {
+                closeAddModulesModal();
+            }
+        }
+
         // Close modals on escape key
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -5670,6 +6046,7 @@
                 closeLegEditorModal();
                 closeModuleSelectorModal();
                 closeWattageQuantityModal();
+                closeEditModuleAllocationModal();
             }
         });
 

@@ -2820,48 +2820,48 @@ var dateLabelsForBudget   = <?php echo $dateLabelsForBudget ?: '[]';?>;
 var budgetLineData        = <?php echo $budgetLineChartDataJSON ?: '{"anticipated_cost":[],"actual_cost":[],"forecast_breakdown":[],"actual_breakdown":[]}';?>;
 
 function initializeFinancialCharts(){
-    // Cost Breakdown Pie
+    // Cost Breakdown Pie (optional: only if element exists on page)
     var costPieEl = document.getElementById('costPieChart');
-    if (!costPieEl || costPieEl.chartInitialized) return; // Exit if element doesn't exist or chart already created
-    
-    var costPie = costPieEl.getContext('2d');
-    var costPieLabels = Object.keys(pieChartDataFinancial);
-    var costPieValues = Object.values(pieChartDataFinancial);
+    if (costPieEl && !costPieEl.chartInitialized) {
+        var costPie = costPieEl.getContext('2d');
+        var costPieLabels = Object.keys(pieChartDataFinancial);
+        var costPieValues = Object.values(pieChartDataFinancial);
 
-    var colorMap = {
-        'Freight Cost': '#488C9A',
-        'Warehousing':   '#293E4C',
-        'Accessorial':   '#fbb040',
-        'Solterra Fee':  '#5ba3b1',
-        'Other':         '#6c757d'
-    };
-    var backgroundColors = costPieLabels.map(function(lbl){
-        return colorMap[lbl] || '#6c757d';
-    });
+        var colorMap = {
+            'Freight Cost': '#488C9A',
+            'Warehousing':   '#293E4C',
+            'Accessorial':   '#fbb040',
+            'Solterra Fee':  '#5ba3b1',
+            'Other':         '#6c757d'
+        };
+        var backgroundColors = costPieLabels.map(function(lbl){
+            return colorMap[lbl] || '#6c757d';
+        });
 
-    new Chart(costPie,{
-        type:'pie',
-        data:{
-            labels: costPieLabels,
-            datasets:[{
-                data: costPieValues,
-                backgroundColor: backgroundColors
-            }]
-        },
-        options:{
-            title:{display:true, text:'Cost Breakdown'},
-            tooltips:{
-                callbacks:{
-                    label:function(tooltipItem, data){
-                        var val=data.datasets[0].data[tooltipItem.index];
-                        var lbl=data.labels[tooltipItem.index];
-                        return lbl+': $'+ parseFloat(val).toFixed(2);
+        new Chart(costPie,{
+            type:'pie',
+            data:{
+                labels: costPieLabels,
+                datasets:[{
+                    data: costPieValues,
+                    backgroundColor: backgroundColors
+                }]
+            },
+            options:{
+                title:{display:true, text:'Cost Breakdown'},
+                tooltips:{
+                    callbacks:{
+                        label:function(tooltipItem, data){
+                            var val=data.datasets[0].data[tooltipItem.index];
+                            var lbl=data.labels[tooltipItem.index];
+                            return lbl+': $'+ parseFloat(val).toFixed(2);
+                        }
                     }
                 }
             }
-        }
-    });
-    costPieEl.chartInitialized = true;
+        });
+        costPieEl.chartInitialized = true;
+    }
 
     // Forecasted vs Actual cost line chart
     var ctxBudgetEl = document.getElementById('budgetLineChart');

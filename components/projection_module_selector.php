@@ -251,6 +251,10 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                         <!-- Actions -->
                         <div class="module-item-actions">
                             <?php if ($can_edit): ?>
+                                <button type="button" class="btn btn-sm btn-edit"
+                                        onclick="openEditModuleAllocationModal(<?php echo $alloc['id']; ?>)">
+                                    Edit
+                                </button>
                                 <button type="button" class="btn btn-sm btn-danger"
                                         onclick="removeModuleAllocation(<?php echo $alloc['id']; ?>)">
                                     Remove Batch
@@ -544,6 +548,90 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                     Add to Projection
                 </button>
                 <button type="button" class="btn btn-secondary" onclick="closeWattageQuantityModal()">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Module Allocation Modal -->
+<div id="editModuleAllocationModal" class="modal" style="display: none;">
+    <div class="modal-overlay" onclick="closeEditModuleAllocationModal()"></div>
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3>Edit Module Allocation</h3>
+            <button type="button" class="modal-close" onclick="closeEditModuleAllocationModal()">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editAllocationId" value="">
+            <input type="hidden" id="editAllocationIsProjectionOnly" value="0">
+
+            <div id="editAllocationHint" class="manual-entry-intro" style="margin-bottom: 16px; display: none;"></div>
+
+            <div class="form-group" id="editBatchGroup">
+                <label class="form-label">Manufacturer Batch</label>
+                <select id="editLinkedBatchId" class="form-input" onchange="handleEditBatchChange()"></select>
+            </div>
+
+            <div class="manual-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Vendor / Manufacturer</label>
+                    <input type="text" id="editVendorName" class="form-input" placeholder="Vendor name">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Origin Location</label>
+                    <input type="text" id="editManufacturerAddress" class="form-input" placeholder="Address or location">
+                </div>
+            </div>
+
+            <div class="manual-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Wattage (W) <span class="required">*</span></label>
+                    <input type="number" id="editWattage" class="form-input" min="1" oninput="updateEditModulePreview()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Quantity <span class="required">*</span></label>
+                    <input type="number" id="editQuantity" class="form-input" min="1" oninput="updateEditModulePreview()">
+                </div>
+            </div>
+
+            <div class="manual-form-grid">
+                <div class="form-group">
+                    <label class="form-label">Modules / Pallet</label>
+                    <input type="number" id="editModulesPerPallet" class="form-input" min="1" oninput="updateEditModulePreview()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Pallets / Truck</label>
+                    <input type="number" id="editPalletsPerTruck" class="form-input" min="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Cost / Watt ($)</label>
+                    <input type="number" id="editCostPerWatt" class="form-input" min="0" step="0.0001" oninput="updateEditModulePreview()">
+                </div>
+            </div>
+
+            <div class="manual-form-grid" style="margin-bottom: 0;">
+                <div class="form-group">
+                    <label class="form-label">Projected Pallets</label>
+                    <input type="text" id="editProjectedPallets" class="form-input" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Projected Contract Value</label>
+                    <input type="text" id="editProjectedContractValue" class="form-input" readonly>
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button type="button" class="btn btn-primary" onclick="saveModuleAllocationEdits()">
+                    Save Changes
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="closeEditModuleAllocationModal()">
                     Cancel
                 </button>
             </div>
@@ -1579,6 +1667,17 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     background: #c82333;
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+}
+
+.btn-edit {
+    background: #e8f4f6;
+    color: #1f5e69;
+}
+
+.btn-edit:hover {
+    background: #d8ebef;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.2);
 }
 
 /* Project Allocation Tracker */

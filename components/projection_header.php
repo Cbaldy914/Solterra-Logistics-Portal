@@ -80,6 +80,14 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
                     Save
                 </button>
 
+                <button type="button" class="btn-projection-duplicate" onclick="duplicateProjection()" title="Duplicate this projection">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                    Duplicate
+                </button>
+
                 <?php if (!$is_primary): ?>
                 <button type="button" class="btn-projection-primary" onclick="setAsPrimary()" title="Set as primary projection" id="btnSetPrimary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -311,6 +319,34 @@ $primary_style = $is_primary ? '' : 'style="display: none;"';
 }
 
 .btn-projection-save svg {
+    flex-shrink: 0;
+}
+
+.btn-projection-duplicate {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 0.88em;
+    font-weight: 600;
+    font-family: 'Poppins', sans-serif;
+    border: 2px solid #d0dde2;
+    border-radius: 10px;
+    background: white;
+    color: #3d5561;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-projection-duplicate:hover {
+    border-color: #488C9A;
+    color: #2d4a55;
+    background: #f6fbfc;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.18);
+    transform: translateY(-1px);
+}
+
+.btn-projection-duplicate svg {
     flex-shrink: 0;
 }
 
