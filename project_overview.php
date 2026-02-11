@@ -191,14 +191,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="project-stat-order" onclick="openOrderBreakdownModal(); event.stopPropagation();">
                     <?php if ($project_size_mw > 0): ?>
                     <div class="stat-order-ring">
-                        <svg width="46" height="46">
-                            <circle cx="23" cy="23" r="18" fill="none" stroke="#e9ecef" stroke-width="4"/>
-                            <circle cx="23" cy="23" r="18" fill="none"
+                        <svg width="54" height="54">
+                            <circle cx="27" cy="27" r="22" fill="none" stroke="#e9ecef" stroke-width="4.5"/>
+                            <circle cx="27" cy="27" r="22" fill="none"
                                 stroke="<?php echo $order_progress_pct >= 100 ? '#28a745' : '#488C9A'; ?>"
-                                stroke-width="4" stroke-linecap="round"
-                                stroke-dasharray="113.1"
-                                stroke-dashoffset="<?php echo 113.1 - (113.1 * min(100, $order_progress_pct) / 100); ?>"
-                                transform="rotate(-90 23 23)"/>
+                                stroke-width="4.5" stroke-linecap="round"
+                                stroke-dasharray="138.2"
+                                stroke-dashoffset="<?php echo 138.2 - (138.2 * min(100, $order_progress_pct) / 100); ?>"
+                                transform="rotate(-90 27 27)"/>
                         </svg>
                         <span class="stat-order-ring-pct"><?php echo number_format($order_progress_pct, 0); ?>%</span>
                     </div>
