@@ -235,7 +235,7 @@ $conn->close();
         }
 
         .general-group-card {
-            cursor: default;
+            cursor: pointer;
         }
 
         .project-card-image {
@@ -357,53 +357,6 @@ $conn->close();
 
         .general-card-stat strong {
             color: #293E4C;
-        }
-
-        .general-scenarios-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-bottom: 10px;
-            max-height: 210px;
-            overflow-y: auto;
-            padding-right: 2px;
-        }
-
-        .general-scenario-link {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            padding: 10px 12px;
-            border: 1px solid #e9ecef;
-            border-radius: 10px;
-            text-decoration: none;
-            background: #fafbfc;
-            color: inherit;
-            transition: all 0.2s ease;
-        }
-
-        .general-scenario-link:hover {
-            border-color: #488C9A;
-            background: #f3f9fa;
-            transform: translateY(-1px);
-        }
-
-        .general-scenario-name {
-            font-size: 0.88em;
-            font-weight: 600;
-            color: #293E4C;
-            line-height: 1.2;
-        }
-
-        .general-scenario-meta {
-            font-size: 0.78em;
-            color: #6c757d;
-            white-space: nowrap;
-        }
-
-        .general-group-open-link {
-            text-decoration: none;
         }
 
         .empty-state {
@@ -609,11 +562,19 @@ $conn->close();
             <?php foreach ($general_projection_groups as $group): ?>
             <?php
                 $group_latest = $group['latest'];
+                $group_primary = null;
+                foreach ($group['projections'] as $scenario) {
+                    if (!empty($scenario['is_primary'])) {
+                        $group_primary = $scenario;
+                        break;
+                    }
+                }
+                $group_target = $group_primary ?? $group_latest;
                 $group_projection_count = count($group['projections']);
                 $group_name = $group['name'] !== '' ? $group['name'] : 'General Projection';
                 $group_address = $group['address'] !== '' ? $group['address'] : 'No address set';
             ?>
-            <div class="project-card general-group-card">
+            <a href="anticipated_deliveries.php?projection_id=<?php echo (int)$group_target['id']; ?>&is_general=1" class="project-card general-group-card">
                 <div class="project-card-image" style="height: 100px; background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);">
                     <i class="fas fa-clipboard-list placeholder-icon"></i>
                     <span class="general-badge">
@@ -630,40 +591,29 @@ $conn->close();
                         <?php echo htmlspecialchars($group_address); ?>
                     </p>
                     <div class="general-card-stats">
-                        <?php if (!empty($group_latest['general_estimated_mw'])): ?>
+                        <?php if (!empty($group_target['general_estimated_mw'])): ?>
                         <span class="general-card-stat">
                             <i class="fas fa-bolt"></i>
-                            <strong><?php echo number_format($group_latest['general_estimated_mw'], 1); ?></strong> MW
+                            <strong><?php echo number_format($group_target['general_estimated_mw'], 1); ?></strong> MW
                         </span>
                         <?php endif; ?>
-                        <?php if (!empty($group_latest['grand_total'])): ?>
+                        <?php if (!empty($group_target['grand_total'])): ?>
                         <span class="general-card-stat">
                             <i class="fas fa-dollar-sign"></i>
-                            <strong>$<?php echo number_format($group_latest['grand_total'], 0); ?></strong>
+                            <strong>$<?php echo number_format($group_target['grand_total'], 0); ?></strong>
                         </span>
                         <?php endif; ?>
-                    </div>
-
-                    <div class="general-scenarios-list">
-                        <?php foreach ($group['projections'] as $scenario): ?>
-                        <a href="anticipated_deliveries.php?projection_id=<?php echo (int)$scenario['id']; ?>&is_general=1" class="general-scenario-link">
-                            <span class="general-scenario-name"><?php echo htmlspecialchars($scenario['projection_name'] ?? 'Scenario'); ?></span>
-                            <span class="general-scenario-meta">
-                                <?php echo !empty($scenario['created_at']) ? date('M j, Y', strtotime($scenario['created_at'])) : ''; ?>
-                            </span>
-                        </a>
-                        <?php endforeach; ?>
                     </div>
 
                     <div class="project-card-meta">
-                        <span class="account"><?php echo htmlspecialchars($group_latest['created_by_name'] ?? 'Unknown'); ?></span>
-                        <a href="anticipated_deliveries.php?projection_id=<?php echo (int)$group_latest['id']; ?>&is_general=1" class="action general-group-open-link">
-                            Open Latest
+                        <span class="account"><?php echo htmlspecialchars($group_target['created_by_name'] ?? 'Unknown'); ?></span>
+                        <span class="action">
+                            View Plan
                             <i class="fas fa-arrow-right"></i>
-                        </a>
+                        </span>
                     </div>
                 </div>
-            </div>
+            </a>
             <?php endforeach; ?>
         </div>
     </div>

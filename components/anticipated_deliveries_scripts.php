@@ -1021,6 +1021,7 @@
             const hint = document.getElementById('editAllocationHint');
             const batchGroup = document.getElementById('editBatchGroup');
             const manufacturerControls = document.getElementById('editManufacturerControls');
+            const vendorAddressRow = document.getElementById('editVendorAddressRow');
             const batchSelect = document.getElementById('editLinkedBatchId');
 
             const vendorInput = document.getElementById('editVendorName');
@@ -1043,6 +1044,7 @@
             if (isProjectionOnly) {
                 if (batchGroup) batchGroup.style.display = 'none';
                 if (manufacturerControls) manufacturerControls.style.display = 'grid';
+                if (vendorAddressRow) vendorAddressRow.style.display = 'none';
                 if (hint) {
                     hint.style.display = 'flex';
                     hint.innerHTML = `
@@ -1062,6 +1064,7 @@
             } else {
                 if (batchGroup) batchGroup.style.display = 'block';
                 if (manufacturerControls) manufacturerControls.style.display = 'none';
+                if (vendorAddressRow) vendorAddressRow.style.display = 'grid';
                 if (hint) {
                     hint.style.display = 'flex';
                     hint.innerHTML = `
@@ -1197,9 +1200,11 @@
 
             const allocation = entry.allocation;
             const isProjectionOnly = document.getElementById('editAllocationIsProjectionOnly')?.value === '1';
+            const manufacturerSelect = document.getElementById('editManufacturerId');
+            const locationSelect = document.getElementById('editLocationId');
 
-            const vendorName = (document.getElementById('editVendorName')?.value || '').trim();
-            const manufacturerAddress = (document.getElementById('editManufacturerAddress')?.value || '').trim();
+            const vendorNameInputValue = (document.getElementById('editVendorName')?.value || '').trim();
+            const manufacturerAddressInputValue = (document.getElementById('editManufacturerAddress')?.value || '').trim();
             const wattage = parseInt(document.getElementById('editWattage')?.value, 10) || 0;
             const quantity = parseInt(document.getElementById('editQuantity')?.value, 10) || 0;
             const modulesPerPallet = parseInt(document.getElementById('editModulesPerPallet')?.value, 10) || 0;
@@ -1245,9 +1250,24 @@
                 allocation.is_projection_module = false;
                 allocation.is_manual = false;
             } else {
-                allocation.vendor_name = vendorName || 'Manual Entry';
+                const selectedManufacturerName = (manufacturerSelect && manufacturerSelect.value && manufacturerSelect.value !== 'add_new')
+                    ? (manufacturerSelect.options[manufacturerSelect.selectedIndex]?.text || '').trim()
+                    : '';
+                const selectedLocationAddress = (locationSelect && locationSelect.value)
+                    ? ((locationSelect.options[locationSelect.selectedIndex]?.dataset?.address
+                        || locationSelect.options[locationSelect.selectedIndex]?.text
+                        || '').trim())
+                    : '';
+
+                allocation.vendor_name = selectedManufacturerName
+                    || vendorNameInputValue
+                    || allocation.vendor_name
+                    || 'Manual Entry';
                 allocation.manufacturer_name = allocation.vendor_name;
-                allocation.manufacturer_address = manufacturerAddress;
+                allocation.manufacturer_address = selectedLocationAddress
+                    || manufacturerAddressInputValue
+                    || allocation.manufacturer_address
+                    || '';
                 allocation.modules_per_pallet = modulesPerPallet;
                 allocation.pallets_per_truck = palletsPerTruck;
                 allocation.cost_per_watt = costPerWatt;
