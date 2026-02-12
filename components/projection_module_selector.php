@@ -600,7 +600,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                 <select id="editLinkedBatchId" class="form-input" onchange="handleEditBatchChange()"></select>
             </div>
 
-            <div class="manual-form-grid">
+            <div class="manual-form-grid" id="editVendorAddressRow">
                 <div class="form-group">
                     <label class="form-label">Vendor / Manufacturer</label>
                     <input type="text" id="editVendorName" class="form-input" placeholder="Vendor name">
