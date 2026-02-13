@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Only allow admin, global_admin, and customer_admin roles for shipment creation
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
+// Allow users to view pallets; only admin/customer_admin/global_admin can create shipments.
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin', 'user'])) {
     header("Location: unauthorized.php");
     exit();
 }
@@ -43,10 +43,18 @@ if (!empty($_GET['pallet_ids'])) {
 $account_id_for_admin = null;
 $is_global_admin = ($role === 'global_admin');
 $is_customer_admin = ($role === 'customer_admin');
+$is_standard_user = ($role === 'user');
+$can_manage_shipments = in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
 
-if (in_array($role, ['admin', 'customer_admin'], true)) {
-    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
-    $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
+if (!$is_global_admin) {
+    if (in_array($role, ['admin', 'customer_admin'], true)) {
+        $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
+        $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
+    } else {
+        $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1";
+        $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
+    }
+
     if ($stmtAdminAcc) {
         $stmtAdminAcc->bind_param("i", $user_id);
         $stmtAdminAcc->execute();
@@ -54,11 +62,20 @@ if (in_array($role, ['admin', 'customer_admin'], true)) {
         $stmtAdminAcc->fetch();
         $stmtAdminAcc->close();
     }
+
+    if (!$account_id_for_admin) {
+        header("Location: unauthorized.php");
+        exit();
+    }
 }
 
 // --- Handle BOL Check Request ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check_bol') {
     header('Content-Type: application/json');
+    if (!$can_manage_shipments) {
+        echo json_encode(['exists' => false, 'error' => 'Unauthorized']);
+        exit();
+    }
     
     $bolNumber = trim($_POST['bol_number'] ?? '');
     $originType = $_POST['origin_type'] ?? '';
@@ -185,6 +202,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 $shipMessage = '';
 $createdDeliveryIds = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
+    if (!$can_manage_shipments) {
+        $_SESSION['create_shipment_message'] = 'You are not authorized to create shipments.';
+        $redirect_url = 'create_shipment.php';
+        if ($project_id_from_url > 0) { $redirect_url .= '?project_id=' . $project_id_from_url; }
+        header('Location: ' . $redirect_url);
+        exit();
+    }
     $conn->begin_transaction();
     try {
         // Get selected pallet IDs first
@@ -331,6 +355,13 @@ if (!empty($container_numbers_json)) {
 
 // --- Handle Pallet Deletion (admins/global_admins) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pallets') {
+    if (!$can_manage_shipments) {
+        $_SESSION['create_shipment_message'] = 'You are not authorized to delete pallets.';
+        $redirect_url = 'create_shipment.php';
+        if ($project_id_from_url > 0) { $redirect_url .= '?project_id=' . $project_id_from_url; }
+        header('Location: ' . $redirect_url);
+        exit();
+    }
     $deleteMessage = '';
     $conn->begin_transaction();
     try {
@@ -342,7 +373,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
         $types = str_repeat('i', count($palletIds));
 
-        // Ensure pallets are not linked to deliveries
+        // Ensure pallets are not linked downstream (deliveries/warranty)
         $stmtCheck = $conn->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
         if (!$stmtCheck) { throw new Exception('Failed to prepare delivery check.'); }
         $stmtCheck->bind_param($types, ...$palletIds);
@@ -351,8 +382,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $linked = [];
         while ($row = $res->fetch_assoc()) { $linked[] = $row['inventory_pallet_id']; }
         $stmtCheck->close();
+
+        $stmtCheckWarranty = $conn->prepare("SELECT pallet_id FROM warranty_claim_replacements WHERE pallet_id IN ($placeholders)");
+        if (!$stmtCheckWarranty) { throw new Exception('Failed to prepare warranty check.'); }
+        $stmtCheckWarranty->bind_param($types, ...$palletIds);
+        $stmtCheckWarranty->execute();
+        $resWarranty = $stmtCheckWarranty->get_result();
+        while ($row = $resWarranty->fetch_assoc()) { $linked[] = $row['pallet_id']; }
+        $stmtCheckWarranty->close();
+
         if (!empty($linked)) {
-            throw new Exception('Cannot delete pallets linked to deliveries. Pallet IDs: ' . implode(', ', $linked));
+            $linked = array_values(array_unique(array_map('intval', $linked)));
+            throw new Exception('Cannot delete pallets linked downstream (delivery/warranty). Pallet IDs: ' . implode(', ', $linked));
         }
 
         $stmtDel = $conn->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
@@ -965,7 +1006,7 @@ try {
     ];
     $status_placeholders = str_repeat('?,', count($allowed_statuses) - 1) . '?';
     
-    if ($role === 'admin' && $account_id_for_admin) {
+    if (!$is_global_admin && $account_id_for_admin) {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ?) AND ip.status IN ($status_placeholders)";
         if ($project_filter_sql) {
             $sql .= $project_filter_sql;
@@ -990,7 +1031,7 @@ try {
     $total_pallets_count = 0;
     $available_to_ship_count = 0;
 
-    if ($role === 'admin' && $account_id_for_admin) {
+    if (!$is_global_admin && $account_id_for_admin) {
         $stmt = $conn->prepare($sql);
         $params = array_merge([$account_id_for_admin, $account_id_for_admin], $allowed_statuses);
         $types = 'ii' . str_repeat('s', count($allowed_statuses));
@@ -1366,7 +1407,7 @@ if (!empty($bolCompletionMessage)) {
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
-            gap: 24px;
+            gap: 16px;
         }
 
         .header-left {
@@ -1406,32 +1447,258 @@ if (!empty($bolCompletionMessage)) {
             margin: 0;
         }
 
-        .header-stats {
+        .header-right-stats {
+            margin-left: auto;
             display: flex;
-            gap: 32px;
-            align-items: center;
+            align-items: flex-start;
+            justify-content: flex-end;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
-        .stat-item {
+        .header-stat-card {
+            background: #ffffff;
+            border: 1px solid rgba(72, 140, 154, 0.14);
+            border-radius: 14px;
+            padding: 10px 14px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+            min-width: 145px;
+            min-height: 96px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
             text-align: center;
-            min-width: 80px;
         }
 
-        .stat-number {
-            font-size: 2.2em;
-            font-weight: 700;
-            color: #293E4C;
-            margin: 0 0 4px 0;
-            line-height: 1;
-        }
-
-        .stat-label {
-            font-size: 0.85em;
-            color: #6c757d;
-            font-weight: 500;
-            margin: 0;
+        .header-stat-label {
+            margin: 0 0 6px 0;
+            color: #5b6b76;
+            font-size: 0.78rem;
+            font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.04em;
+        }
+
+        .header-stat-value {
+            margin: 0;
+            color: #1f2f3a;
+            font-size: 1.55rem;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+
+        .status-mix-card {
+            background: #ffffff;
+            border: 1px solid rgba(72, 140, 154, 0.14);
+            border-radius: 14px;
+            padding: 8px 10px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+            min-width: 255px;
+            max-width: 292px;
+            min-height: 96px;
+        }
+
+        .status-mix-trigger {
+            cursor: pointer;
+            text-align: left;
+            font-family: inherit;
+            color: inherit;
+            appearance: none;
+            -webkit-appearance: none;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .status-mix-trigger:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 22px rgba(72, 140, 154, 0.16);
+        }
+
+        .status-mix-trigger:focus-visible {
+            outline: 2px solid #1d4ed8;
+            outline-offset: 2px;
+        }
+
+        .status-mix-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+
+        .status-mix-title {
+            margin: 0;
+            color: #2d4554;
+            font-size: 0.88rem;
+            font-weight: 700;
+        }
+
+        .status-mix-subtitle {
+            color: #64748b;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+
+        .status-mix-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-mix-donut {
+            --donut-bg: #e2e8f0;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: var(--donut-bg);
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .status-mix-donut::after {
+            content: '';
+            position: absolute;
+            inset: 9px;
+            border-radius: 50%;
+            background: #fff;
+            box-shadow: inset 0 0 0 1px rgba(72, 140, 154, 0.14);
+        }
+
+        .status-mix-donut-center {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1f2f3a;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-align: center;
+            line-height: 1.1;
+        }
+
+        .status-mix-legend {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            width: 100%;
+            min-width: 0;
+        }
+
+        .status-mix-legend-item {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-label {
+            color: #334155;
+            font-size: 0.74rem;
+            font-weight: 600;
+            min-width: 0;
+        }
+
+        .status-value {
+            color: #64748b;
+            font-size: 0.72rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .status-mix-empty {
+            margin: 0;
+            color: #8a99a7;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .status-breakdown-modal-content {
+            max-width: 760px;
+            border-radius: 18px;
+            overflow: hidden;
+        }
+
+        .status-breakdown-modal-content .shipment-details-modal-content h2 {
+            padding: 18px 28px;
+            font-size: 1.35em;
+            background: linear-gradient(135deg, #4f90a0 0%, #3a6e7f 100%);
+        }
+
+        .status-breakdown-body {
+            padding: 18px 22px 20px;
+            background: linear-gradient(180deg, #f8fbfd 0%, #ffffff 100%);
+        }
+
+        .status-breakdown-summary {
+            margin: 0 0 14px 0;
+            color: #64748b;
+            font-size: 0.92em;
+            font-weight: 600;
+        }
+
+        .status-breakdown-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .status-breakdown-table th {
+            background: #e9f2f5;
+            color: #334155;
+            font-weight: 700;
+            font-size: 0.85em;
+            padding: 11px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .status-breakdown-table td {
+            padding: 11px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9em;
+        }
+
+        .status-breakdown-table tbody tr:nth-child(even) td {
+            background: #fbfdff;
+        }
+
+        .status-breakdown-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #334155;
+            font-weight: 600;
+        }
+
+        .status-breakdown-num {
+            text-align: right;
+            color: #1f2937;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .status-breakdown-pct {
+            text-align: right;
+            color: #64748b;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
         }
 
         @media (max-width: 768px) {
@@ -1442,37 +1709,37 @@ if (!empty($bolCompletionMessage)) {
 
             .header-content {
                 flex-direction: column;
-                text-align: center;
+                text-align: left;
                 gap: 20px;
             }
 
             .header-left {
-                flex-direction: column;
+                flex-direction: row;
                 gap: 16px;
-            }
-
-            .header-icon {
-                width: 60px;
-                height: 60px;
-                font-size: 24px;
             }
 
             .header-info h1 {
                 font-size: 2em;
             }
 
-            .header-stats {
-                gap: 20px;
-                flex-wrap: wrap;
-                justify-content: center;
+            .header-right-stats {
+                width: 100%;
+                margin-left: 0;
+                justify-content: flex-start;
             }
 
-            .stat-item {
-                min-width: 60px;
+            .header-stat-card,
+            .status-mix-card {
+                width: 100%;
+                max-width: none;
+                min-width: 0;
             }
+        }
 
-            .stat-number {
-                font-size: 1.8em;
+        @media (min-width: 769px) and (max-width: 1300px) {
+            .status-mix-card {
+                flex-basis: 100%;
+                max-width: none;
             }
         }
 
@@ -1504,12 +1771,33 @@ if (!empty($bolCompletionMessage)) {
         .filter-label { font-weight:600; color:#293E4C; font-size:.95em; margin-bottom:6px; }
         .filter-select, .filter-input { width:100%; padding: 10px 12px; border: 2px solid rgba(72,140,154,.15); border-radius:10px; background:#fff; font-size:.95em; box-sizing:border-box; }
         .deliveries-container { background: linear-gradient(135deg,#ffffff 0%, #f8f9fa 100%); border-radius:20px; overflow:hidden; box-shadow: 0 8px 32px rgba(0,0,0,.06); border:1px solid rgba(72,140,154,.08); margin-top: 12px; }
-        .table-header { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:white; padding: 16px 20px; display:flex; align-items:center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-        .table-title { font-size:1.2em; font-weight:600; margin:0; display:flex; align-items:center; gap:10px; color:white; }
-        .table-header-actions { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+                .table-header { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:white; padding: 16px 20px; display:flex; align-items:center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .table-header-main { display:flex; align-items:center; flex: 1 1 220px; min-width: 220px; }
+        .table-title { font-size:1.7em; font-weight:600; margin:0; display:flex; align-items:center; gap:10px; color:white; }
+        .table-header-admin { flex: 1 1 300px; min-width: 260px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:10px 12px; border-radius:14px; border:1px solid rgba(255,255,255,0.28); background: rgba(255,255,255,0.12); box-shadow: 0 8px 18px rgba(0,0,0,0.12); }
+        .admin-tools-title { margin: 0; font-size: 0.9em; font-weight: 600; color: rgba(255,255,255,0.95); text-align: center; }
+        .admin-tools-buttons { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
+        .table-header-actions { display:flex; gap:10px; align-items:center; flex-wrap: wrap; justify-content:flex-end; flex: 1 1 220px; min-width: 220px; }
+        @media (max-width: 768px) {
+            .table-header {
+                justify-content: center;
+            }
+            .table-header-main,
+            .table-header-admin,
+            .table-header-actions {
+                flex: 1 1 100%;
+                min-width: 0;
+                justify-content: center;
+            }
+            .table-header-admin {
+                padding: 10px;
+            }
+        }
         .action-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:10px; font-size:.85em; font-weight:600; text-decoration:none; border:none; cursor:pointer; white-space:nowrap; transition: all .2s ease; }
         .action-btn-primary { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color:white; box-shadow: 0 2px 8px rgba(16,185,129,.25); }
         .action-btn-primary:hover:not([disabled]) { background: linear-gradient(135deg, #059669 0%, #047857 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,185,129,.35); }
+        .action-btn-import { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color:white; box-shadow: 0 2px 8px rgba(37,99,235,.25); }
+        .action-btn-import:hover:not([disabled]) { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37,99,235,.35); }
         .action-btn-danger { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color:white; box-shadow: 0 2px 8px rgba(239,68,68,.25); }
         .action-btn-danger:hover:not([disabled]) { background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(239,68,68,.35); }
         .btn-export-header { background: rgba(255,255,255,.95); color:#16a34a; border:none; box-shadow: 0 2px 8px rgba(0,0,0,.15); cursor: pointer; padding:8px 14px; border-radius:10px; font-size:.85em; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition: all .2s ease; }
@@ -1954,47 +2242,34 @@ if (!empty($bolCompletionMessage)) {
             <div class="header-left">
                 <div class="header-info">
                     <h1>Manage Pallets</h1>
-                    <p class="header-subtitle">Manage pallets and create shipments</p>
+                    <p class="header-subtitle">View pallet inventory and shipment activity</p>
                 </div>
             </div>
-            <div class="header-stats">
-                <div class="stat-item">
-                    <p class="stat-number" id="totalPallets">0</p>
-                    <p class="stat-label">Total Pallets</p>
+            <div class="header-right-stats">
+                <div class="header-stat-card">
+                    <p class="header-stat-label">Total Pallets</p>
+                    <p class="header-stat-value" id="statTotalPallets">0</p>
                 </div>
-                <div class="stat-item">
-                    <p class="stat-number" id="selectedPallets">0</p>
-                    <p class="stat-label">Selected</p>
+                <div class="header-stat-card">
+                    <p class="header-stat-label">Ready to Ship</p>
+                    <p class="header-stat-value" id="statReadyToShip">0</p>
                 </div>
-                <div class="stat-item">
-                    <p class="stat-number" id="availablePallets">0</p>
-                    <p class="stat-label">Available to Ship</p>
-                </div>
+                <button type="button" class="status-mix-card status-mix-trigger" id="statusMixTrigger" aria-haspopup="dialog" aria-controls="statusBreakdownModal" title="View full status breakdown">
+                    <div class="status-mix-header">
+                        <p class="status-mix-title">Status Mix</p>
+                        <span class="status-mix-subtitle" id="statusMixSubtitle">0 pallets</span>
+                    </div>
+                    <div class="status-mix-content">
+                        <div class="status-mix-donut" id="statusMixDonut">
+                            <span class="status-mix-donut-center" id="statusMixDonutCenter">0</span>
+                        </div>
+                        <ul class="status-mix-legend" id="statusMixLegend">
+                            <li class="status-mix-empty">No status data</li>
+                        </ul>
+                    </div>
+                </button>
             </div>
         </div>
-    </div>
-
-    <!-- Shipment Creation Options -->
-    <div style="display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
-        <div style="flex: 1; min-width: 280px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 2px solid #488C9A; border-radius: 12px; padding: 20px; display: flex; align-items: center; gap: 16px;">
-            <div style="width: 48px; height: 48px; background: linear-gradient(135deg, #488C9A 0%, #3a7086 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-                <span style="font-size: 24px; filter: grayscale(1) brightness(10);">🚚</span>
-            </div>
-            <div style="flex: 1;">
-                <h3 style="margin: 0 0 4px 0; color: #293E4C; font-size: 1rem;">Manual Shipment</h3>
-                <p style="margin: 0; color: #6c757d; font-size: 0.85rem;">Select pallets below and click "Create Shipment" to create deliveries one at a time</p>
-            </div>
-        </div>
-        <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id='.$project_id_from_url : ''; ?>" style="flex: 1; min-width: 280px; background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 2px solid #0056b3; border-radius: 12px; padding: 20px; display: flex; align-items: center; gap: 16px; text-decoration: none; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(0,86,179,0.15)';" onmouseout="this.style.transform=''; this.style.boxShadow='';">
-            <div style="width: 48px; height: 48px; background: linear-gradient(135deg, #0056b3 0%, #004494 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-                <span style="font-size: 24px; filter: grayscale(1) brightness(10);">📥</span>
-            </div>
-            <div style="flex: 1;">
-                <h3 style="margin: 0 0 4px 0; color: #0056b3; font-size: 1rem;">Import Shipments</h3>
-                <p style="margin: 0; color: #6c757d; font-size: 0.85rem;">Upload a shipping schedule to create multiple shipments at once from a CSV or Excel file</p>
-            </div>
-            <span style="color: #0056b3; font-size: 1.2rem;">→</span>
-        </a>
     </div>
 
     <?php if (!empty($sessionMessage)): ?>
@@ -2058,14 +2333,14 @@ if (!empty($bolCompletionMessage)) {
                             <label class="filter-label" for="cs_status">Status</label>
                             <select id="cs_status" class="filter-select">
                                 <option value="">All Statuses</option>
-                                <?php $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); foreach ($available_statuses as $s) { echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>'; } ?>
+                                <?php $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); foreach ($available_statuses as $s) { if ($s === 'Allocated to Project') { continue; } echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>'; } ?>
                             </select>
                         </div>
                     </div>
                 </div>
 
                 <!-- Section Title (moved below filters) -->
-                <h2 class="section-title">Select Pallets to Create Shipment</h2>
+                <h2 class="section-title"><?php echo $can_manage_shipments ? 'Select Pallets to Create Shipment' : 'Pallet Inventory'; ?></h2>
 
                 <!-- Legacy controls (hidden) -->
                 <div class="filters-container" style="display:none; margin-bottom: 15px; justify-content: space-between; align-items: flex-start; gap: 20px;">
@@ -2113,6 +2388,7 @@ if (!empty($bolCompletionMessage)) {
                                         // Only show statuses that are available in current pallets (filtered by account if admin)
                                         $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
                                         foreach ($available_statuses as $s) {
+                                            if ($s === 'Allocated to Project') { continue; }
                                             echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
                                         }
                                         ?>
@@ -2124,7 +2400,7 @@ if (!empty($bolCompletionMessage)) {
                         
                     </div>
                     <div style="display: none; align-items: center; justify-content: center; flex: 1;">
-                        <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
+                        <span id="selectedCount_old" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
                     <div style="display: none; align-items: center; gap: 12px;">
                         <button type="button" id="deletePalletsBtn_old" class="action-button" style="background-color:#dc3545;" disabled>Delete</button>
@@ -2149,30 +2425,41 @@ if (!empty($bolCompletionMessage)) {
                 
                 <div class="deliveries-container">
                     <div class="table-header">
-                        <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
+                        <div class="table-header-main">
+                            <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
+                        </div>
+                        <?php if ($can_manage_shipments): ?>
+                        <div class="table-header-admin">
+                            <p class="admin-tools-title">Admin Tools: <span id="selectedCount">0 pallets selected</span></p>
+                            <div class="admin-tools-buttons">
+                                <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id=' . $project_id_from_url : ''; ?>" class="action-btn action-btn-import"><i class="fas fa-file-import"></i> Import Shipments</a>
+                                <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
+                                <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
+                            </div>
+                        </div>
+                        <?php endif; ?>
                         <div class="table-header-actions">
-                            <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
                             <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
-                            <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
                         </div>
                     </div>
                     <div class="table-responsive">
                         <table id="palletsTable">
                             <thead>
                                 <tr>
-                                    <th><input type="checkbox" id="selectAllPallets" disabled></th>
+                                    <?php if ($can_manage_shipments): ?><th><input type="checkbox" id="selectAllPallets" disabled></th><?php endif; ?>
+                                    <th>Project</th>
                                     <th>Identifier</th>
+                                    <th>Manufacturer</th>
                                     <th>Wattage</th>
                                     <th>Quantity</th>
                                     <th>Status</th>
-                                    <th>Project</th>
                                     <th>Deliveries</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="palletsTableBody">
                                 <tr>
-                                    <td colspan="8" style="text-align: center; padding: 40px;">
+                                    <td colspan="<?php echo $can_manage_shipments ? 9 : 8; ?>" style="text-align: center; padding: 40px;">
                                         <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
                                         <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
                                     </td>
@@ -2467,6 +2754,35 @@ if (!empty($bolCompletionMessage)) {
     </div>
 </div>
 
+<!-- Status Breakdown Modal -->
+<div id="statusBreakdownModal" class="modal" style="display: none;">
+    <div class="modal-content status-breakdown-modal-content">
+        <span class="close-modal-btn" id="closeStatusBreakdownModalBtn">&times;</span>
+        <div class="shipment-details-modal-content">
+            <h2 style="margin-top:0; text-align:center;">Pallet Status Breakdown</h2>
+            <div class="status-breakdown-body">
+                <p class="status-breakdown-summary" id="statusBreakdownSummary">0 filtered pallets</p>
+                <div class="table-responsive">
+                    <table class="status-breakdown-table">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th style="text-align:right;">Count</th>
+                                <th style="text-align:right;">Share</th>
+                            </tr>
+                        </thead>
+                        <tbody id="statusBreakdownTableBody">
+                            <tr>
+                                <td colspan="3" style="text-align:center; color:#64748b;">No status data</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Stats are now loaded via AJAX -->
 
 <!-- Embed PHP data as JS variables for populating dropdowns -->
@@ -2475,8 +2791,12 @@ if (!empty($bolCompletionMessage)) {
     const warehousesData = <?php echo json_encode($all_warehouses); ?>;
     const manufacturersData = <?php echo json_encode($all_manufacturers); ?>;
     const projectIdFromUrl = <?php echo (int)$project_id_from_url; ?>;
+    const canManageShipments = <?php echo $can_manage_shipments ? 'true' : 'false'; ?>;
+    const isStandardUser = <?php echo $is_standard_user ? 'true' : 'false'; ?>;
+    const tableColumnCount = canManageShipments ? 9 : 8;
     // Pallets are now loaded via AJAX
     let palletsData = [];
+    let currentStatusCounts = {};
     const palletsMap = new Map();
 </script>
 
@@ -2489,6 +2809,7 @@ let currentOverseasState = null; // Track current overseas state to prevent unne
 
 // ----------------- PALLET TABLE CHECKBOXES -----------------
 function toggleAllPalletCheckboxes(isChecked) {
+    if (!canManageShipments) return;
     document.querySelectorAll('.pallets-section table tbody tr').forEach(function(row) {
         if (row.style.display !== 'none') {
             const checkbox = row.querySelector('.pallet-checkbox');
@@ -2502,6 +2823,7 @@ function toggleAllPalletCheckboxes(isChecked) {
 }
 
 function updateOpenShipModalButtonState() {
+    if (!canManageShipments) return;
     const openBtn = document.getElementById('openShipModalBtn');
     const checked = document.querySelectorAll('.pallet-checkbox:checked').length;
     if (openBtn) {
@@ -2517,37 +2839,177 @@ function updateOpenShipModalButtonState() {
 }
 
 function updateSelectedCount() {
-    let count = document.querySelectorAll('.pallet-checkbox:checked').length;
+    if (!canManageShipments) return;
+    const count = document.querySelectorAll('.pallet-checkbox:checked').length;
     const countEl = document.getElementById('selectedCount');
     if (countEl) {
         countEl.textContent = count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
     }
     const delBtn = document.getElementById('deletePalletsBtn');
-    if (delBtn) { delBtn.disabled = (count === 0); }
-    
-    // Update header stats
-    updateHeaderStats();
+    if (delBtn) {
+        delBtn.disabled = (count === 0);
+    }
+}
+
+function statusColorFor(statusName) {
+    switch (statusName) {
+        case 'In Warehouse':
+            return '#0ea5e9';
+        case 'At Manufacturer':
+            return '#22c55e';
+        case 'In Transit to Warehouse':
+        case 'In Transit to Project':
+        case 'On Water':
+            return '#f59e0b';
+        case 'Delivered to Project':
+            return '#6366f1';
+        default:
+            return '#94a3b8';
+    }
+}
+
+function getStatusBreakdownRows() {
+    const allocatedToProjectCount = Number(currentStatusCounts['Allocated to Project'] || 0);
+    const orderedStatuses = [
+        'At Manufacturer',
+        'In Warehouse',
+        'In Transit to Warehouse',
+        'In Transit to Project',
+        'On Water',
+        'Delivered to Project'
+    ];
+
+    const rows = orderedStatuses.map((status) => ({
+        status,
+        count: Number(currentStatusCounts[status] || 0) + (status === 'In Warehouse' ? allocatedToProjectCount : 0)
+    }));
+
+    Object.keys(currentStatusCounts).forEach((status) => {
+        if (status === 'Allocated to Project') {
+            return;
+        }
+        if (!orderedStatuses.includes(status)) {
+            rows.push({ status, count: Number(currentStatusCounts[status] || 0) });
+        }
+    });
+
+    return rows;
+}
+
+function populateStatusBreakdownModal() {
+    const summaryEl = document.getElementById('statusBreakdownSummary');
+    const tbodyEl = document.getElementById('statusBreakdownTableBody');
+    if (!summaryEl || !tbodyEl) {
+        return;
+    }
+
+    const total = Number(totalPallets || 0);
+    const rows = getStatusBreakdownRows();
+    summaryEl.textContent = `${total.toLocaleString()} filtered pallet${total === 1 ? '' : 's'}`;
+
+    if (rows.every((row) => row.count === 0)) {
+        tbodyEl.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#64748b;">No status data</td></tr>';
+        return;
+    }
+
+    tbodyEl.innerHTML = rows.map((row) => {
+        const pct = total > 0 ? (row.count / total) * 100 : 0;
+        return `<tr>
+            <td>
+                <span class="status-breakdown-status">
+                    <span class="status-dot" style="background:${statusColorFor(row.status)};"></span>
+                    ${escapeHtml(row.status)}
+                </span>
+            </td>
+            <td class="status-breakdown-num">${row.count.toLocaleString()}</td>
+            <td class="status-breakdown-pct">${pct.toFixed(1)}%</td>
+        </tr>`;
+    }).join('');
+}
+
+function openStatusBreakdownModal() {
+    populateStatusBreakdownModal();
+    const modalEl = document.getElementById('statusBreakdownModal');
+    if (modalEl) {
+        modalEl.style.display = 'block';
+    }
+}
+
+function closeStatusBreakdownModal() {
+    const modalEl = document.getElementById('statusBreakdownModal');
+    if (modalEl) {
+        modalEl.style.display = 'none';
+    }
 }
 
 function updateHeaderStats() {
-    // Update selected pallets count
-    const selectedCount = document.querySelectorAll('.pallet-checkbox:checked').length;
-    const selectedPalletsEl = document.getElementById('selectedPallets');
-    if (selectedPalletsEl) {
-        selectedPalletsEl.textContent = selectedCount;
+    const totalEl = document.getElementById('statTotalPallets');
+    const readyEl = document.getElementById('statReadyToShip');
+    const triggerEl = document.getElementById('statusMixTrigger');
+    const subtitleEl = document.getElementById('statusMixSubtitle');
+    const donutEl = document.getElementById('statusMixDonut');
+    const donutCenterEl = document.getElementById('statusMixDonutCenter');
+    const legendEl = document.getElementById('statusMixLegend');
+
+    if (!totalEl || !readyEl || !triggerEl || !subtitleEl || !donutEl || !donutCenterEl || !legendEl) {
+        return;
     }
 
-    // Use totalPallets from AJAX response
-    const totalPalletsEl = document.getElementById('totalPallets');
-    const availablePalletsEl = document.getElementById('availablePallets');
+    const getStatusCount = (statusName) => Number(currentStatusCounts[statusName] || 0);
+    const total = Number(totalPallets || 0);
+    const allocatedToProject = getStatusCount('Allocated to Project');
+    const inWarehouse = getStatusCount('In Warehouse') + allocatedToProject;
+    const atManufacturer = getStatusCount('At Manufacturer');
+    const delivered = getStatusCount('Delivered to Project');
+    const inTransit = getStatusCount('In Transit to Warehouse') + getStatusCount('In Transit to Project') + getStatusCount('On Water');
+    const readyToShip = inWarehouse + atManufacturer + delivered;
+    const other = Math.max(0, total - (inWarehouse + atManufacturer + inTransit + delivered));
 
-    if (totalPalletsEl) totalPalletsEl.textContent = totalPallets;
-    if (availablePalletsEl) availablePalletsEl.textContent = totalPallets; // Will be updated with actual available count
+    totalEl.textContent = total.toLocaleString();
+    readyEl.textContent = readyToShip.toLocaleString();
+    subtitleEl.textContent = `${total.toLocaleString()} pallet${total === 1 ? '' : 's'}`;
+    donutCenterEl.textContent = total.toLocaleString();
+    triggerEl.setAttribute('aria-label', `Status mix for ${total.toLocaleString()} filtered pallets. Open full breakdown.`);
+
+    const segments = [
+        { label: 'In Warehouse', value: inWarehouse, color: '#0ea5e9' },
+        { label: 'At Manufacturer', value: atManufacturer, color: '#22c55e' },
+        { label: 'In Transit', value: inTransit, color: '#f59e0b' },
+        { label: 'Delivered', value: delivered, color: '#6366f1' },
+        { label: 'Other', value: other, color: '#94a3b8' }
+    ].filter((segment) => segment.value > 0);
+
+    if (total <= 0 || segments.length === 0) {
+        donutEl.style.setProperty('--donut-bg', '#e2e8f0');
+        legendEl.innerHTML = '<li class="status-mix-empty">No status data</li>';
+        return;
+    }
+
+    let running = 0;
+    const gradientStops = segments.map((segment) => {
+        const portion = (segment.value / total) * 100;
+        const start = running;
+        const end = running + portion;
+        running = end;
+        return `${segment.color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+    });
+    donutEl.style.setProperty('--donut-bg', `conic-gradient(${gradientStops.join(', ')})`);
+
+    legendEl.innerHTML = segments.map((segment) => {
+        const pct = Math.round((segment.value / total) * 100);
+        return `<li class="status-mix-legend-item">
+            <span class="status-dot" style="background:${segment.color};"></span>
+            <span class="status-label">${segment.label}</span>
+            <span class="status-value">${segment.value.toLocaleString()} (${pct}%)</span>
+        </li>`;
+    }).join('');
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     const selectAll = document.getElementById('selectAllPallets');
     const palletCheckboxes = document.querySelectorAll('.pallet-checkbox');
+    const statusMixTrigger = document.getElementById('statusMixTrigger');
+    const statusBreakdownModal = document.getElementById('statusBreakdownModal');
     if (selectAll) {
         // Enable once scripts are ready to avoid inline handler errors on huge pages
         selectAll.removeAttribute('disabled');
@@ -2584,6 +3046,18 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('cs_wattage')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
     document.getElementById('cs_status')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
     document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
+
+    if (statusMixTrigger) {
+        statusMixTrigger.addEventListener('click', openStatusBreakdownModal);
+    }
+    document.getElementById('closeStatusBreakdownModalBtn')?.addEventListener('click', closeStatusBreakdownModal);
+    if (statusBreakdownModal) {
+        statusBreakdownModal.addEventListener('click', function(event) {
+            if (event.target === statusBreakdownModal) {
+                closeStatusBreakdownModal();
+            }
+        });
+    }
 
     // Wire up Export and Delete controls
     initializeExportCsv();
@@ -2664,7 +3138,7 @@ async function loadPallets() {
     const tbody = document.getElementById('palletsTableBody');
     tbody.innerHTML = `
         <tr>
-            <td colspan="8" style="text-align: center; padding: 40px;">
+            <td colspan="${tableColumnCount}" style="text-align: center; padding: 40px;">
                 <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
                 <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
             </td>
@@ -2697,6 +3171,7 @@ async function loadPallets() {
         if (data.success) {
             totalPallets = data.totalCount;
             totalPages = data.totalPages;
+            currentStatusCounts = data.statusCounts || {};
 
             // Update palletsData and palletsMap for shipment creation
             palletsData = data.pallets;
@@ -2712,25 +3187,35 @@ async function loadPallets() {
             updatePaginationInfo();
             updateHeaderStats();
         } else {
+            totalPallets = 0;
+            totalPages = 0;
+            currentStatusCounts = {};
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" style="text-align: center; padding: 40px; color: #dc3545;">
+                    <td colspan="${tableColumnCount}" style="text-align: center; padding: 40px; color: #dc3545;">
                         <i class="fas fa-exclamation-circle" style="font-size: 24px;"></i>
                         <p style="margin-top: 10px;">Error loading pallets: ${data.message || 'Unknown error'}</p>
                     </td>
                 </tr>
             `;
+            updatePaginationInfo();
+            updateHeaderStats();
         }
     } catch (error) {
         console.error('Error loading pallets:', error);
+        totalPallets = 0;
+        totalPages = 0;
+        currentStatusCounts = {};
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align: center; padding: 40px; color: #dc3545;">
+                <td colspan="${tableColumnCount}" style="text-align: center; padding: 40px; color: #dc3545;">
                     <i class="fas fa-exclamation-circle" style="font-size: 24px;"></i>
                     <p style="margin-top: 10px;">Failed to load pallets. Please try again.</p>
                 </td>
             </tr>
         `;
+        updatePaginationInfo();
+        updateHeaderStats();
     } finally {
         isLoading = false;
     }
@@ -2738,9 +3223,9 @@ async function loadPallets() {
 
 function renderPalletsTable(pallets) {
     const tbody = document.getElementById('palletsTableBody');
+    if (!tbody) return;
 
     if (pallets.length === 0) {
-        // Check if a project filter is selected
         const projectFilter = document.getElementById('cs_project');
         const selectedProject = projectFilter ? projectFilter.value : '';
 
@@ -2749,7 +3234,7 @@ function renderPalletsTable(pallets) {
 
         if (selectedProject && selectedProject !== 'Unassigned') {
             emptyMessage = `No pallets available for project "${selectedProject}".`;
-            subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">Import pallets first using the Import Pallets feature, or assign existing pallets to this project.</p>';
+            subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">Import pallets first or adjust your filters.</p>';
         } else if (selectedProject === 'Unassigned') {
             emptyMessage = 'No unassigned pallets available.';
             subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">All pallets are currently assigned to projects.</p>';
@@ -2757,7 +3242,7 @@ function renderPalletsTable(pallets) {
 
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
+                <td colspan="${tableColumnCount}" style="text-align: center; padding: 40px; color: #666;">
                     <i class="fas fa-box-open" style="font-size: 24px;"></i>
                     <p style="margin-top: 10px;">${emptyMessage}</p>
                     ${subMessage}
@@ -2770,12 +3255,26 @@ function renderPalletsTable(pallets) {
     let html = '';
     pallets.forEach(pallet => {
         const status = pallet.status || '';
-        let statusHtml = status;
+        let statusHtml = escapeHtml(status);
 
         if (pallet.current_warehouse_id && status === 'In Transit to Warehouse') {
-            statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">${status}</a>`;
+            statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">${escapeHtml(status)}</a>`;
         } else if (pallet.current_warehouse_id && status === 'In Warehouse') {
-            statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">${status}</a>`;
+            if (isStandardUser) {
+                const backProjectParam = projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : '';
+                statusHtml = `<a href="warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}&from=manage_pallets${backProjectParam}" style="color: #488C9A; text-decoration: underline;">${escapeHtml(status)}</a>`;
+            } else {
+                statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">${escapeHtml(status)}</a>`;
+            }
+        }
+
+        let manufacturerName = pallet.origin_vendor_name || pallet.origin_vendor || 'N/A';
+        if (manufacturerName && manufacturerName.includes(' - ')) {
+            manufacturerName = manufacturerName.split(' - ')[0].trim();
+        }
+        const manufacturerLower = String(manufacturerName || '').toLowerCase();
+        if (manufacturerLower === 'phoenix wh' || manufacturerLower === 'phoenix warehouse') {
+            manufacturerName = 'Meyer Burger';
         }
 
         let deliveriesHtml = 'No deliveries';
@@ -2784,17 +3283,40 @@ function renderPalletsTable(pallets) {
             const deliveries = deliveryInfo.split('|');
             if (deliveries.length === 1) {
                 const parts = deliveries[0].split(':');
-                deliveriesHtml = `<a href="manage_deliveries.php?delivery_id=${parts[0]}&from=manage_pallets" style="color: #488C9A; text-decoration: underline;">${escapeHtml(parts[1] || 'No BOL')}</a>`;
+                const deliveryId = parts[0];
+                const bolNumber = parts[1] || 'No BOL';
+
+                if (isStandardUser) {
+                    const projectForLink = Number(pallet.current_project_id || pallet.assigned_project_id || 0);
+                    if (projectForLink > 0) {
+                        deliveriesHtml = `<a href="view_project.php?project_id=${projectForLink}&delivery_id=${deliveryId}" style="color: #488C9A; text-decoration: underline;">${escapeHtml(bolNumber)}</a>`;
+                    } else {
+                        deliveriesHtml = escapeHtml(bolNumber);
+                    }
+                } else {
+                    deliveriesHtml = `<a href="manage_deliveries.php?delivery_id=${deliveryId}" style="color: #488C9A; text-decoration: underline;">${escapeHtml(bolNumber)}</a>`;
+                }
             } else {
+                const items = deliveries.map(d => {
+                    const parts = d.split(':');
+                    const deliveryId = parts[0];
+                    const bolNumber = parts[1] || 'No BOL';
+
+                    if (isStandardUser) {
+                        const projectForLink = Number(pallet.current_project_id || pallet.assigned_project_id || 0);
+                        if (projectForLink > 0) {
+                            return `<a href="view_project.php?project_id=${projectForLink}&delivery_id=${deliveryId}" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor='#f5f5f5'" onmouseout="this.style.backgroundColor='white'">${escapeHtml(bolNumber)}</a>`;
+                        }
+                        return `<span style="display: block; padding: 8px 12px; color: #333; border-bottom: 1px solid #eee;">${escapeHtml(bolNumber)}</span>`;
+                    }
+
+                    return `<a href="manage_deliveries.php?delivery_id=${deliveryId}" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor='#f5f5f5'" onmouseout="this.style.backgroundColor='white'">${escapeHtml(bolNumber)}</a>`;
+                }).join('');
+
                 deliveriesHtml = `
                     <div class="delivery-dropdown">
                         <button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (${deliveries.length})</button>
-                        <div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
-                            ${deliveries.map(d => {
-                                const p = d.split(':');
-                                return `<a href="manage_deliveries.php?delivery_id=${p[0]}&from=manage_pallets" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor='#f5f5f5'" onmouseout="this.style.backgroundColor='white'">${escapeHtml(p[1] || 'No BOL')}</a>`;
-                            }).join('')}
-                        </div>
+                        <div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">${items}</div>
                     </div>
                 `;
             }
@@ -2802,43 +3324,49 @@ function renderPalletsTable(pallets) {
 
         const detailsUrl = `pallet_details.php?pallet_id=${pallet.pallet_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}`;
 
+        const checkboxHtml = canManageShipments
+            ? `<td><input type="checkbox" name="selected_pallets[]" value="${pallet.pallet_id}" class="pallet-checkbox" data-status="${escapeHtml(status)}"></td>`
+            : '';
+
+        const actionsHtml = `
+            <a href="${detailsUrl}" class="action-button">Pallet Details</a>
+            ${canManageShipments ? `<a href="edit_pallet.php?pallet_id=${pallet.pallet_id}" class="action-button" style="background-color:#f0ad4e;">Edit Pallet</a>` : ''}
+        `;
+
         html += `
             <tr data-id="${pallet.pallet_id}">
-                <td><input type="checkbox" name="selected_pallets[]" value="${pallet.pallet_id}" class="pallet-checkbox" data-status="${escapeHtml(status)}"></td>
-                <td>${escapeHtml(pallet.pallet_identifier || 'N/A')}</td>
-                <td>${pallet.wattage}W</td>
-                <td>${Number(pallet.quantity).toLocaleString()}</td>
-                <td>${statusHtml}</td>
+                ${checkboxHtml}
                 <td>${escapeHtml(pallet.display_project_name || 'Unassigned')}</td>
+                <td>${escapeHtml(pallet.pallet_identifier || 'N/A')}</td>
+                <td>${escapeHtml(manufacturerName || 'N/A')}</td>
+                <td>${escapeHtml(pallet.wattage || '')}</td>
+                <td>${Number(pallet.quantity || 0).toLocaleString()}</td>
+                <td>${statusHtml}</td>
                 <td>${deliveriesHtml}</td>
-                <td>
-                    <a href="${detailsUrl}" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
-                    <a href="edit_pallet.php?pallet_id=${pallet.pallet_id}" class="action-button" style="background-color: #6c757d; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em; margin-left:6px;">Edit</a>
-                </td>
+                <td>${actionsHtml}</td>
             </tr>
         `;
     });
 
     tbody.innerHTML = html;
 
-    // Re-attach checkbox event listeners
-    document.querySelectorAll('.pallet-checkbox').forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            updateOpenShipModalButtonState();
-            updateSelectedCount();
-            updateOriginDisplay();
-            updateMultiShipSummary();
+    if (canManageShipments) {
+        document.querySelectorAll('.pallet-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                updateOpenShipModalButtonState();
+                updateSelectedCount();
+                updateOriginDisplay();
+                updateMultiShipSummary();
+            });
         });
-    });
 
-    // Enable select all checkbox
-    const selectAll = document.getElementById('selectAllPallets');
-    if (selectAll) {
-        selectAll.disabled = false;
-        selectAll.checked = false;
+        const selectAll = document.getElementById('selectAllPallets');
+        if (selectAll) {
+            selectAll.disabled = false;
+            selectAll.checked = false;
+        }
     }
 }
-
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -2851,8 +3379,9 @@ function populateFilterDropdowns(options) {
     const projectSelect = document.getElementById('cs_project') || document.getElementById('projectFilter');
     if (projectSelect && options.projects) {
         const currentVal = projectSelect.value;
-        projectSelect.innerHTML = '<option value="">All Projects</option>';
+        projectSelect.innerHTML = '<option value="">All Projects</option><option value="Unassigned">Unassigned</option>';
         options.projects.forEach(p => {
+            if (p === 'Unassigned') return;
             projectSelect.innerHTML += `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`;
         });
         projectSelect.value = currentVal;
@@ -2875,6 +3404,7 @@ function populateFilterDropdowns(options) {
         const currentVal = statusSelect.value;
         statusSelect.innerHTML = '<option value="">All Statuses</option>';
         options.statuses.forEach(s => {
+            if (s === 'Allocated to Project') return;
             statusSelect.innerHTML += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
         });
         statusSelect.value = currentVal;
@@ -2982,30 +3512,35 @@ function clearFilterBar() {
 // ----------------- MODAL LOGIC -----------------
 const shipModal = document.getElementById('shipModal');
 const openShipModalBtn = document.getElementById('openShipModalBtn');
-const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
+const closeShipModalBtn = shipModal ? shipModal.querySelector('.close-modal-btn') : null;
 
 function selectionHasInvalidPallets() {
     const invalidMatch = /in transit|on water/i;
     const selected = document.querySelectorAll('.pallet-checkbox:checked');
+    const statusIndex = canManageShipments ? 6 : 5;
+
     for (const cb of selected) {
         const row = cb.closest('tr');
         if (!row) continue;
-        const statusCell = row.cells && row.cells[4]; // Status column
+
+        const statusCell = row.cells && row.cells[statusIndex];
         const statusText = (statusCell ? (statusCell.textContent || statusCell.innerText || '') : '').trim();
         if (invalidMatch.test(statusText)) {
             return true;
         }
     }
+
     return false;
 }
-
 function openShipModal() {
+    if (!shipModal) return;
     shipModal.style.display = 'block';
     // Initialize multi-shipment defaults and BOL fields when modal opens
     try { setDefaultPalletsPerTruckFromSelection(); } catch(e) {}
     updateMultiShipSummary();
 }
 function closeShipModal() {
+    if (!shipModal) return;
     shipModal.style.display = 'none';
 }
 
@@ -3017,7 +3552,9 @@ function handleOpenShipModalClick(e) {
     openShipModal();
 }
 
-openShipModalBtn.addEventListener('click', handleOpenShipModalClick);
+if (openShipModalBtn) {
+    openShipModalBtn.addEventListener('click', handleOpenShipModalClick);
+}
 if (closeShipModalBtn) {
     closeShipModalBtn.addEventListener('click', closeShipModal);
 }

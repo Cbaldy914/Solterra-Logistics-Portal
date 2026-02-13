@@ -16,6 +16,9 @@ if (!$conn) {
 
 // Legacy redirect: forward to new batch editor
 $legacy_batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
+if ($legacy_batch_id <= 0 && isset($_POST['batch_id'])) {
+    $legacy_batch_id = intval($_POST['batch_id']);
+}
 if ($legacy_batch_id > 0) {
     $pid = null;
     if ($stmt = $conn->prepare("SELECT project_id FROM modules WHERE id = ? LIMIT 1")) {

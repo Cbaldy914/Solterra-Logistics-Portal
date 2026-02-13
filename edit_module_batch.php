@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 
 require_once '../config.php';
 require_once 'milestone_helpers.php';
+require_once __DIR__ . '/module_reconciliation_audit_helpers.php';
 $conn = getDBConnection();
 if (!$conn) { die('Database connection failed.'); }
 
@@ -144,11 +145,723 @@ if ($stmtW = $conn->prepare('SELECT id, wattage, quantity, domestic_content_pct 
 
 $errors = [];
 
+/**
+ * Find pallets for the given module item IDs that are linked downstream
+ * (deliveries or warranty replacements) and therefore should not be deleted
+ * by a simple batch edit operation.
+ */
+function getLockedPalletsForItemIds($conn, $itemIds) {
+    $locked = [];
+    if (empty($itemIds) || !is_array($itemIds)) {
+        return $locked;
+    }
+
+    $itemIds = array_values(array_unique(array_map('intval', $itemIds)));
+    if (empty($itemIds)) {
+        return $locked;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+    $types = str_repeat('i', count($itemIds));
+    $sql = "
+        SELECT
+            ip.id,
+            MAX(CASE WHEN dp.inventory_pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_delivery_link,
+            MAX(CASE WHEN wcr.pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_warranty_link
+        FROM inventory_pallets ip
+        LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+        LEFT JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id
+        WHERE ip.unassigned_module_item_id IN ($placeholders)
+        GROUP BY ip.id
+        HAVING has_delivery_link = 1 OR has_warranty_link = 1
+    ";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        throw new Exception('Failed preparing locked pallet check: ' . $conn->error);
+    }
+    $stmt->bind_param($types, ...$itemIds);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $id = (int)($row['id'] ?? 0);
+        if ($id <= 0) { continue; }
+        $locked[] = [
+            'id' => $id,
+            'delivery' => !empty($row['has_delivery_link']),
+            'warranty' => !empty($row['has_warranty_link']),
+        ];
+    }
+    $stmt->close();
+
+    return $locked;
+}
+
+/**
+ * Normalize/validate posted wattage rows for both preview and save paths.
+ */
+function normalizeSubmittedModuleRows($posted_watts, $posted_qtys, $posted_domestic_pcts, $track_domestic_content, &$errors) {
+    $rows = [];
+
+    if (!is_array($posted_watts) || !is_array($posted_qtys) || count($posted_watts) !== count($posted_qtys)) {
+        $errors[] = 'Wattage and quantity arrays must match.';
+        return $rows;
+    }
+
+    $seenWattages = [];
+    for ($i = 0; $i < count($posted_watts); $i++) {
+        $w = (int)trim((string)$posted_watts[$i]);
+        $q = (int)trim((string)$posted_qtys[$i]);
+        if ($w <= 0 && $q <= 0) { continue; }
+
+        if ($w <= 0 || $q <= 0) {
+            $errors[] = 'All wattages and quantities must be positive integers.';
+            return [];
+        }
+        if (isset($seenWattages[$w])) {
+            $errors[] = 'Duplicate wattage entries are not allowed. Please keep only one row per wattage.';
+            return [];
+        }
+        $seenWattages[$w] = true;
+
+        $domesticContentPct = null;
+        if ($track_domestic_content) {
+            $pctRaw = trim((string)($posted_domestic_pcts[$i] ?? ''));
+            if ($pctRaw === '' || !is_numeric($pctRaw)) {
+                $errors[] = 'Domestic Content % is required and must be numeric when tracking is enabled.';
+                return [];
+            }
+            $domesticContentPct = (float)$pctRaw;
+            if ($domesticContentPct < 0 || $domesticContentPct > 100) {
+                $errors[] = 'Domestic Content % must be between 0 and 100.';
+                return [];
+            }
+        }
+
+        $rows[] = [
+            'wattage' => $w,
+            'quantity' => $q,
+            'domestic_content_pct' => $domesticContentPct
+        ];
+    }
+
+    if (empty($rows)) {
+        $errors[] = 'At least one wattage and quantity is required.';
+    }
+
+    return $rows;
+}
+
+function calculateDomesticMetricsFromRows($rows) {
+    $totalWatts = 0.0;
+    $trackedWatts = 0.0;
+    $weightedWatts = 0.0;
+
+    foreach ($rows as $row) {
+        $w = (float)($row['wattage'] ?? 0);
+        $q = (float)($row['quantity'] ?? 0);
+        $orderedWatts = $w * $q;
+        if ($orderedWatts <= 0) { continue; }
+
+        $totalWatts += $orderedWatts;
+        if (array_key_exists('domestic_content_pct', $row) && $row['domestic_content_pct'] !== null) {
+            $pct = (float)$row['domestic_content_pct'];
+            $trackedWatts += $orderedWatts;
+            $weightedWatts += ($orderedWatts * $pct);
+        }
+    }
+
+    return [
+        'tracked_watts' => $trackedWatts,
+        'total_watts' => $totalWatts,
+        'coverage_pct' => $totalWatts > 0 ? (($trackedWatts / $totalWatts) * 100) : 0.0,
+        'domestic_content_pct' => $trackedWatts > 0 ? ($weightedWatts / $trackedWatts) : null
+    ];
+}
+
+function normalizeReconciliationMode($modeRaw) {
+    $mode = trim((string)$modeRaw);
+    if (!in_array($mode, ['reassign_unlocked', 'rebuild_unlocked'], true)) {
+        return 'reassign_unlocked';
+    }
+    return $mode;
+}
+
+function getReconciliationModeLabel($modeRaw) {
+    $mode = normalizeReconciliationMode($modeRaw);
+    if ($mode === 'rebuild_unlocked') {
+        return 'Delete unlocked pallets and rebuild';
+    }
+    return 'Keep existing unlocked pallets';
+}
+
+function getReconciliationModeDescription($modeRaw) {
+    $mode = normalizeReconciliationMode($modeRaw);
+    if ($mode === 'rebuild_unlocked') {
+        return 'For reduced/removed wattages, all unlocked pallets are removed so you can repalletize cleanly.';
+    }
+    return 'For reduced/removed wattages, keep as many unlocked pallets as possible within the new quantities.';
+}
+
+function buildReconciliationSignature($batchId, $rows, $trackDomestic, $confirmDeletePallets, $reconciliationMode = 'reassign_unlocked') {
+    $normalized = [];
+    foreach ($rows as $row) {
+        $normalized[] = [
+            'wattage' => (int)$row['wattage'],
+            'quantity' => (int)$row['quantity'],
+            'domestic_content_pct' => $row['domestic_content_pct'] === null ? null : round((float)$row['domestic_content_pct'], 6),
+        ];
+    }
+    usort($normalized, function ($a, $b) {
+        return (int)$a['wattage'] <=> (int)$b['wattage'];
+    });
+
+    $payload = [
+        'batch_id' => (int)$batchId,
+        'track_domestic_content' => (bool)$trackDomestic,
+        'confirm_delete_pallets' => (bool)$confirmDeletePallets,
+        'reconciliation_mode' => normalizeReconciliationMode($reconciliationMode),
+        'rows' => $normalized
+    ];
+
+    return hash('sha256', json_encode($payload));
+}
+
+function planUnlockedPalletReconciliation($mode, $unlockedPallets, $targetUnlockedModulesToKeep) {
+    $mode = normalizeReconciliationMode($mode);
+    $target = max(0, (int)$targetUnlockedModulesToKeep);
+    $rows = is_array($unlockedPallets) ? $unlockedPallets : [];
+    usort($rows, function ($a, $b) {
+        return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
+    });
+
+    $result = [
+        'keep_ids' => [],
+        'delete_ids' => [],
+        'kept_modules' => 0,
+        'deleted_modules' => 0
+    ];
+
+    if ($mode === 'rebuild_unlocked') {
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            $qty = (int)($row['quantity'] ?? 0);
+            if ($id <= 0) { continue; }
+            $result['delete_ids'][] = $id;
+            $result['deleted_modules'] += $qty;
+        }
+        return $result;
+    }
+
+    foreach ($rows as $row) {
+        $id = (int)($row['id'] ?? 0);
+        $qty = (int)($row['quantity'] ?? 0);
+        if ($id <= 0) { continue; }
+        if ($qty <= 0) {
+            $result['delete_ids'][] = $id;
+            continue;
+        }
+
+        if (($result['kept_modules'] + $qty) <= $target) {
+            $result['keep_ids'][] = $id;
+            $result['kept_modules'] += $qty;
+        } else {
+            $result['delete_ids'][] = $id;
+            $result['deleted_modules'] += $qty;
+        }
+    }
+
+    return $result;
+}
+
+function getPalletImpactForItemIds($conn, $itemIds, $forUpdate = false) {
+    $impact = [
+        'by_item' => [],
+        'all_pallet_ids' => [],
+        'locked_pallet_ids' => []
+    ];
+
+    if (empty($itemIds) || !is_array($itemIds)) {
+        return $impact;
+    }
+
+    $itemIds = array_values(array_unique(array_map('intval', $itemIds)));
+    if (empty($itemIds)) {
+        return $impact;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+    $types = str_repeat('i', count($itemIds));
+    $sql = "
+        SELECT
+            ip.id,
+            ip.unassigned_module_item_id,
+            COALESCE(ip.quantity, 0) AS quantity,
+            MAX(CASE WHEN dp.inventory_pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_delivery_link,
+            MAX(CASE WHEN wcr.pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_warranty_link
+        FROM inventory_pallets ip
+        LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+        LEFT JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id
+        WHERE ip.unassigned_module_item_id IN ($placeholders)
+        GROUP BY ip.id, ip.unassigned_module_item_id, ip.quantity
+    " . ($forUpdate ? " FOR UPDATE" : "");
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        throw new Exception('Failed preparing pallet impact check: ' . $conn->error);
+    }
+    $stmt->bind_param($types, ...$itemIds);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $palletId = (int)($row['id'] ?? 0);
+        $itemId = (int)($row['unassigned_module_item_id'] ?? 0);
+        if ($palletId <= 0 || $itemId <= 0) { continue; }
+
+        if (!isset($impact['by_item'][$itemId])) {
+            $impact['by_item'][$itemId] = [
+                'count' => 0,
+                'modules' => 0,
+                'locked_modules' => 0,
+                'unlocked_count' => 0,
+                'unlocked_modules' => 0,
+                'unlocked_pallets' => [],
+                'locked_count' => 0,
+                'locked_ids' => [],
+                'pallet_ids' => []
+            ];
+        }
+
+        $qty = (int)($row['quantity'] ?? 0);
+        $hasDelivery = !empty($row['has_delivery_link']);
+        $hasWarranty = !empty($row['has_warranty_link']);
+        $isLocked = $hasDelivery || $hasWarranty;
+
+        $impact['by_item'][$itemId]['count'] += 1;
+        $impact['by_item'][$itemId]['modules'] += $qty;
+        $impact['by_item'][$itemId]['pallet_ids'][] = $palletId;
+        $impact['all_pallet_ids'][] = $palletId;
+
+        if ($isLocked) {
+            $impact['by_item'][$itemId]['locked_count'] += 1;
+            $impact['by_item'][$itemId]['locked_modules'] += $qty;
+            $impact['by_item'][$itemId]['locked_ids'][] = $palletId;
+            $impact['locked_pallet_ids'][] = $palletId;
+        } else {
+            $impact['by_item'][$itemId]['unlocked_count'] += 1;
+            $impact['by_item'][$itemId]['unlocked_modules'] += $qty;
+            $impact['by_item'][$itemId]['unlocked_pallets'][] = [
+                'id' => $palletId,
+                'quantity' => $qty
+            ];
+        }
+    }
+    $stmt->close();
+
+    $impact['all_pallet_ids'] = array_values(array_unique($impact['all_pallet_ids']));
+    $impact['locked_pallet_ids'] = array_values(array_unique($impact['locked_pallet_ids']));
+
+    return $impact;
+}
+
+function deleteInventoryPalletsByIds($conn, $palletIds) {
+    if (empty($palletIds) || !is_array($palletIds)) {
+        return 0;
+    }
+    $ids = array_values(array_unique(array_filter(array_map('intval', $palletIds), function ($v) {
+        return $v > 0;
+    })));
+    if (empty($ids)) {
+        return 0;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $types = str_repeat('i', count($ids));
+    $stmt = $conn->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
+    if (!$stmt) {
+        throw new Exception('Failed preparing pallet delete: ' . $conn->error);
+    }
+    $stmt->bind_param($types, ...$ids);
+    $stmt->execute();
+    $deleted = (int)$stmt->affected_rows;
+    $stmt->close();
+    return $deleted;
+}
+
+function syncProjectWattageOrdersCanonical($conn, $projectId) {
+    $projectId = (int)$projectId;
+    if ($projectId <= 0) {
+        return;
+    }
+
+    $totals = [];
+    $stmtTotals = $conn->prepare("
+        SELECT CAST(umi.wattage AS CHAR) AS wattage_key, SUM(umi.quantity) AS total_qty
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ? AND umi.wattage > 0 AND umi.quantity > 0
+        GROUP BY umi.wattage
+    ");
+    if (!$stmtTotals) {
+        throw new Exception('Failed preparing canonical totals query: ' . $conn->error);
+    }
+    $stmtTotals->bind_param('i', $projectId);
+    $stmtTotals->execute();
+    $resTotals = $stmtTotals->get_result();
+    while ($row = $resTotals->fetch_assoc()) {
+        $wattage = (string)($row['wattage_key'] ?? '');
+        $qty = (int)($row['total_qty'] ?? 0);
+        if ($wattage === '' || $qty <= 0) { continue; }
+        $totals[$wattage] = $qty;
+    }
+    $stmtTotals->close();
+
+    $stmtDelete = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?");
+    if (!$stmtDelete) {
+        throw new Exception('Failed preparing project_wattage_orders cleanup: ' . $conn->error);
+    }
+    $stmtDelete->bind_param('i', $projectId);
+    $stmtDelete->execute();
+    $stmtDelete->close();
+
+    if (!empty($totals)) {
+        $stmtInsert = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)");
+        if (!$stmtInsert) {
+            throw new Exception('Failed preparing project_wattage_orders insert: ' . $conn->error);
+        }
+        foreach ($totals as $wattage => $qty) {
+            $stmtInsert->bind_param('isi', $projectId, $wattage, $qty);
+            $stmtInsert->execute();
+        }
+        $stmtInsert->close();
+    }
+}
+
+function buildReconciliationPreview($conn, $batchId, $currentWattages, $newRows, $trackDomesticContent, $confirmDeletePallets, $projectSizeMw, $currentOrderedMw, $thisBatchMw, $reconciliationMode = 'reassign_unlocked') {
+    $reconciliationMode = normalizeReconciliationMode($reconciliationMode);
+    $reconciliationModeLabel = getReconciliationModeLabel($reconciliationMode);
+    $reconciliationModeDescription = getReconciliationModeDescription($reconciliationMode);
+    $existingByWattage = [];
+    $existingRowsForDomestic = [];
+    $itemIds = [];
+    foreach ($currentWattages as $row) {
+        $w = (int)($row['wattage'] ?? 0);
+        if ($w <= 0) { continue; }
+        $itemId = (int)($row['id'] ?? 0);
+        $itemIds[] = $itemId;
+        $existingByWattage[$w] = [
+            'id' => $itemId,
+            'wattage' => $w,
+            'quantity' => (int)($row['quantity'] ?? 0),
+            'domestic_content_pct' => (isset($row['domestic_content_pct']) && $row['domestic_content_pct'] !== null) ? (float)$row['domestic_content_pct'] : null,
+        ];
+        $existingRowsForDomestic[] = [
+            'wattage' => $w,
+            'quantity' => (int)($row['quantity'] ?? 0),
+            'domestic_content_pct' => (isset($row['domestic_content_pct']) && $row['domestic_content_pct'] !== null) ? (float)$row['domestic_content_pct'] : null,
+        ];
+    }
+
+    $newByWattage = [];
+    foreach ($newRows as $row) {
+        $w = (int)($row['wattage'] ?? 0);
+        if ($w <= 0) { continue; }
+        $newByWattage[$w] = [
+            'wattage' => $w,
+            'quantity' => (int)($row['quantity'] ?? 0),
+            'domestic_content_pct' => (isset($row['domestic_content_pct']) && $row['domestic_content_pct'] !== null) ? (float)$row['domestic_content_pct'] : null,
+        ];
+    }
+
+    $palletImpact = getPalletImpactForItemIds($conn, $itemIds);
+    foreach ($existingByWattage as $w => $existing) {
+        $itemId = (int)$existing['id'];
+        $agg = $palletImpact['by_item'][$itemId] ?? [
+            'count' => 0,
+            'modules' => 0,
+            'locked_count' => 0,
+            'locked_modules' => 0,
+            'unlocked_count' => 0,
+            'unlocked_modules' => 0,
+            'unlocked_pallets' => [],
+            'locked_ids' => [],
+            'pallet_ids' => []
+        ];
+        $existingByWattage[$w]['pallet_count'] = (int)$agg['count'];
+        $existingByWattage[$w]['pallet_modules'] = (int)$agg['modules'];
+        $existingByWattage[$w]['locked_pallet_count'] = (int)$agg['locked_count'];
+        $existingByWattage[$w]['locked_modules'] = (int)($agg['locked_modules'] ?? 0);
+        $existingByWattage[$w]['unlocked_pallet_count'] = (int)($agg['unlocked_count'] ?? 0);
+        $existingByWattage[$w]['unlocked_modules'] = (int)($agg['unlocked_modules'] ?? 0);
+        $existingByWattage[$w]['unlocked_pallets'] = $agg['unlocked_pallets'] ?? [];
+        $existingByWattage[$w]['locked_pallet_ids'] = array_values(array_unique(array_map('intval', $agg['locked_ids'] ?? [])));
+        $existingByWattage[$w]['pallet_ids'] = array_values(array_unique(array_map('intval', $agg['pallet_ids'] ?? [])));
+    }
+
+    $allWattages = array_values(array_unique(array_merge(array_keys($existingByWattage), array_keys($newByWattage))));
+    sort($allWattages, SORT_NUMERIC);
+
+    $changes = [];
+    $allocationByWattage = [];
+    $affectedPallets = [];
+    $warnings = [];
+    $blockers = [];
+    $blockedLinkedIds = [];
+    $changedCount = 0;
+
+    $currentTotalModules = 0;
+    $newTotalModules = 0;
+    $currentTotalWatts = 0.0;
+    $newTotalWatts = 0.0;
+
+    foreach ($allWattages as $wattage) {
+        $existing = $existingByWattage[$wattage] ?? null;
+        $proposed = $newByWattage[$wattage] ?? null;
+
+        $currentQty = (int)($existing['quantity'] ?? 0);
+        $newQty = (int)($proposed['quantity'] ?? 0);
+        $delta = $newQty - $currentQty;
+        $currentTotalModules += $currentQty;
+        $newTotalModules += $newQty;
+        $currentTotalWatts += ((float)$wattage * (float)$currentQty);
+        $newTotalWatts += ((float)$wattage * (float)$newQty);
+
+        $currentDomestic = $existing['domestic_content_pct'] ?? null;
+        $newDomestic = $proposed['domestic_content_pct'] ?? null;
+        $domesticChanged = (($currentDomestic === null) xor ($newDomestic === null))
+            || ($currentDomestic !== null && $newDomestic !== null && abs((float)$currentDomestic - (float)$newDomestic) > 0.0001);
+
+        $palletCount = (int)($existing['pallet_count'] ?? 0);
+        $palletModules = (int)($existing['pallet_modules'] ?? 0);
+        $lockedPalletCount = (int)($existing['locked_pallet_count'] ?? 0);
+        $lockedModules = (int)($existing['locked_modules'] ?? 0);
+        $unlockedPalletCount = (int)($existing['unlocked_pallet_count'] ?? 0);
+        $unlockedModules = (int)($existing['unlocked_modules'] ?? 0);
+        $unlockedPallets = is_array($existing['unlocked_pallets'] ?? null) ? $existing['unlocked_pallets'] : [];
+        $lockedPalletIds = $existing['locked_pallet_ids'] ?? [];
+        $palletIds = $existing['pallet_ids'] ?? [];
+
+        $action = 'unchanged';
+        if ($existing === null && $proposed !== null) {
+            $action = 'add';
+        } elseif ($existing !== null && $proposed === null) {
+            $action = 'remove';
+        } elseif ($delta !== 0 || $domesticChanged) {
+            $action = 'update';
+        }
+
+        $isChanged = ($action !== 'unchanged');
+        if ($isChanged) {
+            $changedCount++;
+            if ($palletCount > 0) {
+                $affectedPallets[] = [
+                    'wattage' => $wattage,
+                    'pallet_count' => $palletCount,
+                    'pallet_modules' => $palletModules,
+                    'locked_pallet_count' => $lockedPalletCount,
+                    'pallet_ids_sample' => array_slice($palletIds, 0, 10),
+                    'locked_pallet_ids_sample' => array_slice($lockedPalletIds, 0, 10)
+                ];
+            }
+            $blockedLinkedIds = array_merge($blockedLinkedIds, $lockedPalletIds);
+        }
+
+        $quantityReduced = ($existing !== null && $newQty < $currentQty);
+        $reconcilePlan = ['keep_ids' => [], 'delete_ids' => [], 'kept_modules' => 0, 'deleted_modules' => 0];
+        if ($action === 'remove') {
+            $reconcilePlan = planUnlockedPalletReconciliation($reconciliationMode, $unlockedPallets, 0);
+        } elseif ($quantityReduced) {
+            $targetUnlockedToKeep = max(0, $newQty - $lockedModules);
+            $reconcilePlan = planUnlockedPalletReconciliation($reconciliationMode, $unlockedPallets, $targetUnlockedToKeep);
+        } else {
+            $reconcilePlan['keep_ids'] = array_values(array_map(function ($p) { return (int)($p['id'] ?? 0); }, $unlockedPallets));
+            $reconcilePlan['kept_modules'] = $unlockedModules;
+        }
+
+        $projectedPalletizedModules = ($action === 'remove')
+            ? 0
+            : ($lockedModules + (int)$reconcilePlan['kept_modules']);
+        $overAllocatedModules = max(0, $projectedPalletizedModules - $newQty);
+        $remainingToPalletize = max(0, $newQty - $projectedPalletizedModules);
+        $requiresDeleteConfirmation = ($action === 'remove' && $palletCount > 0 && !$confirmDeletePallets);
+
+        if ($existing !== null && $newQty < $lockedModules) {
+            $blockers[] = "{$wattage}W cannot be reduced to {$newQty}; {$lockedModules} modules are locked downstream.";
+        }
+        if ($action === 'remove' && $confirmDeletePallets && $lockedPalletCount > 0) {
+            $blockers[] = "{$wattage}W cannot be removed; {$lockedPalletCount} pallet(s) are linked downstream.";
+        }
+        if ($action === 'remove' && $requiresDeleteConfirmation) {
+            $warnings[] = "{$wattage}W removal will delete {$palletCount} pallet(s) and {$palletModules} modules after confirmation.";
+        } elseif ($action === 'remove' && $confirmDeletePallets && $palletCount > 0 && $lockedPalletCount === 0) {
+            $warnings[] = "{$wattage}W removal will delete {$palletCount} unlocked pallet(s).";
+        } elseif ($quantityReduced && (int)$reconcilePlan['deleted_modules'] > 0) {
+            $warnings[] = "{$wattage}W quantity reduction using \"{$reconciliationModeLabel}\" will remove {$reconcilePlan['deleted_modules']} module(s) across " . count($reconcilePlan['delete_ids']) . " unlocked pallet(s).";
+        }
+        if ($action === 'add' && $newQty > 0) {
+            $warnings[] = "{$wattage}W adds {$newQty} modules that will need palletization.";
+        }
+        if ($action === 'update' && $remainingToPalletize > 0) {
+            $warnings[] = "{$wattage}W will have {$remainingToPalletize} module(s) still needing palletization.";
+        }
+
+        $changes[] = [
+            'wattage' => $wattage,
+            'action' => $action,
+            'current_quantity' => $currentQty,
+            'new_quantity' => $newQty,
+            'delta_quantity' => $delta,
+            'current_domestic_content_pct' => $currentDomestic,
+            'new_domestic_content_pct' => $newDomestic,
+            'domestic_changed' => $domesticChanged,
+            'pallet_count' => $palletCount,
+            'pallet_modules' => $palletModules,
+            'locked_pallet_count' => $lockedPalletCount,
+            'locked_modules' => $lockedModules,
+            'unlocked_pallet_count' => $unlockedPalletCount,
+            'unlocked_modules' => $unlockedModules,
+            'projected_palletized_modules' => $projectedPalletizedModules,
+            'reconciliation_delete_pallet_count' => count($reconcilePlan['delete_ids']),
+            'reconciliation_delete_modules' => (int)$reconcilePlan['deleted_modules'],
+            'requires_delete_confirmation' => $requiresDeleteConfirmation
+        ];
+
+        $allocationByWattage[] = [
+            'wattage' => $wattage,
+            'ordered_current' => $currentQty,
+            'ordered_new' => $newQty,
+            'palletized_modules_current' => $palletModules,
+            'palletized_modules_projected' => $projectedPalletizedModules,
+            'over_allocated_modules' => $overAllocatedModules,
+            'remaining_to_palletize' => $remainingToPalletize
+        ];
+    }
+
+    $blockedLinkedIds = array_values(array_unique(array_map('intval', $blockedLinkedIds)));
+    $warnings = array_values(array_unique($warnings));
+    $blockers = array_values(array_unique($blockers));
+
+    $currentDomestic = calculateDomesticMetricsFromRows($existingRowsForDomestic);
+    $newDomestic = calculateDomesticMetricsFromRows($newRows);
+
+    $currentBatchMw = $currentTotalWatts / 1000000;
+    $newBatchMw = $newTotalWatts / 1000000;
+
+    $projectImpact = null;
+    if ((float)$projectSizeMw > 0) {
+        $afterProjectTotalMw = ((float)$currentOrderedMw - (float)$thisBatchMw + (float)$newBatchMw);
+        $projectImpact = [
+            'project_size_mw' => (float)$projectSizeMw,
+            'current_total_mw' => (float)$currentOrderedMw,
+            'current_batch_mw' => (float)$thisBatchMw,
+            'new_batch_mw' => (float)$newBatchMw,
+            'after_total_mw' => (float)$afterProjectTotalMw,
+            'is_over_capacity' => ((float)$afterProjectTotalMw > (float)$projectSizeMw),
+            'over_by_mw' => max(0, ((float)$afterProjectTotalMw - (float)$projectSizeMw))
+        ];
+    }
+
+    return [
+        'signature' => buildReconciliationSignature($batchId, $newRows, $trackDomesticContent, $confirmDeletePallets, $reconciliationMode),
+        'reconciliation_mode' => $reconciliationMode,
+        'reconciliation_mode_label' => $reconciliationModeLabel,
+        'reconciliation_mode_description' => $reconciliationModeDescription,
+        'can_apply' => empty($blockers),
+        'changed_count' => $changedCount,
+        'summary' => [
+            'current_total_modules' => $currentTotalModules,
+            'new_total_modules' => $newTotalModules,
+            'delta_modules' => ($newTotalModules - $currentTotalModules),
+            'current_batch_mw' => $currentBatchMw,
+            'new_batch_mw' => $newBatchMw,
+            'delta_batch_mw' => ($newBatchMw - $currentBatchMw)
+        ],
+        'changes' => $changes,
+        'allocation' => $allocationByWattage,
+        'affected_pallets' => [
+            'count' => array_sum(array_map(function ($a) { return (int)$a['pallet_count']; }, $affectedPallets)),
+            'modules' => array_sum(array_map(function ($a) { return (int)$a['pallet_modules']; }, $affectedPallets)),
+            'wattages' => $affectedPallets
+        ],
+        'blocked_linked_pallets' => [
+            'count' => count($blockedLinkedIds),
+            'ids_sample' => array_slice($blockedLinkedIds, 0, 20)
+        ],
+        'domestic_impact' => [
+            'before' => $currentDomestic,
+            'after' => $newDomestic
+        ],
+        'project_impact' => $projectImpact,
+        'warnings' => $warnings,
+        'blockers' => $blockers
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Dry-run impact preview (Phase 2)
+    if (isset($_POST['action']) && $_POST['action'] === 'preview_reconciliation') {
+        $previewErrors = [];
+        $posted_watts = $_POST['wattages'] ?? [];
+        $posted_qtys = $_POST['quantities'] ?? [];
+        $posted_domestic_pcts = $_POST['domestic_content_pcts'] ?? [];
+        $track_domestic_content = !empty($_POST['track_domestic_content']);
+        $confirm_delete_pallets = isset($_POST['confirm_delete_pallets']) && $_POST['confirm_delete_pallets'] === 'yes';
+        $reconciliation_mode = normalizeReconciliationMode($_POST['reconciliation_mode'] ?? 'reassign_unlocked');
+
+        $new_rows = normalizeSubmittedModuleRows(
+            $posted_watts,
+            $posted_qtys,
+            $posted_domestic_pcts,
+            $track_domestic_content,
+            $previewErrors
+        );
+
+        header('Content-Type: application/json');
+        if (!empty($previewErrors)) {
+            echo json_encode([
+                'success' => false,
+                'message' => implode(' ', array_map('strval', $previewErrors)),
+                'errors' => $previewErrors
+            ]);
+            $conn->close();
+            exit();
+        }
+
+        try {
+            $preview = buildReconciliationPreview(
+                $conn,
+                $batch_id,
+                $current_wattages,
+                $new_rows,
+                $track_domestic_content,
+                $confirm_delete_pallets,
+                $project_size_mw,
+                $current_ordered_mw,
+                $this_batch_mw,
+                $reconciliation_mode
+            );
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'Impact preview generated.',
+                'preview' => $preview
+            ]);
+        } catch (Exception $previewEx) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Failed to generate preview: ' . $previewEx->getMessage()
+            ]);
+        }
+        $conn->close();
+        exit();
+    }
+
     // Handle delete action
     if (isset($_POST['action']) && $_POST['action'] === 'delete') {
         try {
             $conn->begin_transaction();
+            $auditMetaBeforeDelete = mr_get_module_batch_meta($conn, $batch_id);
+            $auditRowsBeforeDelete = mr_get_module_batch_rows($conn, $batch_id);
 
             // Get all unassigned_module_items for this batch to delete related pallets
             $stmtGetItems = $conn->prepare("SELECT id FROM unassigned_module_items WHERE unassigned_module_id = ?");
@@ -163,44 +876,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Delete inventory_pallets associated with these items
             if (!empty($itemIds)) {
+                $lockedPallets = getLockedPalletsForItemIds($conn, $itemIds);
+                if (!empty($lockedPallets)) {
+                    $lockedSummary = [];
+                    foreach ($lockedPallets as $lp) {
+                        $flags = [];
+                        if (!empty($lp['delivery'])) { $flags[] = 'delivery'; }
+                        if (!empty($lp['warranty'])) { $flags[] = 'warranty'; }
+                        $lockedSummary[] = 'P' . $lp['id'] . ' (' . implode('/', $flags) . ')';
+                    }
+                    throw new Exception(
+                        'Cannot delete batch because some pallets are linked downstream: ' .
+                        implode(', ', $lockedSummary) .
+                        '. Remove downstream links first.'
+                    );
+                }
+
                 $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
                 $stmtDelPallets = $conn->prepare("DELETE FROM inventory_pallets WHERE unassigned_module_item_id IN ($placeholders)");
                 $types = str_repeat('i', count($itemIds));
                 $stmtDelPallets->bind_param($types, ...$itemIds);
                 $stmtDelPallets->execute();
                 $stmtDelPallets->close();
-            }
-
-            // Update project_wattage_orders if assigned to a project
-            if ($project_id > 0) {
-                foreach ($current_wattages as $wattage_row) {
-                    $w = (int)$wattage_row['wattage'];
-                    $q = (int)$wattage_row['quantity'];
-                    $wStr = (string)$w;
-
-                    // Decrease the project wattage order
-                    $stmtGetOrder = $conn->prepare("SELECT id, total_order FROM project_wattage_orders WHERE project_id = ? AND wattage = ? LIMIT 1");
-                    $stmtGetOrder->bind_param("is", $project_id, $wStr);
-                    $stmtGetOrder->execute();
-                    $stmtGetOrder->bind_result($orderId, $totalOrder);
-                    if ($stmtGetOrder->fetch()) {
-                        $stmtGetOrder->close();
-                        $newTotal = max(0, (int)$totalOrder - $q);
-                        if ($newTotal > 0) {
-                            $stmtUpdateOrder = $conn->prepare("UPDATE project_wattage_orders SET total_order = ? WHERE id = ?");
-                            $stmtUpdateOrder->bind_param("ii", $newTotal, $orderId);
-                            $stmtUpdateOrder->execute();
-                            $stmtUpdateOrder->close();
-                        } else {
-                            $stmtDeleteOrder = $conn->prepare("DELETE FROM project_wattage_orders WHERE id = ?");
-                            $stmtDeleteOrder->bind_param("i", $orderId);
-                            $stmtDeleteOrder->execute();
-                            $stmtDeleteOrder->close();
-                        }
-                    } else {
-                        $stmtGetOrder->close();
-                    }
-                }
             }
 
             // Delete unassigned_module_items
@@ -214,6 +911,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtDelModule->bind_param("i", $batch_id);
             $stmtDelModule->execute();
             $stmtDelModule->close();
+
+            if ($project_id > 0) {
+                syncProjectWattageOrdersCanonical($conn, $project_id);
+            }
+
+            mr_insert_reconciliation_audit($conn, [
+                'module_batch_id' => $batch_id,
+                'project_id' => (int)($auditMetaBeforeDelete['project_id'] ?? 0),
+                'account_id' => (int)($auditMetaBeforeDelete['account_id'] ?? 0),
+                'action_type' => 'batch_delete',
+                'reason' => 'Batch deleted from edit_module_batch.php',
+                'reconciliation_mode' => 'n/a',
+                'preview_signature' => '',
+                'actor_user_id' => (int)$user_id,
+                'actor_role' => (string)$role,
+                'source_page' => 'edit_module_batch.php',
+                'before_state' => [
+                    'module' => $auditMetaBeforeDelete,
+                    'rows' => $auditRowsBeforeDelete
+                ],
+                'after_state' => null,
+                'impact' => [
+                    'confirm_delete_pallets' => true
+                ]
+            ]);
 
             $conn->commit();
 
@@ -280,6 +1002,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $posted_qtys = $_POST['quantities'] ?? [];
     $posted_domestic_pcts = $_POST['domestic_content_pcts'] ?? [];
     $track_domestic_content = !empty($_POST['track_domestic_content']);
+    $reconciliation_mode = normalizeReconciliationMode($_POST['reconciliation_mode'] ?? 'reassign_unlocked');
     $posted_milestones = $_POST['milestones'] ?? [];
 
     if (milestone_requires_po_execution_date($posted_milestones) && empty($po_execution_date)) {
@@ -308,43 +1031,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($initial_location === '') { $initial_location = 'Unassigned'; }
 
     // Validate wattages
-    $new_rows = [];
-    if (!is_array($posted_watts) || !is_array($posted_qtys) || count($posted_watts) !== count($posted_qtys)) {
-        $errors[] = 'Wattage and quantity arrays must match.';
-    } else {
-        for ($i=0; $i<count($posted_watts); $i++) {
-            $w = (int)trim((string)$posted_watts[$i]);
-            $q = (int)trim((string)$posted_qtys[$i]);
-            if ($w <= 0 && $q <= 0) { continue; }
-            if ($w <= 0 || $q <= 0) { $errors[] = 'All wattages and quantities must be positive integers.'; break; }
-            $domesticContentPct = null;
-            if ($track_domestic_content) {
-                $pctRaw = trim((string)($posted_domestic_pcts[$i] ?? ''));
-                if ($pctRaw === '' || !is_numeric($pctRaw)) {
-                    $errors[] = 'Domestic Content % is required and must be numeric when tracking is enabled.';
-                    break;
-                }
-                $domesticContentPct = (float)$pctRaw;
-                if ($domesticContentPct < 0 || $domesticContentPct > 100) {
-                    $errors[] = 'Domestic Content % must be between 0 and 100.';
+    $new_rows = normalizeSubmittedModuleRows(
+        $posted_watts,
+        $posted_qtys,
+        $posted_domestic_pcts,
+        $track_domestic_content,
+        $errors
+    );
+
+    // Guardrail: do not allow reducing ordered quantity below locked palletized modules.
+    if (empty($errors) && !empty($new_rows)) {
+        $itemIdsForImpact = [];
+        foreach ($current_wattages as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) { $itemIdsForImpact[] = $id; }
+        }
+        $impactByItem = getPalletImpactForItemIds($conn, $itemIdsForImpact);
+
+        $existingByWattage = [];
+        foreach ($current_wattages as $row) {
+            $itemId = (int)($row['id'] ?? 0);
+            $agg = $impactByItem['by_item'][$itemId] ?? [];
+            $row['locked_modules'] = (int)($agg['locked_modules'] ?? 0);
+            $existingByWattage[(int)$row['wattage']] = $row;
+        }
+        foreach ($new_rows as $row) {
+            $w = (int)$row['wattage'];
+            $q = (int)$row['quantity'];
+            if (isset($existingByWattage[$w])) {
+                $lockedModules = (int)($existingByWattage[$w]['locked_modules'] ?? 0);
+                if ($q < $lockedModules) {
+                    $errors[] = "Cannot set {$w}W quantity to {$q}: {$lockedModules} modules are locked downstream.";
                     break;
                 }
             }
-            $new_rows[] = ['wattage' => $w, 'quantity' => $q, 'domestic_content_pct' => $domesticContentPct];
         }
-        if (empty($errors) && empty($new_rows)) { $errors[] = 'At least one wattage and quantity is required.'; }
+    }
+
+    $confirm_delete_pallets = isset($_POST['confirm_delete_pallets']) && $_POST['confirm_delete_pallets'] === 'yes';
+
+    // Require client-side preview confirmation for structural edits.
+    if (empty($errors)) {
+        $previewConfirmed = isset($_POST['preview_confirmed']) && $_POST['preview_confirmed'] === 'yes';
+        $postedPreviewSignature = trim((string)($_POST['preview_signature'] ?? ''));
+        $expectedPreviewSignature = buildReconciliationSignature($batch_id, $new_rows, $track_domestic_content, $confirm_delete_pallets, $reconciliation_mode);
+
+        if (!$previewConfirmed || $postedPreviewSignature === '' || !hash_equals($expectedPreviewSignature, $postedPreviewSignature)) {
+            $errors[] = 'Please review and confirm the reconciliation impact preview before saving.';
+        }
     }
 
     if (empty($errors)) {
         try {
             $conn->begin_transaction();
-
-            // Current totals by wattage
-            $current_totals = [];
-            foreach ($current_wattages as $row) {
-                $w = (int)$row['wattage'];
-                $current_totals[$w] = ($current_totals[$w] ?? 0) + (int)$row['quantity'];
-            }
+            $auditMetaBeforeSave = mr_get_module_batch_meta($conn, $batch_id);
+            $auditRowsBeforeSave = mr_get_module_batch_rows($conn, $batch_id);
+            $auditBeforeFingerprint = mr_module_rows_fingerprint($auditRowsBeforeSave);
 
             // Update modules
             $stmtU = $conn->prepare('UPDATE modules SET batch_name=?, vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, cost_per_watt=?, po_execution_date=?, last_updated_at=NOW() WHERE id=?');
@@ -358,18 +1100,126 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$stmtU->execute()) { throw new Exception('Failed updating module: '.$stmtU->error); }
             $stmtU->close();
 
+            // Lock current module items for this batch to avoid concurrent structural edits.
+            $current_items_tx = [];
+            $stmtLockItems = $conn->prepare('SELECT id, wattage, quantity, domestic_content_pct FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC FOR UPDATE');
+            if (!$stmtLockItems) { throw new Exception('Failed locking module items: ' . $conn->error); }
+            $stmtLockItems->bind_param('i', $batch_id);
+            $stmtLockItems->execute();
+            $resLockItems = $stmtLockItems->get_result();
+            while ($row = $resLockItems->fetch_assoc()) {
+                $current_items_tx[] = $row;
+            }
+            $stmtLockItems->close();
+
             // Map existing items by wattage
             $existing_items = [];
-            foreach ($current_wattages as $row) { $existing_items[(int)$row['wattage']] = $row; }
+            $itemIdsTx = [];
+            $duplicateWattagesTx = [];
+            foreach ($current_items_tx as $row) {
+                $wattageTx = (int)($row['wattage'] ?? 0);
+                if (isset($existing_items[$wattageTx])) {
+                    $duplicateWattagesTx[$wattageTx] = true;
+                    continue;
+                }
+                $existing_items[$wattageTx] = $row;
+                $id = (int)($row['id'] ?? 0);
+                if ($id > 0) { $itemIdsTx[] = $id; }
+            }
+            if (!empty($duplicateWattagesTx)) {
+                throw new Exception(
+                    'Data integrity issue: duplicate module rows exist for wattage(s): ' .
+                    implode(', ', array_keys($duplicateWattagesTx)) .
+                    '. Apply Phase 4 module reconciliation migration, then retry.'
+                );
+            }
 
-            // Apply new pairs
-            $new_totals = [];
+            // Lock pallet rows for these items and compute lock/unlock impact.
+            $palletImpactTx = getPalletImpactForItemIds($conn, $itemIdsTx, true);
+            foreach ($existing_items as $w => $item) {
+                $itemId = (int)$item['id'];
+                $agg = $palletImpactTx['by_item'][$itemId] ?? [
+                    'count' => 0,
+                    'modules' => 0,
+                    'locked_count' => 0,
+                    'locked_modules' => 0,
+                    'unlocked_count' => 0,
+                    'unlocked_modules' => 0,
+                    'unlocked_pallets' => [],
+                    'locked_ids' => [],
+                    'pallet_ids' => []
+                ];
+                $existing_items[$w]['pallet_count'] = (int)$agg['count'];
+                $existing_items[$w]['pallet_modules'] = (int)$agg['modules'];
+                $existing_items[$w]['locked_pallet_count'] = (int)$agg['locked_count'];
+                $existing_items[$w]['locked_modules'] = (int)$agg['locked_modules'];
+                $existing_items[$w]['unlocked_pallet_count'] = (int)$agg['unlocked_count'];
+                $existing_items[$w]['unlocked_modules'] = (int)$agg['unlocked_modules'];
+                $existing_items[$w]['unlocked_pallets'] = $agg['unlocked_pallets'] ?? [];
+                $existing_items[$w]['locked_pallet_ids'] = array_values(array_unique(array_map('intval', $agg['locked_ids'] ?? [])));
+            }
+
+            // Build posted map.
+            $newByWattage = [];
+            foreach ($new_rows as $newRow) {
+                $newByWattage[(int)$newRow['wattage']] = $newRow;
+            }
+
+            // Phase 3 reconciliation step: for reductions/removals, reconcile unlocked pallets
+            // according to selected mode while never touching downstream-locked pallets.
             $posted_watts_set = [];
+            $new_totals = [];
+            foreach ($new_rows as $newRow) {
+                $w = (int)$newRow['wattage'];
+                $posted_watts_set[$w] = true;
+                $new_totals[$w] = ($new_totals[$w] ?? 0) + (int)$newRow['quantity'];
+            }
+
+            foreach ($existing_items as $w => $item) {
+                $currentQty = (int)($item['quantity'] ?? 0);
+                $newQty = isset($newByWattage[$w]) ? (int)$newByWattage[$w]['quantity'] : 0;
+                $isRemoved = !isset($newByWattage[$w]);
+                $lockedModules = (int)($item['locked_modules'] ?? 0);
+                $lockedPalletCount = (int)($item['locked_pallet_count'] ?? 0);
+                $palletCount = (int)($item['pallet_count'] ?? 0);
+                $palletModules = (int)($item['pallet_modules'] ?? 0);
+                $unlockedPallets = is_array($item['unlocked_pallets'] ?? null) ? $item['unlocked_pallets'] : [];
+                $lockedPalletIds = $item['locked_pallet_ids'] ?? [];
+
+                if ($newQty < $lockedModules) {
+                    throw new Exception("Cannot set {$w}W quantity to {$newQty}: {$lockedModules} modules are locked downstream.");
+                }
+
+                if ($isRemoved) {
+                    if ($palletCount > 0 && !$confirm_delete_pallets) {
+                        throw new Exception("Cannot remove {$w}W wattage: {$palletCount} pallet(s) with {$palletModules} modules exist. Please confirm deletion or keep this wattage.");
+                    }
+                    if ($lockedPalletCount > 0) {
+                        throw new Exception(
+                            "Cannot remove {$w}W wattage: {$lockedPalletCount} pallet(s) are linked downstream (" .
+                            implode(', ', array_map(function ($id) { return 'P' . (int)$id; }, $lockedPalletIds)) .
+                            "). Remove downstream links first."
+                        );
+                    }
+                    $deleteIds = array_map(function ($p) { return (int)($p['id'] ?? 0); }, $unlockedPallets);
+                    deleteInventoryPalletsByIds($conn, $deleteIds);
+                    continue;
+                }
+
+                if ($newQty < $currentQty) {
+                    $targetUnlockedToKeep = max(0, $newQty - $lockedModules);
+                    $plan = planUnlockedPalletReconciliation($reconciliation_mode, $unlockedPallets, $targetUnlockedToKeep);
+                    if (!empty($plan['delete_ids'])) {
+                        deleteInventoryPalletsByIds($conn, $plan['delete_ids']);
+                    }
+                }
+            }
+
+            // Apply new pairs to canonical module-item rows.
             foreach ($new_rows as $newRow) {
                 $w = (int)$newRow['wattage'];
                 $q = (int)$newRow['quantity'];
                 $domesticContentPct = $track_domestic_content ? $newRow['domestic_content_pct'] : null;
-                $posted_watts_set[$w] = true;
                 if (isset($existing_items[$w])) {
                     if ($track_domestic_content) {
                         $stmtE = $conn->prepare('UPDATE unassigned_module_items SET quantity = ?, domestic_content_pct = ? WHERE id = ?');
@@ -391,85 +1241,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!$stmtI->execute()) { throw new Exception('Failed inserting item: '.$stmtI->error); }
                     $stmtI->close();
                 }
-                $new_totals[$w] = ($new_totals[$w] ?? 0) + $q;
             }
 
-            // Remove items not in new set - delete pallets if confirmed
-            $confirm_delete_pallets = isset($_POST['confirm_delete_pallets']) && $_POST['confirm_delete_pallets'] === 'yes';
-
+            // Remove items not present in posted wattages after pallet reconciliation.
             foreach ($existing_items as $w => $item) {
                 if (!isset($posted_watts_set[$w])) {
-                    // Check for associated pallets
-                    $stmtC = $conn->prepare('SELECT COUNT(*) AS c, COALESCE(SUM(quantity), 0) AS modules FROM inventory_pallets WHERE unassigned_module_item_id = ?');
+                    $stmtC = $conn->prepare('SELECT COUNT(*) AS c FROM inventory_pallets WHERE unassigned_module_item_id = ?');
                     $stmtC->bind_param('i', $item['id']);
                     $stmtC->execute();
                     $palletInfo = $stmtC->get_result()->fetch_assoc();
                     $pallet_count = (int)($palletInfo['c'] ?? 0);
-                    $pallet_modules = (int)($palletInfo['modules'] ?? 0);
                     $stmtC->close();
-
-                    if ($pallet_count == 0) {
-                        // No pallets - safe to delete the wattage item
-                        $stmtD = $conn->prepare('DELETE FROM unassigned_module_items WHERE id = ?');
-                        $stmtD->bind_param('i', $item['id']);
-                        if (!$stmtD->execute()) { throw new Exception('Failed deleting unused item: '.$stmtD->error); }
-                        $stmtD->close();
-                    } else if ($confirm_delete_pallets) {
-                        // User confirmed - delete the pallets first, then the wattage item
-                        $stmtDelPallets = $conn->prepare('DELETE FROM inventory_pallets WHERE unassigned_module_item_id = ?');
-                        $stmtDelPallets->bind_param('i', $item['id']);
-                        if (!$stmtDelPallets->execute()) { throw new Exception('Failed deleting pallets: '.$stmtDelPallets->error); }
-                        $stmtDelPallets->close();
-
-                        // Now delete the wattage item
-                        $stmtD = $conn->prepare('DELETE FROM unassigned_module_items WHERE id = ?');
-                        $stmtD->bind_param('i', $item['id']);
-                        if (!$stmtD->execute()) { throw new Exception('Failed deleting item: '.$stmtD->error); }
-                        $stmtD->close();
-                    } else {
-                        // Pallets exist but not confirmed - rollback and show error
-                        throw new Exception("Cannot remove {$w}W wattage: {$pallet_count} pallet(s) with {$pallet_modules} modules exist. Please confirm deletion or keep this wattage.");
+                    if ($pallet_count > 0) {
+                        throw new Exception("Cannot remove {$w}W wattage: {$pallet_count} pallet(s) still exist after reconciliation.");
                     }
+
+                    $stmtD = $conn->prepare('DELETE FROM unassigned_module_items WHERE id = ?');
+                    $stmtD->bind_param('i', $item['id']);
+                    if (!$stmtD->execute()) { throw new Exception('Failed deleting item: '.$stmtD->error); }
+                    $stmtD->close();
                 }
             }
 
-            // Update project totals if assigned
+            // Phase 3 canonical roll-up: rebuild project wattage totals from source rows.
             if ($project_id > 0) {
-                $allW = array_unique(array_merge(array_keys($current_totals), array_keys($new_totals)));
-                foreach ($allW as $w) {
-                    $diff = ($new_totals[$w] ?? 0) - ($current_totals[$w] ?? 0);
-                    if ($diff === 0) continue;
-                    // Upsert-like: check existing row
-                    $wStr = (string)$w;
-                    if ($stmtS = $conn->prepare('SELECT id, total_order FROM project_wattage_orders WHERE project_id = ? AND wattage = ? LIMIT 1')) {
-                        $stmtS->bind_param('is', $project_id, $wStr);
-                        $stmtS->execute();
-                        $stmtS->bind_result($rowId, $tot);
-                        if ($stmtS->fetch()) {
-                            $stmtS->close();
-                            $newTot = max(0, (int)$tot + (int)$diff);
-                            if ($newTot > 0) {
-                                $stmtU2 = $conn->prepare('UPDATE project_wattage_orders SET total_order = ? WHERE id = ?');
-                                $stmtU2->bind_param('ii', $newTot, $rowId);
-                                $stmtU2->execute();
-                                $stmtU2->close();
-                            } else {
-                                $stmtDel = $conn->prepare('DELETE FROM project_wattage_orders WHERE id = ?');
-                                $stmtDel->bind_param('i', $rowId);
-                                $stmtDel->execute();
-                                $stmtDel->close();
-                            }
-                        } else {
-                            $stmtS->close();
-                            if ($diff > 0) {
-                                $stmtIns = $conn->prepare('INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)');
-                                $stmtIns->bind_param('isi', $project_id, $wStr, $diff);
-                                $stmtIns->execute();
-                                $stmtIns->close();
-                            }
-                        }
-                    }
-                }
+                syncProjectWattageOrdersCanonical($conn, $project_id);
+            }
+
+            $auditMetaAfterSave = mr_get_module_batch_meta($conn, $batch_id);
+            $auditRowsAfterSave = mr_get_module_batch_rows($conn, $batch_id);
+            $auditAfterFingerprint = mr_module_rows_fingerprint($auditRowsAfterSave);
+            if (!hash_equals($auditBeforeFingerprint, $auditAfterFingerprint)) {
+                mr_insert_reconciliation_audit($conn, [
+                    'module_batch_id' => $batch_id,
+                    'project_id' => (int)($auditMetaAfterSave['project_id'] ?? 0),
+                    'account_id' => (int)($auditMetaAfterSave['account_id'] ?? 0),
+                    'action_type' => 'batch_structural_update',
+                    'reason' => 'Structural rows edited in batch editor',
+                    'reconciliation_mode' => $reconciliation_mode,
+                    'preview_signature' => $postedPreviewSignature,
+                    'actor_user_id' => (int)$user_id,
+                    'actor_role' => (string)$role,
+                    'source_page' => 'edit_module_batch.php',
+                    'before_state' => [
+                        'module' => $auditMetaBeforeSave,
+                        'rows' => $auditRowsBeforeSave
+                    ],
+                    'after_state' => [
+                        'module' => $auditMetaAfterSave,
+                        'rows' => $auditRowsAfterSave
+                    ],
+                    'impact' => [
+                        'confirm_delete_pallets' => (bool)$confirm_delete_pallets,
+                        'track_domestic_content' => (bool)$track_domestic_content,
+                        'submitted_rows' => $new_rows
+                    ]
+                ]);
             }
 
             $conn->commit();
@@ -540,26 +1367,110 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isAjax) {
 
 // Preselects for component
 $prefManufacturerId = null; $prefLocationId = null; $existingWattages = [];
-// Manufacturer by matching name
+// Manufacturer by matching vendor name (trim/case-insensitive), preferring account-owned record.
 if (!empty($module['vendor_name'])) {
-    if ($stmtPM = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? LIMIT 1")) {
-        $stmtPM->bind_param('s', $module['vendor_name']);
-        $stmtPM->execute();
-        $stmtPM->bind_result($pmid);
-        if ($stmtPM->fetch()) { $prefManufacturerId = (int)$pmid; }
-        $stmtPM->close();
+    $moduleVendorName = trim((string)$module['vendor_name']);
+    $moduleAccountId = (int)($module['account_id'] ?? 0);
+    $manufacturerHasAccountScope = false;
+    $manufacturerHasIsActive = false;
+    if ($stmtCol = $conn->prepare("
+        SELECT
+            SUM(CASE WHEN COLUMN_NAME = 'account_id' THEN 1 ELSE 0 END) AS has_account_id,
+            SUM(CASE WHEN COLUMN_NAME = 'is_active' THEN 1 ELSE 0 END) AS has_is_active
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'manufacturers'
+          AND COLUMN_NAME IN ('account_id', 'is_active')
+    ")) {
+        $stmtCol->execute();
+        $resCol = $stmtCol->get_result()->fetch_assoc();
+        $manufacturerHasAccountScope = ((int)($resCol['has_account_id'] ?? 0) > 0);
+        $manufacturerHasIsActive = ((int)($resCol['has_is_active'] ?? 0) > 0);
+        $stmtCol->close();
+    }
+
+    $activeFilter = $manufacturerHasIsActive ? ' AND is_active = 1' : '';
+
+    if ($manufacturerHasAccountScope) {
+        $sqlPM = "
+            SELECT id
+            FROM manufacturers
+            WHERE TRIM(LOWER(name)) = TRIM(LOWER(?))
+              {$activeFilter}
+            ORDER BY
+                CASE
+                    WHEN account_id = ? THEN 0
+                    WHEN account_id IS NULL THEN 1
+                    ELSE 2
+                END ASC,
+                id ASC
+            LIMIT 1
+        ";
+        if ($stmtPM = $conn->prepare($sqlPM)) {
+            $stmtPM->bind_param('si', $moduleVendorName, $moduleAccountId);
+            $stmtPM->execute();
+            $stmtPM->bind_result($pmid);
+            if ($stmtPM->fetch()) { $prefManufacturerId = (int)$pmid; }
+            $stmtPM->close();
+        }
+    } else {
+        $sqlPM = "
+            SELECT id
+            FROM manufacturers
+            WHERE TRIM(LOWER(name)) = TRIM(LOWER(?))
+              {$activeFilter}
+            ORDER BY id ASC
+            LIMIT 1
+        ";
+        if ($stmtPM = $conn->prepare($sqlPM)) {
+            $stmtPM->bind_param('s', $moduleVendorName);
+            $stmtPM->execute();
+            $stmtPM->bind_result($pmid);
+            if ($stmtPM->fetch()) { $prefManufacturerId = (int)$pmid; }
+            $stmtPM->close();
+        }
     }
 }
-// Location by matching formatted address for that manufacturer
+
+// Location by matching stored initial_location to location name/address.
 if ($prefManufacturerId) {
-    if ($stmtL = $conn->prepare("SELECT ml.id, ml.street_address, ml.city, ml.state, ml.zip_code FROM manufacturer_locations ml JOIN manufacturers m ON m.id = ml.manufacturer_id WHERE ml.manufacturer_id = ?")) {
+    if ($stmtL = $conn->prepare("
+        SELECT ml.id, ml.location_name, ml.street_address, ml.city, ml.state, ml.zip_code
+        FROM manufacturer_locations ml
+        JOIN manufacturers m ON m.id = ml.manufacturer_id
+        WHERE ml.manufacturer_id = ?
+    ")) {
         $stmtL->bind_param('i', $prefManufacturerId);
         $stmtL->execute();
         $resL = $stmtL->get_result();
-        $target = trim((string)$module['initial_location']);
+        $targetRaw = trim((string)$module['initial_location']);
+        $normalizeLocation = function ($s) {
+            $s = strtolower(trim((string)$s));
+            $s = preg_replace('/\s+/', ' ', $s);
+            return trim((string)$s);
+        };
+        $target = $normalizeLocation($targetRaw);
+
+        $fallbackLocationId = 0;
         while ($lr = $resL->fetch_assoc()) {
+            $locationName = $normalizeLocation($lr['location_name'] ?? '');
             $addr = implode(', ', array_filter([$lr['street_address'], $lr['city'], $lr['state'], $lr['zip_code']]));
-            if ($addr === $target) { $prefLocationId = (int)$lr['id']; break; }
+            $addrNorm = $normalizeLocation($addr);
+
+            if ($target !== '' && ($locationName === $target || $addrNorm === $target)) {
+                $prefLocationId = (int)$lr['id'];
+                break;
+            }
+
+            if ($target !== '' && ($locationName !== '' || $addrNorm !== '')) {
+                if (strpos($locationName, $target) !== false || strpos($target, $locationName) !== false ||
+                    strpos($addrNorm, $target) !== false || strpos($target, $addrNorm) !== false) {
+                    $fallbackLocationId = (int)$lr['id'];
+                }
+            }
+        }
+        if (!$prefLocationId && $fallbackLocationId > 0) {
+            $prefLocationId = $fallbackLocationId;
         }
         $stmtL->close();
     }
@@ -667,7 +1578,11 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         require_once 'components/breadcrumbs.php';
         $extra = [];
         if (!$project_id) { $extra[] = ['label' => 'Modules', 'url' => 'modules.php']; }
-        echo slp_render_breadcrumbs(['current_label' => 'Edit Module Batch', 'extra' => $extra]);
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Edit Module Batch',
+            'project_id' => (int)$project_id,
+            'extra' => $extra
+        ]);
     ?>
 
     <div class="form-header">
@@ -742,9 +1657,10 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         <?php $formAction = 'edit_module_batch.php?batch_id='.(int)$batch_id; ?>
         <form method="POST" id="editBatchForm" action="<?php echo $formAction; ?>" enctype="multipart/form-data">
             <input type="hidden" name="confirm_delete_pallets" id="confirmDeletePallets" value="no">
+            <input type="hidden" name="reconciliation_mode" id="reconciliationMode" value="reassign_unlocked">
+            <input type="hidden" name="preview_confirmed" id="previewConfirmed" value="no">
+            <input type="hidden" name="preview_signature" id="previewSignature" value="">
             <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
-
-            <?php $prefManufacturerId = null; $prefLocationId = null; ?>
 
             <!-- Step Indicator -->
             <div class="step-indicator-wrapper">
@@ -859,6 +1775,18 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
                 <div class="accordion-content">
                     <div class="accordion-body">
                         <?php include __DIR__ . '/components/module_batch_step4.php'; ?>
+                        <div style="margin: 0 0 14px 0; padding: 12px; border: 1px solid #e9ecef; border-radius: 10px; background: #fafbfc;">
+                            <label for="reconciliationModeSelect" style="display: block; font-weight: 600; color: #293E4C; margin-bottom: 6px;">When Quantities Are Reduced or Wattages Are Removed</label>
+                            <select id="reconciliationModeSelect" style="min-width: 260px; max-width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #d0d7de;">
+                                <option value="reassign_unlocked" selected>Keep Existing Unlocked Pallets (Recommended)</option>
+                                <option value="rebuild_unlocked">Delete Unlocked Pallets and Rebuild</option>
+                            </select>
+                            <div style="font-size: 0.82rem; color: #6c757d; margin-top: 6px;">
+                                <strong>Unlocked pallets</strong> are not tied to deliveries or warranty replacements.
+                                <br>
+                                <code>Keep Existing</code> minimizes pallet deletions. <code>Delete and Rebuild</code> clears unlocked pallets in changed wattages so you can repalletize from scratch.
+                            </div>
+                        </div>
                         <div class="section-actions">
                             <button type="button" class="btn-back-step" onclick="goToStep(3)"><i class="fas fa-arrow-left"></i> Back</button>
                             <button type="submit" class="btn-submit"><i class="fas fa-check"></i> Save Module Batch</button>
@@ -929,6 +1857,23 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
                 </div>
             </div>
         </div>
+
+        <!-- Reconciliation Impact Preview Modal -->
+        <div id="reconciliationPreviewModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 11000; align-items: center; justify-content: center;">
+            <div style="background: #fff; border-radius: 12px; max-width: 880px; width: 92%; max-height: 85vh; overflow: hidden; box-shadow: 0 14px 44px rgba(0,0,0,0.25); display: flex; flex-direction: column;">
+                <div style="padding: 20px 24px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; justify-content: space-between;">
+                    <h3 style="margin: 0; color: #293E4C; font-size: 1.15rem; display: flex; align-items: center; gap: 10px;">
+                        <span style="color: #488C9A;">&#128202;</span> Reconciliation Impact Preview
+                    </h3>
+                    <button type="button" id="closeReconciliationPreview" style="border: none; background: transparent; font-size: 24px; line-height: 1; color: #6c757d; cursor: pointer;">&times;</button>
+                </div>
+                <div id="reconciliationPreviewBody" style="padding: 20px 24px; overflow-y: auto; color: #293E4C;"></div>
+                <div style="padding: 16px 24px; border-top: 1px solid #e9ecef; display: flex; justify-content: flex-end; gap: 10px;">
+                    <button type="button" id="cancelReconciliationPreview" style="padding: 10px 18px; border-radius: 8px; border: 1px solid #dee2e6; background: #fff; color: #495057; cursor: pointer;">Cancel</button>
+                    <button type="button" id="confirmReconciliationPreview" style="padding: 10px 18px; border-radius: 8px; border: none; background: #488C9A; color: #fff; font-weight: 600; cursor: pointer;">Confirm &amp; Save</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Import Container (hidden by default) -->
@@ -981,7 +1926,11 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
     // Determine which steps have data (for completed indicators)
     $step1_complete = !empty($current_wattages); // has wattages
     $step2_complete = !empty($module['cost_per_watt']) || !empty($existingMilestones);
-    $step3_complete = !empty($module['forklift_truck_long_side_mm']) || !empty($module['stacking_in_warehouse']) || !empty($module['stacking_during_transport']) || !empty($module['module_notes']);
+    $step3_complete = !empty($module['forklift_truck_long_side_mm'])
+        || !empty($module['stacking_in_warehouse'])
+        || !empty($module['stacking_during_transport'])
+        || !empty($module['module_notes'])
+        || !empty($module['module_docs_url']);
     $step4_complete = !empty($module['modules_per_pallet']) || !empty($module['pallet_length_mm']);
     $completedSteps = [];
     if ($step1_complete) $completedSteps[] = 1;
@@ -1168,6 +2117,20 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         }
     }
 
+    function confirmCapacityOverageIfNeeded() {
+        if (capacityData.projectSizeMw <= 0) return true;
+        var newBatchMw = calculateNewBatchMw();
+        var newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
+        if (newTotalMw <= capacityData.projectSizeMw) return true;
+
+        var excessMw = newTotalMw - capacityData.projectSizeMw;
+        var excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+        var confirmMsg = 'WARNING: This change will exceed the project capacity!\n\n' +
+            'New Total: ' + newTotalMw.toFixed(2) + ' MW\nTarget: ' + capacityData.projectSizeMw.toFixed(2) + ' MW\n\n' +
+            'This is ' + excessMw.toFixed(2) + ' MW (' + excessPct.toFixed(1) + '%) over the target.\n\nAre you sure you want to proceed?';
+        return confirm(confirmMsg);
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         var wattageContainer = document.getElementById('wattage-container');
         if (wattageContainer) {
@@ -1193,6 +2156,205 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         return removedWithPallets;
     }
 
+    function escapeHtml(value) {
+        var str = String(value === undefined || value === null ? '' : value);
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function clearPreviewConfirmation() {
+        var previewConfirmed = document.getElementById('previewConfirmed');
+        var previewSignature = document.getElementById('previewSignature');
+        if (previewConfirmed) previewConfirmed.value = 'no';
+        if (previewSignature) previewSignature.value = '';
+    }
+
+    function getReconciliationModeUi(mode) {
+        var normalized = String(mode || 'reassign_unlocked').toLowerCase();
+        if (normalized === 'rebuild_unlocked') {
+            return {
+                label: 'Delete unlocked pallets and rebuild',
+                description: 'All unlocked pallets in reduced/removed wattages are removed so you can repalletize cleanly.'
+            };
+        }
+        return {
+            label: 'Keep existing unlocked pallets',
+            description: 'Keep as many unlocked pallets as possible while matching the new quantities.'
+        };
+    }
+
+    function renderReconciliationPreview(preview) {
+        var body = document.getElementById('reconciliationPreviewBody');
+        if (!body) return;
+
+        var summary = preview.summary || {};
+        var projectImpact = preview.project_impact || null;
+        var domestic = preview.domestic_impact || {};
+        var beforeDomestic = domestic.before || {};
+        var afterDomestic = domestic.after || {};
+        var blockers = Array.isArray(preview.blockers) ? preview.blockers : [];
+        var warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
+        var changes = Array.isArray(preview.changes) ? preview.changes : [];
+        var affected = preview.affected_pallets || {};
+        var blockedLinked = preview.blocked_linked_pallets || {};
+        var reconciliationMode = preview.reconciliation_mode || 'reassign_unlocked';
+        var modeUiFallback = getReconciliationModeUi(reconciliationMode);
+        var reconciliationModeLabel = preview.reconciliation_mode_label || modeUiFallback.label;
+        var reconciliationModeDescription = preview.reconciliation_mode_description || modeUiFallback.description;
+
+        var html = '';
+        html += '<div style="margin-bottom:12px; padding:12px; border-radius:8px; background:#eef6fa; border:1px solid #d7e9f0;">';
+        html += '<div style="font-weight:700; margin-bottom:6px; color:#24495a;">How This Reconciliation Works</div>';
+        html += '<div style="font-size:0.9rem; color:#24495a; margin-bottom:4px;"><strong>Unlocked pallets</strong> = not linked to deliveries/warranty. These can be auto-adjusted.</div>';
+        html += '<div style="font-size:0.9rem; color:#24495a; margin-bottom:4px;"><strong>Locked pallets</strong> = linked downstream. These are never auto-deleted.</div>';
+        html += '<div style="font-size:0.9rem; color:#24495a;">Selected behavior: <strong>' + escapeHtml(reconciliationModeLabel) + '</strong>. ' + escapeHtml(reconciliationModeDescription) + '</div>';
+        html += '</div>';
+
+        html += '<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px;">';
+        html += '<div style="background:#f8f9fa; border-radius:8px; padding:12px;"><div style="font-size:0.75rem; color:#6c757d;">Current Modules</div><div style="font-size:1.2rem; font-weight:700;">' + Number(summary.current_total_modules || 0).toLocaleString() + '</div></div>';
+        html += '<div style="background:#f8f9fa; border-radius:8px; padding:12px;"><div style="font-size:0.75rem; color:#6c757d;">New Modules</div><div style="font-size:1.2rem; font-weight:700;">' + Number(summary.new_total_modules || 0).toLocaleString() + '</div></div>';
+        html += '<div style="background:#f8f9fa; border-radius:8px; padding:12px;"><div style="font-size:0.75rem; color:#6c757d;">Delta Modules</div><div style="font-size:1.2rem; font-weight:700;">' + (summary.delta_modules >= 0 ? '+' : '') + Number(summary.delta_modules || 0).toLocaleString() + '</div></div>';
+        html += '<div style="background:#f8f9fa; border-radius:8px; padding:12px;"><div style="font-size:0.75rem; color:#6c757d;">Changed Wattages</div><div style="font-size:1.2rem; font-weight:700;">' + Number(preview.changed_count || 0).toLocaleString() + '</div></div>';
+        html += '</div>';
+
+        if (projectImpact) {
+            var overStyle = projectImpact.is_over_capacity ? 'color:#dc3545;' : 'color:#155724;';
+            html += '<div style="margin-bottom:12px; padding:12px; border-radius:8px; background:#f8f9fa;">';
+            html += '<div style="font-weight:600; margin-bottom:4px;">Project Capacity Impact</div>';
+            html += '<div style="font-size:0.92rem;">After update: <strong>' + Number(projectImpact.after_total_mw || 0).toFixed(2) + ' MW</strong> / ' + Number(projectImpact.project_size_mw || 0).toFixed(2) + ' MW</div>';
+            html += '<div style="font-size:0.88rem; ' + overStyle + '">' + (projectImpact.is_over_capacity ? ('Over by ' + Number(projectImpact.over_by_mw || 0).toFixed(2) + ' MW') : 'Within project capacity') + '</div>';
+            html += '</div>';
+        }
+
+        html += '<div style="margin-bottom:12px; padding:12px; border-radius:8px; background:#f8f9fa;">';
+        html += '<div style="font-weight:600; margin-bottom:6px;">Domestic Content Impact</div>';
+        html += '<div style="font-size:0.9rem;">Before: ' + (beforeDomestic.domestic_content_pct === null || beforeDomestic.domestic_content_pct === undefined ? 'Not tracked' : Number(beforeDomestic.domestic_content_pct).toFixed(1) + '%') + ' (Coverage ' + Number(beforeDomestic.coverage_pct || 0).toFixed(1) + '%)</div>';
+        html += '<div style="font-size:0.9rem;">After: ' + (afterDomestic.domestic_content_pct === null || afterDomestic.domestic_content_pct === undefined ? 'Not tracked' : Number(afterDomestic.domestic_content_pct).toFixed(1) + '%') + ' (Coverage ' + Number(afterDomestic.coverage_pct || 0).toFixed(1) + '%)</div>';
+        html += '</div>';
+
+        if (changes.length > 0) {
+            html += '<div style="margin-bottom:12px;"><div style="font-weight:600; margin-bottom:6px;">Wattage Changes</div>';
+            html += '<div style="border:1px solid #e9ecef; border-radius:8px; overflow:auto;"><table style="width:100%; border-collapse:collapse; font-size:0.9rem;">';
+            html += '<thead><tr style="background:#f8f9fa;"><th style="text-align:left; padding:8px;">Wattage</th><th style="text-align:left; padding:8px;">Action</th><th style="text-align:right; padding:8px;">Current</th><th style="text-align:right; padding:8px;">New</th><th style="text-align:right; padding:8px;">Palletized (Current)</th><th style="text-align:right; padding:8px;">Palletized (Projected)</th><th style="text-align:right; padding:8px;">Locked Pallets</th></tr></thead><tbody>';
+            changes.forEach(function(c) {
+                html += '<tr style="border-top:1px solid #eef2f5;">' +
+                    '<td style="padding:8px;">' + Number(c.wattage || 0) + 'W</td>' +
+                    '<td style="padding:8px; text-transform:capitalize;">' + escapeHtml(c.action || 'unchanged') + '</td>' +
+                    '<td style="padding:8px; text-align:right;">' + Number(c.current_quantity || 0).toLocaleString() + '</td>' +
+                    '<td style="padding:8px; text-align:right;">' + Number(c.new_quantity || 0).toLocaleString() + '</td>' +
+                    '<td style="padding:8px; text-align:right;">' + Number(c.pallet_modules || 0).toLocaleString() + '</td>' +
+                    '<td style="padding:8px; text-align:right;">' + Number(c.projected_palletized_modules || 0).toLocaleString() + '</td>' +
+                    '<td style="padding:8px; text-align:right;">' + Number(c.locked_pallet_count || 0).toLocaleString() + '</td>' +
+                    '</tr>';
+            });
+            html += '</tbody></table></div></div>';
+        }
+
+        html += '<div style="margin-bottom:12px; padding:12px; border-radius:8px; background:#f8f9fa;">';
+        html += '<div style="font-weight:600; margin-bottom:4px;">Affected Pallets</div>';
+        html += '<div style="font-size:0.9rem;">Selected behavior: <strong>' + escapeHtml(reconciliationModeLabel) + '</strong></div>';
+        html += '<div style="font-size:0.9rem;">' + Number(affected.count || 0).toLocaleString() + ' pallet(s), ' + Number(affected.modules || 0).toLocaleString() + ' palletized module(s) in changed wattages.</div>';
+        html += '<div style="font-size:0.9rem;">Locked (linked) pallets in affected wattages: ' + Number(blockedLinked.count || 0).toLocaleString();
+        if (Array.isArray(blockedLinked.ids_sample) && blockedLinked.ids_sample.length > 0) {
+            html += ' (sample IDs: ' + blockedLinked.ids_sample.join(', ') + ')';
+        }
+        html += '</div></div>';
+
+        if (warnings.length > 0) {
+            html += '<div style="margin-bottom:12px; padding:12px; border-radius:8px; background:#fff3cd; border:1px solid #ffe69c;">';
+            html += '<div style="font-weight:600; margin-bottom:4px; color:#664d03;">Warnings</div><ul style="margin:6px 0 0 18px; color:#664d03;">';
+            warnings.forEach(function(msg) { html += '<li style="margin:3px 0;">' + escapeHtml(msg) + '</li>'; });
+            html += '</ul></div>';
+        }
+
+        if (blockers.length > 0) {
+            html += '<div style="padding:12px; border-radius:8px; background:#f8d7da; border:1px solid #f1aeb5;">';
+            html += '<div style="font-weight:600; margin-bottom:4px; color:#842029;">Blocked</div><ul style="margin:6px 0 0 18px; color:#842029;">';
+            blockers.forEach(function(msg) { html += '<li style="margin:3px 0;">' + escapeHtml(msg) + '</li>'; });
+            html += '</ul></div>';
+        }
+
+        body.innerHTML = html;
+    }
+
+    function showReconciliationPreviewModal(preview, onConfirm) {
+        var modal = document.getElementById('reconciliationPreviewModal');
+        var confirmBtn = document.getElementById('confirmReconciliationPreview');
+        var cancelBtn = document.getElementById('cancelReconciliationPreview');
+        var closeBtn = document.getElementById('closeReconciliationPreview');
+        if (!modal || !confirmBtn || !cancelBtn || !closeBtn) {
+            showResultModal(false, { message: 'Preview modal is not available.' });
+            return;
+        }
+
+        renderReconciliationPreview(preview || {});
+        confirmBtn.style.display = preview && preview.can_apply ? 'inline-block' : 'none';
+
+        var close = function() {
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        };
+        var cancelHandler = function() {
+            close();
+        };
+        var confirmHandler = function() {
+            close();
+            if (typeof onConfirm === 'function') onConfirm();
+        };
+
+        cancelBtn.onclick = cancelHandler;
+        closeBtn.onclick = cancelHandler;
+        confirmBtn.onclick = confirmHandler;
+        modal.onclick = function(e) { if (e.target === modal) close(); };
+
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    }
+
+    function requestReconciliationPreview(form) {
+        var previewFormData = new FormData(form);
+        previewFormData.set('action', 'preview_reconciliation');
+        var actionUrl = form.getAttribute('action') || window.location.href;
+        return fetch(actionUrl, {
+            method: 'POST',
+            body: previewFormData,
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(parseJsonResponse);
+    }
+
+    function runPreviewFlow(form) {
+        showLoadingModal('Analyzing Changes...', 'Running dry-run reconciliation to preview downstream impact.');
+        requestReconciliationPreview(form)
+            .then(function(data) {
+                hideLoadingModal();
+                if (!data || !data.success) {
+                    showResultModal(false, data || { message: 'Failed to generate reconciliation preview.' });
+                    return;
+                }
+                if (!data.preview) {
+                    showResultModal(false, { message: 'Reconciliation preview response was incomplete.' });
+                    return;
+                }
+
+                showReconciliationPreviewModal(data.preview, function() {
+                    var previewConfirmed = document.getElementById('previewConfirmed');
+                    var previewSignature = document.getElementById('previewSignature');
+                    if (previewConfirmed) previewConfirmed.value = 'yes';
+                    if (previewSignature) previewSignature.value = data.preview.signature || '';
+                    submitFormViaAjax(form);
+                });
+            })
+            .catch(function(error) {
+                hideLoadingModal();
+                showResultModal(false, { message: buildFriendlyErrorMessage(error) });
+            });
+    }
+
     // ========== Form Submission with Pallet Confirmation ==========
     document.addEventListener('DOMContentLoaded', function() {
         var form = document.getElementById('editBatchForm');
@@ -1201,20 +2363,54 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
         var cancelBtn = document.getElementById('cancelPalletDelete');
         var palletList = document.getElementById('palletDeleteList');
         var confirmInput = document.getElementById('confirmDeletePallets');
+        var reconModeHidden = document.getElementById('reconciliationMode');
+        var reconModeSelect = document.getElementById('reconciliationModeSelect');
         if (!form) return;
 
-        if (cancelBtn) { cancelBtn.addEventListener('click', function() { modal.style.display = 'none'; }); }
+        if (reconModeSelect && reconModeHidden) {
+            reconModeHidden.value = reconModeSelect.value || 'reassign_unlocked';
+            reconModeSelect.addEventListener('change', function() {
+                reconModeHidden.value = reconModeSelect.value || 'reassign_unlocked';
+                clearPreviewConfirmation();
+            });
+        }
+
+        form.addEventListener('input', function() {
+            clearPreviewConfirmation();
+            confirmInput.value = 'no';
+        }, true);
+        form.addEventListener('change', function() {
+            clearPreviewConfirmation();
+            confirmInput.value = 'no';
+        }, true);
+
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function() {
+                modal.style.display = 'none';
+                clearPreviewConfirmation();
+            });
+        }
         if (confirmBtn) {
             confirmBtn.addEventListener('click', function() {
                 confirmInput.value = 'yes';
                 modal.style.display = 'none';
-                submitFormViaAjax(form);
+                clearPreviewConfirmation();
+                if (!confirmCapacityOverageIfNeeded()) return;
+                runPreviewFlow(form);
             });
         }
-        if (modal) { modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display = 'none'; }); }
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                    clearPreviewConfirmation();
+                }
+            });
+        }
 
         form.addEventListener('submit', function(e) {
             e.preventDefault();
+            clearPreviewConfirmation();
             var removedWithPallets = getRemovedWattagesWithPallets();
             if (removedWithPallets.length > 0 && confirmInput.value !== 'yes') {
                 var listHtml = '';
@@ -1231,19 +2427,8 @@ if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_
                 modal.style.display = 'flex';
                 return false;
             }
-            if (capacityData.projectSizeMw > 0) {
-                var newBatchMw = calculateNewBatchMw();
-                var newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
-                if (newTotalMw > capacityData.projectSizeMw) {
-                    var excessMw = newTotalMw - capacityData.projectSizeMw;
-                    var excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
-                    var confirmMsg = 'WARNING: This change will exceed the project capacity!\n\n' +
-                        'New Total: ' + newTotalMw.toFixed(2) + ' MW\nTarget: ' + capacityData.projectSizeMw.toFixed(2) + ' MW\n\n' +
-                        'This is ' + excessMw.toFixed(2) + ' MW (' + excessPct.toFixed(1) + '%) over the target.\n\nAre you sure you want to proceed?';
-                    if (!confirm(confirmMsg)) return false;
-                }
-            }
-            submitFormViaAjax(form);
+            if (!confirmCapacityOverageIfNeeded()) return false;
+            runPreviewFlow(form);
         });
     });
 

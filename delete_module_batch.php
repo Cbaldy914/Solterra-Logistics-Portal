@@ -9,9 +9,59 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 }
 
 require_once '../config.php';
+require_once __DIR__ . '/module_reconciliation_audit_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
+}
+
+function syncProjectWattageOrdersCanonical($conn, $projectId) {
+    $projectId = (int)$projectId;
+    if ($projectId <= 0) {
+        return;
+    }
+
+    $totals = [];
+    $stmtTotals = $conn->prepare("
+        SELECT CAST(umi.wattage AS CHAR) AS wattage_key, SUM(umi.quantity) AS total_qty
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ? AND umi.wattage > 0 AND umi.quantity > 0
+        GROUP BY umi.wattage
+    ");
+    if (!$stmtTotals) {
+        throw new Exception('Failed preparing canonical totals query: ' . $conn->error);
+    }
+    $stmtTotals->bind_param('i', $projectId);
+    $stmtTotals->execute();
+    $resTotals = $stmtTotals->get_result();
+    while ($row = $resTotals->fetch_assoc()) {
+        $wattage = (string)($row['wattage_key'] ?? '');
+        $qty = (int)($row['total_qty'] ?? 0);
+        if ($wattage === '' || $qty <= 0) { continue; }
+        $totals[$wattage] = $qty;
+    }
+    $stmtTotals->close();
+
+    $stmtDelete = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?");
+    if (!$stmtDelete) {
+        throw new Exception('Failed preparing project_wattage_orders cleanup: ' . $conn->error);
+    }
+    $stmtDelete->bind_param('i', $projectId);
+    $stmtDelete->execute();
+    $stmtDelete->close();
+
+    if (!empty($totals)) {
+        $stmtInsert = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)");
+        if (!$stmtInsert) {
+            throw new Exception('Failed preparing project_wattage_orders insert: ' . $conn->error);
+        }
+        foreach ($totals as $wattage => $qty) {
+            $stmtInsert->bind_param('isi', $projectId, $wattage, $qty);
+            $stmtInsert->execute();
+        }
+        $stmtInsert->close();
+    }
 }
 
 // Validate POST
@@ -20,9 +70,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['batch_id'])) {
     exit();
 }
 $batchId = intval($_POST['batch_id']);
+$actorUserId = (int)($_SESSION['user_id'] ?? 0);
+$actorRole = (string)($_SESSION['role'] ?? '');
 
 try {
     $conn->begin_transaction();
+    $auditMetaBeforeDelete = mr_get_module_batch_meta($conn, $batchId);
+    $auditRowsBeforeDelete = mr_get_module_batch_rows($conn, $batchId);
 
     // Admin role: ensure belongs to their account
     if ($_SESSION['role'] === 'admin') {
@@ -40,9 +94,8 @@ try {
         $stmtCheck->close();
     }
 
-    // Fetch related item IDs and quantity sums per wattage
+    // Fetch related item IDs
     $itemIds = [];
-    $wattageSums = [];
     $stmtItems = $conn->prepare("SELECT id FROM unassigned_module_items WHERE unassigned_module_id = ?");
     $stmtItems->bind_param("i", $batchId);
     $stmtItems->execute();
@@ -51,18 +104,6 @@ try {
         $itemIds[] = $row['id'];
     }
     $stmtItems->close();
-
-    // Aggregate wattage totals for this batch (to update project_wattage_orders if needed)
-    $stmtSum = $conn->prepare("SELECT wattage, SUM(quantity) AS total_qty FROM unassigned_module_items WHERE unassigned_module_id = ? GROUP BY wattage");
-    $stmtSum->bind_param("i", $batchId);
-    $stmtSum->execute();
-    $resSum = $stmtSum->get_result();
-    while ($r = $resSum->fetch_assoc()) {
-        $w = (int)$r['wattage'];
-        $q = (int)$r['total_qty'];
-        if ($w > 0 && $q > 0) { $wattageSums[$w] = $q; }
-    }
-    $stmtSum->close();
 
     // Get project linkage and possible docs path
     $projId = null; $moduleDocsUrl = null;
@@ -103,7 +144,7 @@ try {
             $ph = implode(',', array_fill(0, count($palletIds), '?'));
             $t  = str_repeat('i', count($palletIds));
             
-            // Step 1: Find delivery IDs that use these pallets
+            // Step 1: Guardrail - block delete if any pallets are linked to deliveries
             $deliveryIds = [];
             $stmtFindDeliveries = $conn->prepare("SELECT DISTINCT delivery_id FROM delivery_pallets WHERE inventory_pallet_id IN ($ph)");
             $stmtFindDeliveries->bind_param($t, ...$palletIds);
@@ -113,27 +154,34 @@ try {
                 $deliveryIds[] = $row['delivery_id'];
             }
             $stmtFindDeliveries->close();
-            
-            // Step 2: Delete delivery_pallets records that reference these pallets
-            $delDeliveryPallets = $conn->prepare("DELETE FROM delivery_pallets WHERE inventory_pallet_id IN ($ph)");
-            $delDeliveryPallets->bind_param($t, ...$palletIds);
-            $delDeliveryPallets->execute();
-            $deleted_counts['delivery_pallets'] = $delDeliveryPallets->affected_rows;
-            $delDeliveryPallets->close();
-            
-            // Step 3: Delete deliveries that were using these pallets (if they exist)
-            if (!empty($deliveryIds)) {
-                $deliveryPh = implode(',', array_fill(0, count($deliveryIds), '?'));
-                $deliveryT = str_repeat('i', count($deliveryIds));
-                
-                $delDeliveries = $conn->prepare("DELETE FROM deliveries WHERE id IN ($deliveryPh)");
-                $delDeliveries->bind_param($deliveryT, ...$deliveryIds);
-                $delDeliveries->execute();
-                $deleted_counts['deliveries'] = $delDeliveries->affected_rows;
-                $delDeliveries->close();
+
+            // Step 2: Guardrail - block delete if any pallets are linked to warranty replacements
+            $warrantyLinkedPallets = [];
+            $stmtWarrantyLinks = $conn->prepare("SELECT DISTINCT pallet_id FROM warranty_claim_replacements WHERE pallet_id IN ($ph)");
+            $stmtWarrantyLinks->bind_param($t, ...$palletIds);
+            $stmtWarrantyLinks->execute();
+            $resWarrantyLinks = $stmtWarrantyLinks->get_result();
+            while ($row = $resWarrantyLinks->fetch_assoc()) {
+                $warrantyLinkedPallets[] = (int)$row['pallet_id'];
+            }
+            $stmtWarrantyLinks->close();
+
+            if (!empty($deliveryIds) || !empty($warrantyLinkedPallets)) {
+                $detailParts = [];
+                if (!empty($deliveryIds)) {
+                    $detailParts[] = count($deliveryIds) . ' delivery link(s)';
+                }
+                if (!empty($warrantyLinkedPallets)) {
+                    $detailParts[] = count($warrantyLinkedPallets) . ' warranty replacement link(s)';
+                }
+                throw new Exception(
+                    "Cannot delete module batch #{$batchId}: associated pallets are linked downstream (" .
+                    implode(', ', $detailParts) .
+                    "). Remove downstream links first."
+                );
             }
             
-            // Step 4: Delete the inventory_pallets themselves
+            // Step 3: Safe to delete the inventory_pallets themselves
             $delPal = $conn->prepare("DELETE FROM inventory_pallets WHERE id IN ($ph)");
             $delPal->bind_param($t, ...$palletIds);
             $delPal->execute();
@@ -142,31 +190,14 @@ try {
         }
     }
 
-    // Step 5: If assigned to a project, decrement project_wattage_orders by this batch's totals
-    if (!empty($projId) && $projId > 0 && !empty($wattageSums)) {
-        foreach ($wattageSums as $wattage => $qty) {
-            // Reduce totals, clamp to zero
-            $stmtUpd = $conn->prepare("UPDATE project_wattage_orders SET total_order = GREATEST(total_order - ?, 0) WHERE project_id = ? AND wattage = ?");
-            $wattStr = (string)$wattage;
-            $stmtUpd->bind_param("iis", $qty, $projId, $wattStr);
-            $stmtUpd->execute();
-            $stmtUpd->close();
-        }
-        // Clean up zero or negative entries
-        $stmtClean = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ? AND total_order <= 0");
-        $stmtClean->bind_param("i", $projId);
-        $stmtClean->execute();
-        $stmtClean->close();
-    }
-
-    // Step 6: Delete unassigned_module_items
+    // Step 5: Delete unassigned_module_items
     $stmtDelItems = $conn->prepare("DELETE FROM unassigned_module_items WHERE unassigned_module_id = ?");
     $stmtDelItems->bind_param("i", $batchId);
     $stmtDelItems->execute();
     $deleted_counts['module_items'] = $stmtDelItems->affected_rows;
     $stmtDelItems->close();
     
-    // Step 7: Delete the module batch itself
+    // Step 6: Delete the module batch itself
     $stmtDelBatch = $conn->prepare("DELETE FROM modules WHERE id = ?");
     $stmtDelBatch->bind_param("i", $batchId);
     $stmtDelBatch->execute();
@@ -177,7 +208,32 @@ try {
         throw new Exception("Failed to delete module batch");
     }
 
-    // Step 8: Remove projection allocations tied to this batch and clear logistics if empty
+    if (!empty($projId) && $projId > 0) {
+        syncProjectWattageOrdersCanonical($conn, $projId);
+    }
+
+    mr_insert_reconciliation_audit($conn, [
+        'module_batch_id' => $batchId,
+        'project_id' => (int)($auditMetaBeforeDelete['project_id'] ?? 0),
+        'account_id' => (int)($auditMetaBeforeDelete['account_id'] ?? 0),
+        'action_type' => 'batch_delete',
+        'reason' => 'Batch deleted via delete_module_batch.php',
+        'reconciliation_mode' => 'n/a',
+        'preview_signature' => '',
+        'actor_user_id' => $actorUserId,
+        'actor_role' => $actorRole,
+        'source_page' => 'delete_module_batch.php',
+        'before_state' => [
+            'module' => $auditMetaBeforeDelete,
+            'rows' => $auditRowsBeforeDelete
+        ],
+        'after_state' => null,
+        'impact' => [
+            'deleted_counts' => $deleted_counts
+        ]
+    ]);
+
+    // Step 7: Remove projection allocations tied to this batch and clear logistics if empty
     $projection_ids = [];
     if ($stmtProj = $conn->prepare("SELECT DISTINCT projection_id FROM projection_module_allocations WHERE module_id = ? AND is_projection_module = 0")) {
         $stmtProj->bind_param("i", $batchId);

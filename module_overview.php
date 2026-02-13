@@ -115,6 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'undo_palletization') {
     $undoMessage = '';
     $wattage = intval($_POST['wattage']);
+    $batchScopeId = isset($_POST['batch_id']) ? intval($_POST['batch_id']) : 0;
     $conn_undo = getDBConnection();
     if (!$conn_undo) {
         $undoMessage = "Error: Database connection failed.";
@@ -125,15 +126,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             $pallet_ids = [];
             
             if ($view_mode === 'project') {
-                // For project view, get pallets for all batches in the project
-                $stmt_get_pallets = $conn_undo->prepare("
-                    SELECT ip.id 
-                    FROM inventory_pallets ip 
-                    JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id 
-                    JOIN modules m ON umi.unassigned_module_id = m.id 
-                    WHERE m.project_id = ? AND ip.wattage = ?
-                ");
-                $stmt_get_pallets->bind_param("ii", $project_id, $wattage);
+                if ($batchScopeId > 0) {
+                    // Scoped undo: only this batch+wattage within current project.
+                    $stmt_get_pallets = $conn_undo->prepare("
+                        SELECT ip.id
+                        FROM inventory_pallets ip
+                        JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                        JOIN modules m ON umi.unassigned_module_id = m.id
+                        WHERE m.project_id = ?
+                          AND umi.unassigned_module_id = ?
+                          AND ip.wattage = ?
+                    ");
+                    $stmt_get_pallets->bind_param("iii", $project_id, $batchScopeId, $wattage);
+                } else {
+                    // Fallback (legacy requests without batch id): project-wide by wattage.
+                    $stmt_get_pallets = $conn_undo->prepare("
+                        SELECT ip.id 
+                        FROM inventory_pallets ip 
+                        JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id 
+                        JOIN modules m ON umi.unassigned_module_id = m.id 
+                        WHERE m.project_id = ? AND ip.wattage = ?
+                    ");
+                    $stmt_get_pallets->bind_param("ii", $project_id, $wattage);
+                }
             } else {
                 // For batch view, get pallets for the specific batch
                 $stmt_get_pallets = $conn_undo->prepare("
@@ -158,11 +173,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
                 throw new Exception("No pallets found for {$wattage}W modules.");
             }
 
-            // Check if any pallets are linked to deliveries
+            // Check if any pallets are linked downstream (deliveries/warranty)
             $placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
             $types = str_repeat('i', count($pallet_ids));
             
-            $stmtCheckDeliveries = $conn_undo->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+            $stmtCheckDeliveries = $conn_undo->prepare("
+                SELECT
+                    ip.id,
+                    MAX(CASE WHEN dp.inventory_pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_delivery_link,
+                    MAX(CASE WHEN wcr.pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_warranty_link
+                FROM inventory_pallets ip
+                LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+                LEFT JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id
+                WHERE ip.id IN ($placeholders)
+                GROUP BY ip.id
+                HAVING has_delivery_link = 1 OR has_warranty_link = 1
+            ");
             if (!$stmtCheckDeliveries) throw new Exception("Failed to prepare delivery check: " . $conn_undo->error);
             
             $stmtCheckDeliveries->bind_param($types, ...$pallet_ids);
@@ -170,12 +196,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             $resultDeliveries = $stmtCheckDeliveries->get_result();
             $linkedPallets = [];
             while ($row = $resultDeliveries->fetch_assoc()) {
-                $linkedPallets[] = $row['inventory_pallet_id'];
+                $flags = [];
+                if (!empty($row['has_delivery_link'])) $flags[] = 'delivery';
+                if (!empty($row['has_warranty_link'])) $flags[] = 'warranty';
+                $linkedPallets[] = $row['id'] . ' (' . implode('/', $flags) . ')';
             }
             $stmtCheckDeliveries->close();
 
             if (!empty($linkedPallets)) {
-                throw new Exception("Cannot undo palletization: Some {$wattage}W pallets are already linked to deliveries. Pallet IDs: " . implode(', ', $linkedPallets));
+                throw new Exception("Cannot undo palletization: Some {$wattage}W pallets are linked downstream. Pallet IDs: " . implode(', ', $linkedPallets));
             }
 
             // Delete pallets
@@ -191,7 +220,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             $stmtDelete->close();
             $conn_undo->commit();
             
-            $undoMessage = "Successfully deleted all $deletedCount pallet(s) for {$wattage}W modules. These modules are now available for re-palletization.";
+            if ($batchScopeId > 0) {
+                $undoMessage = "Successfully deleted all $deletedCount pallet(s) for {$wattage}W modules in batch #{$batchScopeId}. These modules are now available for re-palletization.";
+            } else {
+                $undoMessage = "Successfully deleted all $deletedCount pallet(s) for {$wattage}W modules. These modules are now available for re-palletization.";
+            }
             
         } catch (Exception $e) {
             $conn_undo->rollback();
@@ -224,11 +257,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
                 throw new Exception('No pallets selected for deletion.');
             }
 
-            // Check if any pallets are linked to deliveries
+            // Check if any pallets are linked downstream (deliveries/warranty)
             $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
             $types = str_repeat('i', count($palletIds));
             
-            $stmtCheckDeliveries = $conn_delete->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+            $stmtCheckDeliveries = $conn_delete->prepare("
+                SELECT
+                    ip.id,
+                    MAX(CASE WHEN dp.inventory_pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_delivery_link,
+                    MAX(CASE WHEN wcr.pallet_id IS NOT NULL THEN 1 ELSE 0 END) AS has_warranty_link
+                FROM inventory_pallets ip
+                LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+                LEFT JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id
+                WHERE ip.id IN ($placeholders)
+                GROUP BY ip.id
+                HAVING has_delivery_link = 1 OR has_warranty_link = 1
+            ");
             if (!$stmtCheckDeliveries) throw new Exception("Failed to prepare delivery check: " . $conn_delete->error);
             
             $stmtCheckDeliveries->bind_param($types, ...$palletIds);
@@ -236,12 +280,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             $resultDeliveries = $stmtCheckDeliveries->get_result();
             $linkedPallets = [];
             while ($row = $resultDeliveries->fetch_assoc()) {
-                $linkedPallets[] = $row['inventory_pallet_id'];
+                $flags = [];
+                if (!empty($row['has_delivery_link'])) $flags[] = 'delivery';
+                if (!empty($row['has_warranty_link'])) $flags[] = 'warranty';
+                $linkedPallets[] = $row['id'] . ' (' . implode('/', $flags) . ')';
             }
             $stmtCheckDeliveries->close();
 
             if (!empty($linkedPallets)) {
-                throw new Exception('Cannot delete pallets that are linked to deliveries. Pallet IDs: ' . implode(', ', $linkedPallets));
+                throw new Exception('Cannot delete pallets linked downstream (delivery/warranty). Pallet IDs: ' . implode(', ', $linkedPallets));
             }
 
             // Delete pallets
@@ -2280,6 +2327,7 @@ $conn->close();
                                                 <form method="POST" style="margin-top: 10px;">
                                                     <input type="hidden" name="action" value="undo_palletization">
                                                     <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <input type="hidden" name="batch_id" value="<?php echo $bId; ?>">
                                                     <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules in this batch?');" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
                                                         Undo All Palletization (Batch)
                                                     </button>
@@ -2309,6 +2357,7 @@ $conn->close();
                                                 <form method="POST" style="margin-top: 10px;">
                                                     <input type="hidden" name="action" value="undo_palletization">
                                                     <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <input type="hidden" name="batch_id" value="<?php echo $bId; ?>">
                                                     <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules in this batch?');" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
                                                         Undo All Palletization (Batch)
                                                     </button>

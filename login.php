@@ -363,6 +363,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             animation: slideDown 0.3s ease-out;
         }
 
+        .timeout-message {
+            background: #fef3c7 !important;
+            color: #92400e !important;
+            padding: 0.875rem 1rem !important;
+            border-radius: 12px !important;
+            margin-bottom: 1.5rem !important;
+            border-left: 4px solid #f59e0b !important;
+            font-size: 0.9375rem !important;
+            animation: slideDown 0.3s ease-out;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .timeout-message svg {
+            flex-shrink: 0;
+            color: #d97706;
+        }
+
         @keyframes slideDown {
             from {
                 opacity: 0;
@@ -505,10 +524,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <h1>Welcome Back</h1>
             <p>Sign in to your Solterra Solutions account</p>
             
+            <?php if (isset($_GET['timeout']) && $_GET['timeout'] === '1'): ?>
+                <div class="timeout-message">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                    Your session has expired. Please sign in again.
+                </div>
+            <?php endif; ?>
+
             <?php if (!empty($success_message)): ?>
                 <div class="success-message"><?php echo htmlspecialchars($success_message); ?></div>
             <?php endif; ?>
-            
+
             <?php if (!empty($error_message)): ?>
                 <p class="error-message"><?php echo htmlspecialchars($error_message); ?></p>
             <?php endif; ?>

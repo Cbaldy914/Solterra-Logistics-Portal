@@ -81,92 +81,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
         try {
             /* --- Collect Basic Inputs --- */
             $new_identifier = trim($_POST['pallet_identifier'] ?? '');
-            // Wattage is no longer editable - use current value
-            $current_wattage = $pallet['wattage'];
-            // $new_quantity = isset($_POST['quantity']) ? intval($_POST['quantity']) : 0; // No longer editable
-            // $new_status = trim($_POST['status'] ?? ''); // No longer editable
-            
-            // Get current quantity and status from the loaded pallet data
-            $current_quantity = $pallet['quantity'];
-            $current_status = $pallet['status'];
 
             /* --- Basic Validation --- */
             if (empty($new_identifier)) throw new Exception("Pallet Identifier cannot be empty.");
-            // No need to validate wattage/quantity/status from POST anymore
-
-            /* --- Handle Flash Test Data --- */
-            $current_flash_test_path = $pallet['flash_test_data'];
-            $new_flash_test_path = $current_flash_test_path; // Assume no change initially
-            $remove_current = isset($_POST['remove_flash_test']) && $_POST['remove_flash_test'] == '1';
-            $file_uploaded = isset($_FILES['flash_test_file']) && $_FILES['flash_test_file']['error'] === UPLOAD_ERR_OK;
-
-            // 1. Handle Removal Request
-            if ($remove_current && !empty($current_flash_test_path) && file_exists($current_flash_test_path)) {
-                if (!unlink($current_flash_test_path)) {
-                    error_log("Failed to delete old flash test file: {$current_flash_test_path}");
-                    // Decide if this is a critical error or just a warning
-                }
-                $new_flash_test_path = null; // Clear the path
-            }
-
-            // 2. Handle New Upload
-            if ($file_uploaded) {
-                $upload_dir = 'uploads/flash_tests/';
-                $allowed_types = ['application/pdf', 'text/csv', 'text/plain', 'image/jpeg', 'image/png']; // Example allowed types
-                $max_size = 5 * 1024 * 1024; // 5 MB
-
-                $file = $_FILES['flash_test_file'];
-                $file_type = mime_content_type($file['tmp_name']); // More reliable type check
-                $file_size = $file['size'];
-                $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-
-                if (!in_array($file_type, $allowed_types) && !in_array($file_ext, ['pdf','csv','txt','jpg','jpeg','png'])) { // Check extension as fallback
-                    throw new Exception("Invalid file type ({$file_type}/{$file_ext}). Allowed types: PDF, CSV, TXT, JPG, PNG.");
-                }
-                if ($file_size > $max_size) {
-                    throw new Exception("File size exceeds the limit of 5MB.");
-                }
-
-                // Create unique filename
-                $unique_filename = "flash_P{$pallet_id}_" . time() . "." . $file_ext;
-                $destination = $upload_dir . $unique_filename;
-
-                // Ensure upload directory exists
-                if (!is_dir($upload_dir)) {
-                    if (!mkdir($upload_dir, 0755, true)) {
-                        throw new Exception("Failed to create upload directory.");
-                    }
-                }
-
-                // Move the file
-                if (move_uploaded_file($file['tmp_name'], $destination)) {
-                    // Delete old file ONLY IF new one uploaded successfully AND remove wasn't checked
-                    if (!$remove_current && !empty($current_flash_test_path) && file_exists($current_flash_test_path)) {
-                        if (!unlink($current_flash_test_path)) {
-                             error_log("Failed to delete old flash test file after new upload: {$current_flash_test_path}");
-                             // Log warning, but proceed with update
-                        }
-                    }
-                    $new_flash_test_path = $destination; // Update path to new file
-                } else {
-                    throw new Exception("Failed to move uploaded file.");
-                }
-            } elseif ($remove_current) {
-                 $new_flash_test_path = null; // Ensure path is cleared if remove was checked and no new file uploaded
-            }
 
             /* --- Prepare and Execute Update --- */
-            // Update only identifier and flash_test_data (wattage is now read-only)
+            // Edit Pallet now only updates identifier. Flash test data lives at module document level.
             $sql_update = "UPDATE inventory_pallets SET 
-                                pallet_identifier = ?, 
-                                flash_test_data = ? 
+                                pallet_identifier = ? 
                            WHERE id = ?";
             $stmt_update = $conn->prepare($sql_update);
             if (!$stmt_update) throw new Exception("Failed to prepare update statement: " . $conn->error);
             
-            $stmt_update->bind_param("ssi", 
-                $new_identifier, 
-                $new_flash_test_path, 
+            $stmt_update->bind_param("si", 
+                $new_identifier,
                 $pallet_id
             );
 
@@ -174,9 +102,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
                 $conn->commit();
                 $successMessage = "Pallet '{$new_identifier}' (ID: {$pallet_id}) updated successfully.";
                 $_SESSION['manage_pallets_message'] = $successMessage;
+                $_SESSION['create_shipment_message'] = $successMessage;
                 
-                // No longer need to check for wattage changes since wattage is read-only
-                header("Location: manage_pallets.php");
+                $redirectAfterSave = 'create_shipment.php';
+                if ($breadcrumbProjectId > 0) {
+                    $redirectAfterSave .= '?project_id=' . (int)$breadcrumbProjectId;
+                }
+                header("Location: " . $redirectAfterSave);
                 exit();
             } else {
                 throw new Exception("Failed to execute update: " . $stmt_update->error);
@@ -185,10 +117,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
         } catch (Exception $e) {
             $conn->rollback();
             $errorMessage = $e->getMessage();
-            // If file was uploaded but DB failed, attempt to delete the newly uploaded file
-            if ($file_uploaded && isset($destination) && file_exists($destination)) {
-                 @unlink($destination);
-            }
         }
     }
 }
@@ -205,61 +133,149 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
 <link rel="icon" href="pictures/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;600;700&display=swap" rel="stylesheet">
 <style>
-  main { max-width: 700px; padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-  h1 { color: #293E4C; margin-bottom: 25px; text-align: center; }
-  form label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
-  form input[type=text],
-  form input[type=number],
-  form select,
-  form input[type=file] {
+  .edit-pallet-page { max-width: 980px; margin: 0 auto; padding: 0 20px 26px; }
+  .form-header {
+      background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+      border-radius: 24px;
+      padding: 28px 30px;
+      margin: 8px 0 18px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+      border: 1px solid rgba(72, 140, 154, 0.08);
+      position: relative;
+      overflow: hidden;
+  }
+  .form-header::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+  }
+  .header-title {
+      margin: 0 0 6px;
+      color: #293E4C;
+      font-size: 1.8rem;
+      font-weight: 700;
+  }
+  .header-subtitle {
+      margin: 0;
+      color: #6c757d;
+      font-size: 0.95rem;
+  }
+  .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 20px;
+      border: 1px solid #e9ecef;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+      margin-bottom: 16px;
+  }
+  .card h2 {
+      margin: 0 0 14px;
+      color: #293E4C;
+      font-size: 1.05rem;
+      font-weight: 700;
+  }
+  .field-label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #495057;
+  }
+  .text-input {
       width: 100%;
-      padding: 10px;
-      margin-bottom: 20px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
+      padding: 11px 12px;
+      border: 1px solid #ced4da;
+      border-radius: 8px;
+      font-size: 1rem;
+      color: #293E4C;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
       box-sizing: border-box;
+  }
+  .text-input:focus {
+      outline: none;
+      border-color: #488C9A;
+      box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.15);
+  }
+  .helper-text {
+      margin: 8px 0 0;
+      font-size: 0.84rem;
+      color: #6c757d;
+      line-height: 1.35;
+  }
+  .readonly-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+  }
+  .readonly-item {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 10px;
+      padding: 12px;
+  }
+  .readonly-k {
+      display: block;
+      font-size: 0.78rem;
+      color: #6c757d;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+  }
+  .readonly-v {
+      display: block;
+      font-weight: 700;
+      color: #293E4C;
       font-size: 1rem;
   }
-  fieldset {
-      border: 1px solid #ddd;
-      padding: 20px;
-      margin-bottom: 25px;
-      border-radius: 5px;
+  .actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
   }
-  legend { font-weight: bold; color: #488C9A; padding: 0 10px; margin-left: 10px; font-size: 1.1em; }
-  button[type=submit] {
-      background: #488C9A;
+  .btn-primary {
+      background: linear-gradient(135deg, #488C9A 0%, #3b7683 100%);
       color: #fff;
-      padding: 12px 25px;
+      padding: 11px 20px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       cursor: pointer;
-      font-size: 1.1em;
-      transition: background-color 0.3s ease;
+      font-size: 0.95rem;
+      font-weight: 600;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
   }
-  button[type=submit]:hover { background: #3A6E7F; }
-  .back-link { text-align: center; margin-top: 30px; }
-  .back-link a { color: #488C9A; text-decoration: none; font-weight: 500; }
-  .back-link a:hover { text-decoration: underline; }
-  .flash-test-info { margin-bottom: 15px; }
-  .flash-test-info span { font-weight: bold; margin-right: 10px; }
-  .flash-test-info a { color: #007bff; }
-  .remove-label { font-weight: normal; display: inline-block !important; margin-left: 10px;}
-  .remove-label input { width: auto !important; margin-right: 5px; vertical-align: middle;}
-  .error-message, .success-message { /* Shared style */
-    padding: 10px;
-    margin-bottom: 20px;
-    border-radius: 4px;
-    border: 1px solid;
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(72,140,154,0.25); }
+  .btn-link {
+      color: #5f6f7a;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.92rem;
+  }
+  .btn-link:hover { color: #293E4C; text-decoration: underline; }
+  .error-message, .success-message {
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      border: 1px solid;
   }
   .error-message { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
   .success-message { background-color: #d4edda; border-color: #c3e6cb; color: #155724; }
+  @media (max-width: 768px) {
+      .edit-pallet-page { padding: 0 12px 20px; }
+      .form-header { padding: 20px; border-radius: 16px; }
+      .header-title { font-size: 1.4rem; }
+  }
 </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 
-<main>
+<main class="edit-pallet-page">
     <?php
         require_once 'components/breadcrumbs.php';
         $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
@@ -269,7 +285,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
             'extra' => [ ['label' => 'Manage Pallets', 'url' => $mpUrl] ]
         ]);
     ?>
-    <h1>Edit Pallet <?php echo $pallet ? '- ' . htmlspecialchars($pallet['pallet_identifier']) : ''; ?></h1>
+    <?php
+        $backUrl = $mpUrl;
+    ?>
+
+    <div class="form-header">
+        <h1 class="header-title">Edit Pallet</h1>
+        <p class="header-subtitle">
+            Update the internal pallet identifier. Wattage, quantity, and status are derived from module and shipment workflow.
+        </p>
+    </div>
 
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message">
@@ -281,63 +306,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
             <?php echo htmlspecialchars($_SESSION['manage_pallets_message']); unset($_SESSION['manage_pallets_message']); ?>
         </div>
     <?php endif; ?>
-
-
     <?php if ($pallet): // Only show form if pallet was loaded ?>
-    <form action="edit_pallet.php?pallet_id=<?php echo $pallet_id; ?>" method="post" enctype="multipart/form-data">
+    <form action="edit_pallet.php?pallet_id=<?php echo $pallet_id; ?>" method="post">
         <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
 
-        <fieldset>
-            <legend>Pallet Information</legend>
-            <label for="pallet_identifier">Pallet Identifier:</label>
-            <input type="text" id="pallet_identifier" name="pallet_identifier" value="<?php echo htmlspecialchars($pallet['pallet_identifier'] ?? ''); ?>" required>
+        <div class="card">
+            <h2>Pallet Information</h2>
+            <label class="field-label" for="pallet_identifier">Internal Pallet Identifier</label>
+            <input
+                class="text-input"
+                type="text"
+                id="pallet_identifier"
+                name="pallet_identifier"
+                value="<?php echo htmlspecialchars($pallet['pallet_identifier'] ?? ''); ?>"
+                required
+            >
+            <p class="helper-text">
+                This is the internal Solterra label. Manufacturer pallet IDs should be linked separately through import/reconciliation workflow.
+            </p>
+        </div>
 
-            <label for="wattage">Wattage:</label>
-            <input type="text" id="wattage" name="wattage" value="<?php echo htmlspecialchars($pallet['wattage'] ?? ''); ?>" readonly style="background-color: #e9ecef;">
-            <small>Wattage is inherited from the module batch and cannot be changed here. To change wattage, edit the original module batch in "Modules" section.</small>
-
-            <label for="quantity">Quantity:</label>
-            <input type="number" id="quantity" name="quantity" value="<?php echo htmlspecialchars($pallet['quantity'] ?? ''); ?>" readonly style="background-color: #e9ecef;">
-            <small>Quantity cannot be changed here. Adjustments must reflect actual inventory changes, potentially impacting the original module batch.</small>
-
-            <label for="status">Status:</label>
-            <input type="text" id="status" name="status" value="<?php echo htmlspecialchars($pallet['status'] ?? ''); ?>" readonly style="background-color: #e9ecef;">
-            <small>Status reflects the pallet's condition (e.g., Good, Damaged) and cannot be changed here. Logistical status is derived from location and deliveries.</small>
-
-        </fieldset>
-
-        <fieldset>
-            <legend>Flash Test Data</legend>
-            
-            <?php if (!empty($pallet['flash_test_data'])): ?>
-                <div class="flash-test-info">
-                    <span>Current File:</span> 
-                    <?php 
-                        // Basic display - Link should point to a secure download script later
-                        echo htmlspecialchars(basename($pallet['flash_test_data'])); 
-                        // echo ' <a href="view_flash_test.php?pallet_id=' . $pallet_id . '" target="_blank">(View/Download)</a>'; 
-                    ?>
-                    <label class="remove-label">
-                        <input type="checkbox" name="remove_flash_test" value="1"> Remove current file
-                    </label>
+        <div class="card">
+            <h2>Read-Only Context</h2>
+            <div class="readonly-grid">
+                <div class="readonly-item">
+                    <span class="readonly-k">Pallet ID</span>
+                    <span class="readonly-v"><?php echo (int)$pallet_id; ?></span>
                 </div>
-            <?php else: ?>
-                <p>No flash test data currently uploaded.</p>
-            <?php endif; ?>
+                <div class="readonly-item">
+                    <span class="readonly-k">Wattage</span>
+                    <span class="readonly-v"><?php echo (int)($pallet['wattage'] ?? 0); ?>W</span>
+                </div>
+                <div class="readonly-item">
+                    <span class="readonly-k">Quantity</span>
+                    <span class="readonly-v"><?php echo number_format((int)($pallet['quantity'] ?? 0)); ?></span>
+                </div>
+                <div class="readonly-item">
+                    <span class="readonly-k">Status</span>
+                    <span class="readonly-v"><?php echo htmlspecialchars((string)($pallet['status'] ?? 'N/A')); ?></span>
+                </div>
+            </div>
+            <p class="helper-text">
+                Wattage, quantity, and status are managed by batch/palletization and shipment state, so they are intentionally read-only here.
+            </p>
+        </div>
 
-            <label for="flash_test_file">Upload New Flash Test File (Optional):</label>
-            <input type="file" id="flash_test_file" name="flash_test_file" accept=".pdf,.csv,.txt,.jpg,.jpeg,.png">
-            <small>Allowed types: PDF, CSV, TXT, JPG, PNG. Max size: 5MB.</small>
-
-        </fieldset>
-
-        <button type="submit" name="update_pallet">Update Pallet</button>
+        <div class="actions">
+            <a class="btn-link" href="<?php echo htmlspecialchars($backUrl); ?>">Cancel &amp; Go Back</a>
+            <button class="btn-primary" type="submit" name="update_pallet">Save Identifier</button>
+        </div>
     </form>
     <?php endif; // End if($pallet) ?>
-
-    <div class="back-link">
-        
-    </div>
 </main>
 
 </body>

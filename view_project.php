@@ -1883,6 +1883,10 @@ sort($unique_suppliers);
             background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
         }
 
+        .bulk-btn-import {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        }
+
         .select-column {
             width: 52px;
             text-align: center;
@@ -2178,10 +2182,11 @@ sort($unique_suppliers);
                     Deliveries
                 </h3>
             </div>
-            <?php if ($can_manage_deliveries && $grouped_deliveries): ?>
+            <?php if ($can_manage_deliveries): ?>
             <div class="table-header-admin">
                 <p class="admin-tools-title">Admin Tools: <span id="selectedDeliveryCount">0 selected</span></p>
                 <div class="admin-tools-buttons">
+                    <button type="button" class="bulk-btn bulk-btn-import" onclick="window.location.href='upload_shipments.php<?php echo $project_id ? '?project_id=' . $project_id : ''; ?>'">Import Shipments</button>
                     <button type="button" class="bulk-btn bulk-btn-edit" id="bulkEditBtn" onclick="openBulkEditModal()" disabled>Bulk Edit</button>
                     <button type="button" class="bulk-btn bulk-btn-receive" id="receiveToProjectBtn" onclick="openReceiveToProjectModal()" disabled>Receive to Project</button>
                     <button type="submit" form="deliveriesForm" name="delete_selected" class="bulk-btn bulk-btn-delete" id="bulkDeleteBtn" disabled onclick="return confirm('Delete selected deliveries? This cannot be undone.');">Bulk Delete</button>
