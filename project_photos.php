@@ -78,12 +78,19 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
     .page-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
     .header-content { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:24px; }
     .header-left { display:flex; align-items:center; gap:24px; }
+    .header-right { display:flex; align-items:center; justify-content:flex-end; }
     .header-info h1 { font-size: 2.5em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 8px 0; line-height: 1.2; }
-    .header-subtitle { color: #6c757d; font-size: 1.05em; font-weight: 500; margin: 0; }
+    .header-subtitle { color: #6c757d; font-size: 1.1em; font-weight: 500; margin: 0 0 6px 0; }
+    .header-note { color: #6c757d; font-size: 0.95em; margin: 0; }
     .cover-preview { width: 200px; height: 130px; background:#eaeff2; border-radius: 16px; overflow:hidden; box-shadow: 0 10px 20px rgba(72,140,154,0.2); border:1px solid rgba(72,140,154,0.15); }
     .cover-preview img { width:100%; height:100%; object-fit:cover; display:block; }
 
-    .photo-toolbar { display:flex; justify-content:flex-end; margin: 8px 0 20px; }
+    .header-save-btn { width:auto; padding:12px 18px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; box-shadow: 0 4px 15px rgba(72,140,154,0.3); cursor:pointer; transition: transform 0.06s ease, box-shadow 0.2s ease; }
+    .header-save-btn:disabled { opacity: 0.55; cursor: default; box-shadow: none; }
+
+    @media (max-width: 768px) {
+      .header-right { width: 100%; justify-content: flex-start; }
+    }
 
     .photo-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
     .photo-card { position:relative; border-radius:16px; overflow:hidden; background:#fff; box-shadow: 0 10px 20px rgba(0,0,0,0.12); border: 1px solid rgba(72,140,154,0.1); min-height: 180px; cursor: grab; transition: transform 0.18s ease, box-shadow 0.18s ease; }
@@ -134,21 +141,24 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
       <div class="header-left">
         <div class="cover-preview" id="coverPreview"><img src="<?php echo htmlspecialchars($cover_image_url); ?>" alt="Project Cover"/></div>
         <div class="header-info">
-          <h1>Project Photos: <?php echo htmlspecialchars($project_name); ?></h1>
-          <p class="header-subtitle">Drag to reorder — the first photo becomes the cover image.</p>
+          <h1>Project Photos</h1>
+          <p class="header-subtitle"><?php echo htmlspecialchars($project_name); ?></p>
+          <p class="header-note">Drag to reorder. The first photo becomes the cover image.</p>
         </div>
       </div>
+      <?php if ($can_upload): ?>
+      <div class="header-right">
+        <button id="saveBtn" type="button" class="document-button header-save-btn" onclick="saveAll()" disabled>
+          <i class="fas fa-save"></i> Save Changes
+        </button>
+      </div>
+      <?php endif; ?>
     </div>
   </div>
 
   <?php if ($can_upload): ?>
     <input type="hidden" id="tempToken" value="<?php echo htmlspecialchars(uniqid('pp_', true)); ?>" />
     <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" />
-    <div class="photo-toolbar">
-      <button id="saveBtn" type="button" class="document-button" style="width:auto; padding:12px 18px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; box-shadow: 0 4px 15px rgba(72,140,154,0.3); cursor:pointer; transition: transform 0.06s ease, box-shadow 0.2s ease;" onclick="saveAll()" disabled>
-        <i class="fas fa-save"></i> Save Changes
-      </button>
-    </div>
   <?php endif; ?>
 
   <div class="photo-grid" id="photoGrid">

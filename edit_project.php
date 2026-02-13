@@ -235,59 +235,6 @@ if ($stmtHours) {
     $stmtHours->close();
 }
 
-// Get actual module quantities by wattage (from assigned modules)
-$actual_modules = [];
-$stmtActual = $conn->prepare("
-    SELECT u.wattage, SUM(u.quantity) as total_quantity
-    FROM unassigned_module_items u
-    JOIN modules m ON u.unassigned_module_id = m.id
-    WHERE m.project_id = ?
-    GROUP BY u.wattage
-    ORDER BY u.wattage ASC
-");
-$stmtActual->bind_param("i", $project_id);
-$stmtActual->execute();
-$resultActual = $stmtActual->get_result();
-while ($row = $resultActual->fetch_assoc()) {
-    $actual_modules[] = $row;
-}
-$stmtActual->close();
-
-// Get module batches assigned to this project
-$assigned_batches = [];
-$stmtBatches = $conn->prepare("
-    SELECT m.id as batch_id, m.vendor_name, u.wattage, SUM(u.quantity) as quantity
-    FROM modules m
-    JOIN unassigned_module_items u ON m.id = u.unassigned_module_id
-    WHERE m.project_id = ?
-    GROUP BY m.id, u.wattage
-    ORDER BY m.id ASC, u.wattage ASC
-");
-$stmtBatches->bind_param("i", $project_id);
-$stmtBatches->execute();
-$resultBatches = $stmtBatches->get_result();
-while ($row = $resultBatches->fetch_assoc()) {
-    $assigned_batches[] = $row;
-}
-$stmtBatches->close();
-
-// Get module batches for edit links
-$module_batches = [];
-$stmtModuleBatches = $conn->prepare("
-    SELECT m.id, m.vendor_name,
-           (SELECT SUM(u.quantity) FROM unassigned_module_items u WHERE u.unassigned_module_id = m.id) as total_modules,
-           (SELECT GROUP_CONCAT(DISTINCT u.wattage ORDER BY u.wattage SEPARATOR ', ') FROM unassigned_module_items u WHERE u.unassigned_module_id = m.id) as wattages
-    FROM modules m
-    WHERE m.project_id = ?
-    ORDER BY m.id ASC
-");
-$stmtModuleBatches->bind_param("i", $project_id);
-$stmtModuleBatches->execute();
-$resultModuleBatches = $stmtModuleBatches->get_result();
-while ($row = $resultModuleBatches->fetch_assoc()) {
-    $module_batches[] = $row;
-}
-$stmtModuleBatches->close();
 ?>
 
 <!DOCTYPE html>
@@ -837,49 +784,6 @@ $stmtModuleBatches->close();
             border: 1px solid #f5c6cb;
         }
 
-        /* Module Summary Section */
-        .module-summary {
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 24px;
-            margin-top: 20px;
-        }
-        .module-summary h3 {
-            color: #293E4C;
-            margin-bottom: 16px;
-            font-size: 1.1rem;
-        }
-        .module-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-        .module-stat {
-            background: white;
-            padding: 16px;
-            border-radius: 10px;
-            border-left: 4px solid #488C9A;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-        }
-        .module-stat .wattage {
-            font-size: 1.2em;
-            font-weight: bold;
-            color: #293E4C;
-        }
-        .module-stat .quantity {
-            font-size: 1em;
-            color: #488C9A;
-            font-weight: 600;
-        }
-        .total-summary {
-            background: linear-gradient(135deg, #e8f4f8 0%, #d1ecf1 100%);
-            padding: 12px 16px;
-            border-radius: 8px;
-            text-align: center;
-            font-weight: 600;
-            color: #293E4C;
-        }
         .info-note {
             background: #fff3cd;
             border: 1px solid #ffeaa7;
@@ -1194,70 +1098,6 @@ $stmtModuleBatches->close();
             font-weight: bold;
         }
 
-        /* Module batch links */
-        .module-batch-links {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-top: 20px;
-        }
-        .module-batch-link {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 20px;
-            background: #f8f9fa;
-            border-radius: 10px;
-            border: 1px solid #e9ecef;
-            transition: all 0.2s ease;
-        }
-        .module-batch-link:hover {
-            border-color: #488C9A;
-            background: #fff;
-        }
-        .module-batch-link .batch-info {
-            display: flex;
-            flex-direction: column;
-        }
-        .module-batch-link .batch-name {
-            font-weight: 600;
-            color: #293E4C;
-        }
-        .module-batch-link .batch-details {
-            font-size: 0.85rem;
-            color: #6c757d;
-        }
-        .module-batch-link .batch-action {
-            padding: 8px 16px;
-            background: #488C9A;
-            color: #fff;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 0.9rem;
-            transition: background 0.2s ease;
-        }
-        .module-batch-link .batch-action:hover {
-            background: #3a7a87;
-        }
-        .add-batch-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 16px;
-            background: #fff;
-            border: 2px dashed #488C9A;
-            border-radius: 10px;
-            color: #488C9A;
-            font-weight: 500;
-            cursor: pointer;
-            text-decoration: none;
-            transition: all 0.2s ease;
-        }
-        .add-batch-btn:hover {
-            background: #488C9A;
-            color: #fff;
-        }
     </style>
 </head>
 <body>
@@ -1297,14 +1137,8 @@ $stmtModuleBatches->close();
                 <span class="step-label">Site Info</span>
                 <span class="step-tag optional">Optional</span>
             </div>
-            <div class="step-connector"></div>
-            <div class="step" data-step="3" onclick="goToStep(3)">
-                <div class="step-number">3</div>
-                <span class="step-label">Modules</span>
-                <span class="step-tag optional">View Only</span>
-            </div>
             <div class="current-step-label">
-                <span>Step <span id="currentStepNum">1</span> of 3:</span>
+                <span>Step <span id="currentStepNum">1</span> of 2:</span>
                 <span class="step-name" id="currentStepName">Project Details</span>
             </div>
         </div>
@@ -1524,83 +1358,6 @@ $stmtModuleBatches->close();
 
                 <div class="section-actions">
                     <button type="button" class="btn-back-step" onclick="goToStep(1)">
-                        <span>&larr;</span> Back
-                    </button>
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <button type="button" class="btn-continue" onclick="goToStep(3)">
-                            Continue to Modules <span>&rarr;</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Step 3: Module Summary -->
-        <div class="accordion-section" data-section="3">
-            <div class="accordion-header" onclick="toggleAccordion(3)">
-                <h2><span class="step-badge" id="badge-3">3</span> Module Summary</h2>
-                <span class="accordion-toggle">&#9660;</span>
-            </div>
-            <div class="accordion-content">
-                <div class="section-description">
-                    Manage module batches assigned to this project. Click on a batch to edit it.
-                </div>
-
-                <div class="module-summary">
-                    <?php if (!empty($actual_modules)): ?>
-                        <h4 class="form-subsection-title">Module Quantities by Wattage</h4>
-                        <div class="module-stats">
-                            <?php foreach ($actual_modules as $module_row): ?>
-                                <div class="module-stat">
-                                    <div class="wattage"><?php echo number_format($module_row['wattage']); ?>W</div>
-                                    <div class="quantity"><?php echo number_format($module_row['total_quantity']); ?> modules</div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-
-                        <div class="total-summary">
-                            <strong>Total Project Modules:
-                                <?php
-                                $total_all = array_sum(array_column($actual_modules, 'total_quantity'));
-                                echo number_format($total_all);
-                                ?>
-                            </strong>
-                        </div>
-                    <?php endif; ?>
-
-                    <h4 class="form-subsection-title" style="margin-top: 24px;">Module Batches</h4>
-                    <div class="module-batch-links">
-                        <?php if (!empty($module_batches)): ?>
-                            <?php foreach ($module_batches as $batch): ?>
-                                <div class="module-batch-link">
-                                    <div class="batch-info">
-                                        <span class="batch-name"><?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch #' . $batch['id']); ?></span>
-                                        <span class="batch-details">
-                                            <?php echo number_format($batch['total_modules'] ?? 0); ?> modules
-                                            <?php if (!empty($batch['wattages'])): ?>
-                                                &bull; <?php echo htmlspecialchars($batch['wattages']); ?>W
-                                            <?php endif; ?>
-                                        </span>
-                                    </div>
-                                    <a href="edit_module_batch.php?batch_id=<?php echo $batch['id']; ?>" class="batch-action">
-                                        <i class="fas fa-edit"></i> Edit
-                                    </a>
-                                </div>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <div style="text-align: center; padding: 20px; color: #666; background: #f8f9fa; border-radius: 10px;">
-                                <p style="margin: 0;">No module batches assigned to this project yet.</p>
-                            </div>
-                        <?php endif; ?>
-
-                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="add-batch-btn">
-                            <i class="fas fa-plus"></i> Add New Module Batch
-                        </a>
-                    </div>
-                </div>
-
-                <div class="section-actions">
-                    <button type="button" class="btn-back-step" onclick="goToStep(2)">
                         <span>&larr;</span> Back
                     </button>
                     <div style="display: flex; gap: 12px; align-items: center;">
@@ -1911,7 +1668,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateQuickSetButtons();
 });
 
-const stepNames = {1: 'Project Details', 2: 'Site Info', 3: 'Modules'};
+const stepNames = {1: 'Project Details', 2: 'Site Info'};
 
 function goToStep(step) {
     // Close current accordion

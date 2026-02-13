@@ -134,7 +134,7 @@ function isValidWarrantyTransition(string $from, string $to): bool {
 
 function isAdminRole(): bool {
     $role = $_SESSION['role'] ?? 'user';
-    return in_array($role, ['admin', 'global_admin'], true);
+    return in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
 }
 
 function getAllowedProjectIds(mysqli $conn, int $userId, string $role): ?array {

@@ -46,6 +46,7 @@
 }
 
 .project-header-icon {
+    position: relative;
     width: 150px;
     height: 120px;
     border-radius: 20px;
@@ -80,9 +81,56 @@
 .project-title-row {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
     flex-wrap: wrap;
     margin-bottom: 12px;
+}
+
+.project-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(72, 140, 154, 0.25);
+    background: rgba(72, 140, 154, 0.08);
+    color: #2b5a69;
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.project-edit-btn:hover {
+    background: rgba(72, 140, 154, 0.16);
+    color: #214551;
+    border-color: rgba(72, 140, 154, 0.35);
+}
+
+.project-photo-edit-btn {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(18, 33, 43, 0.72);
+    color: #ffffff;
+    text-decoration: none;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    backdrop-filter: blur(4px);
+    transition: all 0.2s ease;
+}
+
+.project-photo-edit-btn:hover {
+    background: rgba(18, 33, 43, 0.86);
+    color: #ffffff;
 }
 
 /* Health Indicator Badge */
@@ -1301,6 +1349,19 @@
     .project-header-icon {
         width: 60px;
         height: 60px;
+    }
+
+    .project-photo-edit-btn {
+        right: 4px;
+        bottom: 4px;
+        padding: 3px 6px;
+        font-size: 0.62rem;
+    }
+
+    .project-edit-btn {
+        margin-left: 0;
+        padding: 6px 10px;
+        font-size: 0.76rem;
     }
 
     .project-header-stats {

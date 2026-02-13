@@ -10,10 +10,10 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 
 // Determine if user can close out projects (admin/global_admin only)
-$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin']);
+$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
 
 // Determine if user can create/edit project summaries (admin/global_admin only)
-$canEditSummary = in_array($_SESSION['role'], ['admin', 'global_admin']);
+$canEditSummary = in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
 
 require_once '../config.php';
 require_once 'document_helpers.php';
@@ -715,7 +715,7 @@ function fetchProjectsForUser($conn, $user_id, $role) {
             SELECT p.id, p.project_name
             FROM projects p
             JOIN customer_account_users cau ON p.account_id = cau.account_id
-            WHERE cau.user_id = ? AND cau.role = 'admin'
+            WHERE cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
             ORDER BY p.project_name ASC
         ";
     } else {

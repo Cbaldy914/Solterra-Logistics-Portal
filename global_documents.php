@@ -100,7 +100,7 @@ $document_types = [
 ];
 
 // Check if user can upload (admin or global_admin only)
-$can_upload = in_array($user_role, ['admin', 'global_admin']);
+$can_upload = in_array($user_role, ['admin', 'global_admin', 'customer_admin']);
 
 // Check for upload parameters from project documents integration
 $auto_open_upload = isset($_GET['upload']) && $_GET['upload'] === '1';

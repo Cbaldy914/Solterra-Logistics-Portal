@@ -413,7 +413,7 @@ function deleteProjectDocument($conn, $document_id, $user_id) {
     
     // Check if user has permission (uploaded by them or they're admin/global_admin)
     $user_role = $_SESSION['role'] ?? '';
-    if ($document['uploaded_by'] != $user_id && !in_array($user_role, ['admin', 'global_admin'])) {
+    if ($document['uploaded_by'] != $user_id && !in_array($user_role, ['admin', 'global_admin', 'customer_admin'])) {
         throw new Exception("You don't have permission to delete this document.");
     }
     

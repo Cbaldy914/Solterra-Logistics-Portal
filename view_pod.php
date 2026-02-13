@@ -9,7 +9,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 // Basic role check: If user is "global_admin" or "admin," they can see all
-$allowed_admin_roles = ['global_admin', 'admin'];
+$allowed_admin_roles = ['global_admin', 'admin', 'customer_admin'];
 $current_role = isset($_SESSION['role']) ? $_SESSION['role'] : 'unknown';
 
 $delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : 0;

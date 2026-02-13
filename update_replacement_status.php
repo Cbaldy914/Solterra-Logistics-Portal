@@ -13,7 +13,7 @@ if (!isset($_SESSION['user_id'])) {
 
 // Check authorization (admin/global_admin only)
 $role = $_SESSION['role'] ?? 'user';
-if (!in_array($role, ['admin', 'global_admin'], true)) {
+if (!in_array($role, ['admin', 'global_admin', 'customer_admin'], true)) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit();

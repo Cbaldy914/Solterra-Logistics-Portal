@@ -9,7 +9,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $role = $_SESSION['role'] ?? '';
-if ($role !== 'global_admin' && $role !== 'admin') {
+if ($role !== 'global_admin' && $role !== 'admin' && $role !== 'customer_admin') {
     header("Location: unauthorized");
     exit();
 }
@@ -32,7 +32,7 @@ if (!$conn) {
 }
 
 $currentUserId = (int)$_SESSION['user_id'];
-$adminAccounts = $role === 'admin' ? account_ids_for_user($currentUserId) : [];
+$adminAccounts = in_array($role, ['admin', 'customer_admin'], true) ? account_ids_for_user($currentUserId) : [];
 
 // Fetch estimate data with account info
 $stmt = $conn->prepare("
@@ -69,7 +69,7 @@ if (!$estimateRow) {
 $estimate_data = json_decode($estimateRow['estimate_data'], true) ?? [];
 
 // Enforce account scoping for admins
-if ($role === 'admin') {
+if (in_array($role, ['admin', 'customer_admin'], true)) {
     $ownerAccounts = account_ids_for_user((int)$estimateRow['user_id']);
     if (empty(array_intersect($adminAccounts, $ownerAccounts))) {
         $conn->close();

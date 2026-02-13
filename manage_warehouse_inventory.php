@@ -1440,7 +1440,7 @@ $conn->close();
                     <?php if (!$is_port): ?>
                         <a href="create_shipment.php?source_type=warehouse&source_id=<?php echo $warehouse_id; ?>&status_filter=<?php echo urlencode($received_status); ?>" class="action-button">Create Shipment</a>
                     <?php endif; ?>
-                    <?php if ($is_port && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                    <?php if ($is_port && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                         <button id="moveContainerBtn" class="action-button" disabled>Move Container (Drayage)</button>
                     <?php endif; ?>
                 </div>
@@ -1450,7 +1450,7 @@ $conn->close();
                 <table id="storedTable">
                     <thead>
                         <tr>
-                            <?php if ($is_port && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                            <?php if ($is_port && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                 <th><input type="checkbox" id="selectAllContainers" onchange="toggleAllContainers()"> Select All</th>
                                 <th>Container Number</th>
                                 <th>Project(s)</th>
@@ -1475,7 +1475,7 @@ $conn->close();
                             <?php if (!empty($containers_cleared)): ?>
                                 <?php foreach ($containers_cleared as $container): ?>
                                     <tr>
-                                        <?php if (in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                        <?php if (in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
                                             <td><input type="checkbox" class="container-checkbox" value="<?php echo $container['delivery_id']; ?>" onchange="toggleMoveContainerBtn()"></td>
                                         <?php endif; ?>
                                         <td><?php echo htmlspecialchars($container['container_number'] ?? 'N/A'); ?></td>

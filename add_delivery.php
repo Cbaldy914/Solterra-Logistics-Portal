@@ -4,7 +4,7 @@ session_start();
 
 /* ─────────────────────────────────────────  SECURITY  ───────────────────────────────────────── */
 if (!isset($_SESSION['user_id']) ||
-    !in_array($_SESSION['role'], ['global_admin', 'admin'])) {
+    !in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'])) {
     header("Location: unauthorized");
     exit();
 }
@@ -13,8 +13,8 @@ $role = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 $account_id = null;
 
-if ($role === 'admin') {
-    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+if (in_array($role, ['admin', 'customer_admin'], true)) {
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
     if ($stmtAccount) {
         $stmtAccount->bind_param("i", $user_id);
         $stmtAccount->execute();
@@ -73,13 +73,13 @@ if ($stmtP) {
 
 // Fetch Warehouses
 $warehouse_sql = "SELECT id, name FROM warehouses";
-if ($role === 'admin') {
+if (in_array($role, ['admin', 'customer_admin'], true)) {
     $warehouse_sql .= " WHERE account_id = ?";
 }
 $warehouse_sql .= " ORDER BY name ASC";
 $stmtW = $conn->prepare($warehouse_sql);
 if ($stmtW) {
-    if ($role === 'admin') {
+    if (in_array($role, ['admin', 'customer_admin'], true)) {
         $stmtW->bind_param("i", $account_id);
     }
     $stmtW->execute();

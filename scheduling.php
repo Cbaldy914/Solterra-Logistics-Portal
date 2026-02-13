@@ -12,7 +12,7 @@ $role = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 
 // Allow admin, global_admin, and user access
-$is_admin = ($role === 'admin' || $role === 'global_admin');
+$is_admin = (in_array($role, ['admin', 'customer_admin'], true) || $role === 'global_admin' || $role === 'customer_admin');
 $is_global_admin = ($role === 'global_admin');
 $is_user = ($role === 'user');
 
@@ -39,8 +39,8 @@ if ($project_id <= 0) {
 
 // Account access control for admin users
 $account_id_for_admin = null;
-if ($role === 'admin') {
-    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
+if (in_array($role, ['admin', 'customer_admin'], true)) {
+    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
     $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
     if ($stmtAdminAcc) {
         $stmtAdminAcc->bind_param("i", $user_id);
@@ -65,12 +65,12 @@ if ($role === 'user') {
 } else {
     // For admin users
     $project_access_sql = "SELECT p.project_name, p.account_id FROM projects p WHERE p.id = ?";
-    if ($role === 'admin' && $account_id_for_admin) {
+    if (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin) {
         $project_access_sql .= " AND p.account_id = ?";
     }
     
     $project_access_stmt = $conn->prepare($project_access_sql);
-    if ($role === 'admin' && $account_id_for_admin) {
+    if (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin) {
         $project_access_stmt->bind_param("ii", $project_id, $account_id_for_admin);
     } else {
         $project_access_stmt->bind_param("i", $project_id);
