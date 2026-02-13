@@ -13,7 +13,7 @@ $user_id = $_SESSION['user_id'];
 $user_role = $_SESSION['role'];
 
 // Only admin and global_admin can upload
-if (!in_array($user_role, ['admin', 'global_admin'])) {
+if (!in_array($user_role, ['admin', 'global_admin', 'customer_admin'])) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Insufficient permissions']);
     exit();
@@ -75,7 +75,7 @@ try {
                 SELECT p.id, p.project_name 
                 FROM projects p 
                 JOIN customer_account_users cau ON p.account_id = cau.account_id 
-                WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+                WHERE p.id = ? AND cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
             ");
             $stmt->bind_param("ii", $project_id, $user_id);
         }

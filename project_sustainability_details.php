@@ -31,7 +31,7 @@ if (!$conn) {
  */
 $project_name = '';
 
-if ($role === 'admin' || $role === 'global_admin') {
+if ($role === 'admin' || $role === 'global_admin' || $role === 'customer_admin') {
     // Admin or global_admin => can see any project, just confirm it exists
     $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id=?");
     $stmt->bind_param("i", $project_id);

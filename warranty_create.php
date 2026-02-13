@@ -10,7 +10,7 @@ require_once __DIR__ . '/warranty_helpers.php';
 $conn = getDBConnection();
 
 $role = (string)($_SESSION['role'] ?? 'user');
-if (!in_array($role, ['admin','global_admin'], true)) { $conn->close(); header('Location: unauthorized.php'); exit(); }
+if (!in_array($role, ['admin','global_admin','customer_admin'], true)) { $conn->close(); header('Location: unauthorized.php'); exit(); }
 
 $userId = (int)($_SESSION['user_id'] ?? 0);
 $allowedProjectIds = getAllowedProjectIds($conn, $userId, $role); // null => all

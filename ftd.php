@@ -66,7 +66,7 @@ if (!$project_name) {
 }
 
 // Check if user can upload (admin or global_admin only)
-$can_upload = in_array($user_role, ['admin', 'global_admin']);
+$can_upload = in_array($user_role, ['admin', 'global_admin', 'customer_admin']);
 
 $conn->close();
 ?>

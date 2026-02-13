@@ -14,7 +14,7 @@ $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
 
 // Only admins and global_admins can create schedules
-if ($role !== 'admin' && $role !== 'global_admin') {
+if ($role !== 'admin' && $role !== 'global_admin' && $role !== 'customer_admin') {
     echo json_encode(['success' => false, 'message' => 'Permission denied']);
     exit();
 }
@@ -50,12 +50,12 @@ if (!$conn) {
 }
 
 // Verify user has access to this project
-if ($role === 'admin') {
+if (in_array($role, ['admin', 'customer_admin'], true)) {
     $stmt = $conn->prepare("
         SELECT p.id 
         FROM projects p
         JOIN customer_account_users cau ON p.account_id = cau.account_id
-        WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+        WHERE p.id = ? AND cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
         LIMIT 1
     ");
     $stmt->bind_param("ii", $project_id, $user_id);

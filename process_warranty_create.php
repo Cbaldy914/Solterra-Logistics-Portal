@@ -10,7 +10,7 @@ require_once __DIR__ . '/warranty_helpers.php';
 
 $userId = (int)($_SESSION['user_id'] ?? 0);
 $role = (string)($_SESSION['role'] ?? 'user');
-if (!in_array($role, ['admin','global_admin'], true)) { http_response_code(403); die('Unauthorized'); }
+if (!in_array($role, ['admin','global_admin','customer_admin'], true)) { http_response_code(403); die('Unauthorized'); }
 
 // CSRF
 if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'] ?? '', (string)$_POST['csrf_token'])) {

@@ -10,7 +10,7 @@ require_once __DIR__ . '/notifications.php';
 
 $userId = (int)($_SESSION['user_id'] ?? 0);
 $role = $_SESSION['role'] ?? 'user';
-if (!in_array($role, ['admin', 'global_admin'], true)) { http_response_code(403); die('Unauthorized'); }
+if (!in_array($role, ['admin', 'global_admin', 'customer_admin'], true)) { http_response_code(403); die('Unauthorized'); }
 
 $claimId = isset($_POST['claim_id']) ? (int)$_POST['claim_id'] : 0;
 $publicNotes = trim((string)($_POST['public_notes'] ?? ''));

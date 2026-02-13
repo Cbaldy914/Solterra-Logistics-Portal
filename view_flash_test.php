@@ -3,7 +3,7 @@ session_name("logistics_session");
 session_start();
 
 // Check if user is logged in and has appropriate role (admin/global_admin)
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['global_admin', 'admin'])) {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'])) {
     http_response_code(403); // Forbidden
     die("Access Denied: You do not have permission to view this file.");
 }

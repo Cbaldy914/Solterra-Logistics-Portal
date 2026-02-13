@@ -12,7 +12,7 @@ if (!isset($_SESSION['user_id'])) {
 $user_role = $_SESSION['role'];
 
 // Only admin and global_admin can access
-if (!in_array($user_role, ['admin', 'global_admin'])) {
+if (!in_array($user_role, ['admin', 'global_admin', 'customer_admin'])) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Insufficient permissions']);
     exit();
@@ -36,7 +36,7 @@ if ($warehouse_id <= 0) {
 
 $account_id = null;
 if ($user_role !== 'global_admin') {
-    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
     if ($stmtAccount) {
         $stmtAccount->bind_param("i", $_SESSION['user_id']);
         $stmtAccount->execute();

@@ -9,7 +9,7 @@ if (!isset($_SESSION['csrf_token'])) {
 
 /* ─────────────────────────── SECURITY / AUTH ─────────────────────────── */
 if (!isset($_SESSION['user_id']) ||
-    !in_array($_SESSION['role'], ['global_admin', 'admin'])) {
+    !in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'])) {
     header("Location: unauthorized");
     exit();
 }

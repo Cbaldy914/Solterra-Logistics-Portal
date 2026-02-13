@@ -3,7 +3,7 @@ session_name("logistics_session");
 session_start();
 
 // Check if user is logged in and has admin privileges
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Unauthorized access']);
     exit();
@@ -40,12 +40,12 @@ if (!in_array($document_type, $allowed_types)) {
 }
 
 // Verify project access for admin users
-if ($_SESSION['role'] === 'admin') {
+if (in_array($_SESSION['role'], ['admin', 'customer_admin'], true)) {
     $stmt = $conn->prepare("
         SELECT p.id 
         FROM projects p 
         JOIN customer_account_users cau ON p.account_id = cau.account_id 
-        WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+        WHERE p.id = ? AND cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
     ");
     $stmt->bind_param("ii", $project_id, $user_id);
     $stmt->execute();

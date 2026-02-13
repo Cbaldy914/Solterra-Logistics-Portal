@@ -16,7 +16,7 @@ if (!$conn) {
 
 $user_id = $_SESSION['user_id'];
 $user_role = $_SESSION['role'];
-$canDeleteArchives = in_array($user_role, ['admin', 'global_admin']);
+$canDeleteArchives = in_array($user_role, ['admin', 'global_admin', 'customer_admin']);
 
 function deleteDirectoryRecursive($dir) {
     if (!is_dir($dir)) {
@@ -57,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_archive_id']))
             SELECT ap.id, ap.project_id, ap.account_id, ap.project_name, ap.archive_path
             FROM archived_projects ap
             JOIN customer_account_users cau ON ap.account_id = cau.account_id
-            WHERE ap.id = ? AND cau.user_id = ? AND cau.role = "admin"
+            WHERE ap.id = ? AND cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
         ');
         $stmt->bind_param('ii', $archive_id, $user_id);
     }

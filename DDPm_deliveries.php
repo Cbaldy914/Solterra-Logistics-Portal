@@ -27,7 +27,7 @@ if (!$conn) {
 }
 
 // Verify that the user has access to this project
-if ($role === 'admin') {
+if ($role === 'admin' || $role === 'customer_admin') {
     // Admins have access to all projects
     $stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
     $stmt->bind_param("i", $project_id);
@@ -411,7 +411,7 @@ $conn->close();
                                             View POD
                                         </a>
                                     <?php else: ?>
-                                        <?php if ($_SESSION['role'] === 'admin'): ?>
+                                        <?php if (in_array($_SESSION['role'], ['admin', 'customer_admin'], true)): ?>
                                             <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>">
                                                 Upload POD
                                             </a>

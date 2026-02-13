@@ -3,7 +3,7 @@ session_name("logistics_session");
 session_start();
 
 // Allow access for admin, global_admin, and user roles
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'user'])) {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin', 'user'])) {
     header("Location: unauthorized");
     exit();
 }
@@ -46,8 +46,8 @@ $start_time = microtime(true);
 $account_id_for_admin = null;
 $user_account_ids = [];
 
-if ($role === 'admin') {
-    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
+if (in_array($role, ['admin', 'customer_admin'], true)) {
+    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
     $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
     if ($stmtAdminAcc) {
         $stmtAdminAcc->bind_param("i", $user_id);
@@ -102,7 +102,7 @@ try {
             WHERE (p.status IS NULL OR p.status = 'active')
             ORDER BY p.project_name ASC
         ");
-    } else if ($role === 'admin' && $account_id_for_admin) {
+    } else if (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin) {
         $stmtProjects = $conn->prepare("
             SELECT p.id, p.project_name, p.street_address, p.city, p.state, p.zip_code, c.name as account_name
             FROM projects p

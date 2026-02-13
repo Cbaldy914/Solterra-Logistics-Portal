@@ -521,7 +521,7 @@ if (!$conn) {
 }
 
 // Check if the user is an admin
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] != 'global_admin' && $_SESSION['role'] != 'admin')) {
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] != 'global_admin' && $_SESSION['role'] != 'admin' && $_SESSION['role'] != 'customer_admin')) {
     header("Location: unauthorized");
     exit();
 }
@@ -531,7 +531,7 @@ $account_id_for_admin = null;
 $is_global_admin = ($_SESSION['role'] === 'global_admin');
 
 if (!$is_global_admin) { 
-    $stmtAdminAcc = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    $stmtAdminAcc = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
     if ($stmtAdminAcc) {
         $stmtAdminAcc->bind_param("i", $_SESSION['user_id']);
         $stmtAdminAcc->execute();

@@ -829,7 +829,7 @@ $conn->close();
             ];
         } else {
             $mpUrl = '';
-            if ($role === 'admin' || $role === 'global_admin') {
+            if ($role === 'admin' || $role === 'global_admin' || $role === 'customer_admin') {
                 $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
             } else {
                 $mpUrl = 'manage_pallets.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
@@ -999,7 +999,7 @@ $conn->close();
                                 <?php foreach ($associated_deliveries as $delivery): ?>
                                     <tr>
                                         <td>
-                                            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+                                            <?php if ($role === 'admin' || $role === 'global_admin' || $role === 'customer_admin'): ?>
                                                 <a href="manage_deliveries.php#delivery-<?php echo $delivery['delivery_id']; ?>" style="color: #488C9A; text-decoration: none; font-weight: 500;"><?php echo $delivery['delivery_id']; ?></a>
                                             <?php else: ?>
                                                 <span style="font-weight: 500;"><?php echo $delivery['delivery_id']; ?></span>
@@ -1084,7 +1084,7 @@ $conn->close();
                                 <?php foreach ($warehouse_history as $warehouse): ?>
                                     <tr>
                                         <td>
-                                            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+                                            <?php if ($role === 'admin' || $role === 'global_admin' || $role === 'customer_admin'): ?>
                                                 <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse['warehouse_id']; ?>" style="color: #488C9A; text-decoration: none; font-weight: 500;"><?php echo htmlspecialchars($warehouse['warehouse_name']); ?></a>
                                             <?php else: ?>
                                                 <span style="font-weight: 500;"><?php echo htmlspecialchars($warehouse['warehouse_name']); ?></span>

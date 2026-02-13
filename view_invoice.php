@@ -49,7 +49,7 @@ if (empty($invoice_file)) {
 // Now we must verify that the current user has access:
 
 // If user is global_admin or admin, we allow access unconditionally
-if ($role === 'global_admin' || $role === 'admin') {
+if ($role === 'global_admin' || $role === 'admin' || $role === 'customer_admin') {
     $hasAccess = true;
 } else {
     // Otherwise, we check if this user belongs to the same account via customer_account_users
