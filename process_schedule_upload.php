@@ -346,6 +346,8 @@ function handleImport($conn, $user_id) {
             saveColumnMapping($conn, $manufacturer_id, $account_id, $columnMapping, $user_id);
         }
 
+        syncProjectWattageOrdersCanonical($conn, $project_id);
+
         $conn->commit();
 
         // Clean up temp file
@@ -480,12 +482,9 @@ function processSchedulePallet($conn, $palletData, $project_id, $account_id, $ma
     // Map to inventory pallet status
     $palletStatus = mapToPalletStatus($status);
 
-    // Find or create unassigned_module_item for this wattage
-    $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
-
     // Check if pallet exists
     $stmt = $conn->prepare("
-        SELECT id FROM inventory_pallets
+        SELECT id, wattage, quantity FROM inventory_pallets
         WHERE manufacturer_pallet_id = ? AND assigned_project_id = ?
     ");
     $stmt->bind_param("si", $palletId, $project_id);
@@ -494,22 +493,33 @@ function processSchedulePallet($conn, $palletData, $project_id, $account_id, $ma
     $stmt->close();
 
     if ($existingPallet) {
-        // Update existing pallet
+        $oldWattage = (int)($existingPallet['wattage'] ?? 0);
+        $oldQuantity = (int)($existingPallet['quantity'] ?? 0);
+        if ($oldWattage !== (int)$wattage || $oldQuantity !== (int)$quantity) {
+            throw new Exception(
+                "Schedule import cannot change wattage/quantity for existing pallet '{$palletId}' " .
+                "({$oldWattage}W x {$oldQuantity} -> {$wattage}W x {$quantity}). " .
+                "Use module batch reconciliation for structural changes."
+            );
+        }
+
+        // Metadata-only update for existing pallet.
         $stmt = $conn->prepare("
             UPDATE inventory_pallets SET
-                wattage = ?,
-                quantity = ?,
                 status = ?,
                 pallet_identifier = COALESCE(pallet_identifier, ?),
                 schedule_upload_id = ?
             WHERE id = ?
         ");
-        $stmt->bind_param("iissii", $wattage, $quantity, $palletStatus, $palletId, $uploadId, $existingPallet['id']);
+        $stmt->bind_param("ssii", $palletStatus, $palletId, $uploadId, $existingPallet['id']);
         $stmt->execute();
         $stmt->close();
         $inventoryPalletId = $existingPallet['id'];
         $result['updated'] = 1;
     } else {
+        // New pallet path: create/extend canonical module-item totals first.
+        $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
+
         // Create new pallet
         $stmt = $conn->prepare("
             INSERT INTO inventory_pallets (
@@ -601,11 +611,27 @@ function findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantityToAdd)
     $stmt = $conn->prepare("
         INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
         VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            quantity = quantity + VALUES(quantity)
     ");
     $stmt->bind_param("iii", $moduleBatchId, $wattage, $quantityToAdd);
     $stmt->execute();
-    $itemId = $conn->insert_id;
+    $itemId = (int)$conn->insert_id;
     $stmt->close();
+
+    if ($itemId <= 0) {
+        $stmt = $conn->prepare("
+            SELECT id FROM unassigned_module_items
+            WHERE unassigned_module_id = ? AND wattage = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param("ii", $moduleBatchId, $wattage);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $itemId = (int)($row['id'] ?? 0);
+    }
 
     return $itemId;
 }
@@ -681,4 +707,53 @@ function getAccountIdForUser($conn, $user_id) {
     $row = $result->fetch_assoc();
     $stmt->close();
     return $row ? $row['account_id'] : null;
+}
+
+function syncProjectWattageOrdersCanonical($conn, $projectId) {
+    $projectId = (int)$projectId;
+    if ($projectId <= 0) {
+        return;
+    }
+
+    $totals = [];
+    $stmtTotals = $conn->prepare("
+        SELECT CAST(umi.wattage AS CHAR) AS wattage_key, SUM(umi.quantity) AS total_qty
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ? AND umi.wattage > 0 AND umi.quantity > 0
+        GROUP BY umi.wattage
+    ");
+    if (!$stmtTotals) {
+        throw new Exception('Failed preparing canonical totals query: ' . $conn->error);
+    }
+    $stmtTotals->bind_param('i', $projectId);
+    $stmtTotals->execute();
+    $resTotals = $stmtTotals->get_result();
+    while ($row = $resTotals->fetch_assoc()) {
+        $wattage = (string)($row['wattage_key'] ?? '');
+        $qty = (int)($row['total_qty'] ?? 0);
+        if ($wattage === '' || $qty <= 0) { continue; }
+        $totals[$wattage] = $qty;
+    }
+    $stmtTotals->close();
+
+    $stmtDelete = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?");
+    if (!$stmtDelete) {
+        throw new Exception('Failed preparing project_wattage_orders cleanup: ' . $conn->error);
+    }
+    $stmtDelete->bind_param('i', $projectId);
+    $stmtDelete->execute();
+    $stmtDelete->close();
+
+    if (!empty($totals)) {
+        $stmtInsert = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)");
+        if (!$stmtInsert) {
+            throw new Exception('Failed preparing project_wattage_orders insert: ' . $conn->error);
+        }
+        foreach ($totals as $wattage => $qty) {
+            $stmtInsert->bind_param('isi', $projectId, $wattage, $qty);
+            $stmtInsert->execute();
+        }
+        $stmtInsert->close();
+    }
 }

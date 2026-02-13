@@ -492,27 +492,50 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        .breadcrumb {
-            display: flex;
-            margin-bottom: 20px;
-            margin-top: 10px;
-            margin-left: 20px;
+        main {
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 0 12px 24px;
         }
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
+        .page-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 28px 30px;
+            margin: 8px 20px 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
         }
-        .breadcrumb .separator {
-            margin: 0 8px;
+        .page-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .page-header h1 {
+            margin: 0 0 6px;
+            color: #293E4C;
+            font-size: 1.95rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .page-header p {
+            margin: 0;
             color: #6c757d;
+            font-size: 0.95rem;
         }
         .details-container {
-            background-color: #f9f9f9;
+            background-color: #fff;
             padding: 20px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            border-radius: 14px;
             margin-bottom: 30px;
             margin: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.04);
         }
         .details-container h2 {
             margin-top: 0;
@@ -536,6 +559,11 @@ $conn->close();
         }
         .deliveries-section {
             margin: 20px;
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 14px;
+            padding: 18px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.04);
         }
         .deliveries-section h2 {
              margin-top: 0;
@@ -726,6 +754,14 @@ $conn->close();
         }
 
         @media screen and (max-width: 768px) {
+            .page-header {
+                margin: 8px 10px 14px;
+                padding: 20px;
+                border-radius: 16px;
+            }
+            .page-header h1 {
+                font-size: 1.45rem;
+            }
             .details-list dt {
                 width: 100%;
                 float: none;
@@ -809,7 +845,12 @@ $conn->close();
     ?>
 
     <div class="main-content">
-        <h1>Pallet Details - ID: <?php echo $pallet_id; ?></h1>
+        <div class="page-header">
+            <h1>Pallet Details</h1>
+            <p>
+                Pallet ID <?php echo (int)$pallet_id; ?>. Full delivery, warehouse, and cost history for this pallet.
+            </p>
+        </div>
 
         <?php if (!empty($errorMessage)): ?>
             <div class="error-message">

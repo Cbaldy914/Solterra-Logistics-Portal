@@ -9,6 +9,12 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+$role = $_SESSION['role'] ?? 'user';
+if (!in_array($role, ['admin', 'global_admin', 'customer_admin', 'user'], true)) {
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+    exit();
+}
+
 require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {
@@ -16,32 +22,44 @@ if (!$conn) {
     exit();
 }
 
-$user_id = $_SESSION['user_id'];
-$role = $_SESSION['role'];
+$user_id = (int)$_SESSION['user_id'];
+$is_global_admin = ($role === 'global_admin');
 
 // Get pagination parameters
-$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-$pageSize = isset($_GET['pageSize']) ? min(500, max(1, intval($_GET['pageSize']))) : 100;
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$pageSize = isset($_GET['pageSize']) ? min(500, max(1, (int)$_GET['pageSize'])) : 100;
 $offset = ($page - 1) * $pageSize;
 
 // Get filter parameters
-$search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$projectFilter = isset($_GET['project']) ? trim($_GET['project']) : '';
-$wattageFilter = isset($_GET['wattage']) ? trim($_GET['wattage']) : '';
-$statusFilter = isset($_GET['status']) ? trim($_GET['status']) : '';
-$projectIdFromUrl = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
+$search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
+$projectFilter = isset($_GET['project']) ? trim((string)$_GET['project']) : '';
+$wattageFilter = isset($_GET['wattage']) ? trim((string)$_GET['wattage']) : '';
+$statusFilter = isset($_GET['status']) ? trim((string)$_GET['status']) : '';
+$projectIdFromUrl = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 
-// Get account_id for admin role
-$account_id_for_admin = null;
-if ($role === 'admin') {
-    $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    if ($row = $result->fetch_assoc()) {
-        $account_id_for_admin = $row['account_id'];
+$account_id_for_user = null;
+if (!$is_global_admin) {
+    if (in_array($role, ['admin', 'customer_admin'], true)) {
+        $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    } else {
+        $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
     }
-    $stmt->close();
+
+    if ($stmtAccount) {
+        $stmtAccount->bind_param('i', $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($acct);
+        if ($stmtAccount->fetch()) {
+            $account_id_for_user = (int)$acct;
+        }
+        $stmtAccount->close();
+    }
+
+    if (!$account_id_for_user) {
+        echo json_encode(['success' => false, 'message' => 'User is not associated with an account']);
+        $conn->close();
+        exit();
+    }
 }
 
 // Allowed statuses
@@ -56,7 +74,6 @@ $allowed_statuses = [
 ];
 
 try {
-    // Build base query
     $baseSelect = "SELECT
         ip.id AS pallet_id,
         ip.pallet_identifier,
@@ -87,14 +104,20 @@ try {
         COALESCE(ml.country, 'USA') AS origin_vendor_country,
         m.account_id AS pallet_account_id,
         w.name AS current_warehouse_name,
-        w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
+        w.street_address AS warehouse_street,
+        w.city AS warehouse_city,
+        w.state AS warehouse_state,
+        w.zip_code AS warehouse_zip,
         p_current.project_name AS current_project_name,
         p_current.account_id AS current_project_account_id,
-        p_current.street_address as project_street, p_current.city as project_city, p_current.state as project_state, p_current.zip_code as project_zip,
+        p_current.street_address AS project_street,
+        p_current.city AS project_city,
+        p_current.state AS project_state,
+        p_current.zip_code AS project_zip,
         p_assigned.project_name AS assigned_project_name,
         p_assigned.account_id AS assigned_project_account_id,
         COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') AS display_project_name,
-        GROUP_CONCAT(DISTINCT CONCAT(d.id, ':', COALESCE(d.bol_number, 'No BOL')) ORDER BY d.id SEPARATOR '|') as delivery_info";
+        GROUP_CONCAT(DISTINCT CONCAT(d.id, ':', COALESCE(d.bol_number, 'No BOL')) ORDER BY d.id SEPARATOR '|') AS delivery_info";
 
     $baseFrom = " FROM inventory_pallets ip
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
@@ -109,26 +132,23 @@ try {
 
     $params = [];
     $types = '';
-
-    // Build WHERE clause
     $whereConditions = [];
-    $status_placeholders = str_repeat('?,', count($allowed_statuses) - 1) . '?';
+
+    $status_placeholders = implode(',', array_fill(0, count($allowed_statuses), '?'));
     $whereConditions[] = "ip.status IN ($status_placeholders)";
     foreach ($allowed_statuses as $status) {
         $params[] = $status;
         $types .= 's';
     }
 
-    // Account filtering for admin role
-    if ($role === 'admin' && $account_id_for_admin) {
+    if (!$is_global_admin && $account_id_for_user) {
         $whereConditions[] = "(p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)";
-        $params[] = $account_id_for_admin;
-        $params[] = $account_id_for_admin;
-        $params[] = $account_id_for_admin;
+        $params[] = $account_id_for_user;
+        $params[] = $account_id_for_user;
+        $params[] = $account_id_for_user;
         $types .= 'iii';
     }
 
-    // Project filter from URL
     if ($projectIdFromUrl > 0) {
         $whereConditions[] = "(p_current.id = ? OR p_assigned.id = ?)";
         $params[] = $projectIdFromUrl;
@@ -136,7 +156,6 @@ try {
         $types .= 'ii';
     }
 
-    // User filters
     if ($projectFilter !== '') {
         if ($projectFilter === 'Unassigned') {
             $whereConditions[] = "COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') = 'Unassigned'";
@@ -148,19 +167,19 @@ try {
     }
 
     if ($wattageFilter !== '') {
-        $whereConditions[] = "ip.wattage = ?";
+        $whereConditions[] = 'ip.wattage = ?';
         $params[] = $wattageFilter;
         $types .= 's';
     }
 
     if ($statusFilter !== '') {
-        $whereConditions[] = "ip.status = ?";
+        $whereConditions[] = 'ip.status = ?';
         $params[] = $statusFilter;
         $types .= 's';
     }
 
     if ($search !== '') {
-        $searchParam = "%$search%";
+        $searchParam = "%{$search}%";
         $whereConditions[] = "(ip.pallet_identifier LIKE ? OR ip.status LIKE ? OR COALESCE(p_current.project_name, p_assigned.project_name, '') LIKE ?)";
         $params[] = $searchParam;
         $params[] = $searchParam;
@@ -168,33 +187,88 @@ try {
         $types .= 'sss';
     }
 
-    $whereClause = " WHERE " . implode(" AND ", $whereConditions);
-    $groupBy = " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date,
-                 ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id,
-                 ip.manufacturer_location_id, m.vendor_name, m.pallets_per_truck, m.account_id, ml.street_address,
-                 ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address,
-                 w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address,
-                 p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id";
+    $whereClause = ' WHERE ' . implode(' AND ', $whereConditions);
 
-    // Get total count first
-    $countSql = "SELECT COUNT(DISTINCT ip.id) as total" . $baseFrom . $whereClause;
+    $groupBy = " GROUP BY
+        ip.id,
+        ip.pallet_identifier,
+        ip.wattage,
+        ip.quantity,
+        ip.status,
+        ip.arrival_date,
+        ip.unassigned_module_item_id,
+        ip.current_warehouse_id,
+        ip.current_project_id,
+        ip.assigned_project_id,
+        ip.manufacturer_location_id,
+        m.vendor_name,
+        m.pallets_per_truck,
+        m.account_id,
+        ml.street_address,
+        ml.city,
+        ml.state,
+        ml.zip_code,
+        ml.country,
+        ml.location_name,
+        mfg.name,
+        w.name,
+        w.street_address,
+        w.city,
+        w.state,
+        w.zip_code,
+        p_current.project_name,
+        p_current.account_id,
+        p_current.street_address,
+        p_current.city,
+        p_current.state,
+        p_current.zip_code,
+        p_assigned.project_name,
+        p_assigned.account_id";
+
+    $countSql = 'SELECT COUNT(DISTINCT ip.id) AS total' . $baseFrom . $whereClause;
     $countStmt = $conn->prepare($countSql);
-    if (!empty($types)) {
+    if (!$countStmt) {
+        throw new Exception('Failed to prepare count query');
+    }
+    if ($types !== '') {
         $countStmt->bind_param($types, ...$params);
     }
     $countStmt->execute();
     $countResult = $countStmt->get_result();
-    $totalCount = $countResult->fetch_assoc()['total'];
+    $totalCount = (int)($countResult->fetch_assoc()['total'] ?? 0);
     $countStmt->close();
 
-    // Get paginated results
-    $sql = $baseSelect . $baseFrom . $whereClause . $groupBy . " ORDER BY ip.id ASC LIMIT ? OFFSET ?";
-    $params[] = $pageSize;
-    $params[] = $offset;
-    $types .= 'ii';
+    $statusCounts = [];
+    $statusCountsSql = 'SELECT ip.status, COUNT(DISTINCT ip.id) AS total' . $baseFrom . $whereClause . ' GROUP BY ip.status';
+    $statusStmt = $conn->prepare($statusCountsSql);
+    if (!$statusStmt) {
+        throw new Exception('Failed to prepare status counts query');
+    }
+    if ($types !== '') {
+        $statusStmt->bind_param($types, ...$params);
+    }
+    $statusStmt->execute();
+    $statusResult = $statusStmt->get_result();
+    while ($statusRow = $statusResult->fetch_assoc()) {
+        $statusKey = (string)($statusRow['status'] ?? '');
+        if ($statusKey === '') {
+            continue;
+        }
+        $statusCounts[$statusKey] = (int)($statusRow['total'] ?? 0);
+    }
+    $statusStmt->close();
+
+    $sql = $baseSelect . $baseFrom . $whereClause . $groupBy . ' ORDER BY ip.id ASC LIMIT ? OFFSET ?';
+    $queryParams = $params;
+    $queryTypes = $types . 'ii';
+    $queryParams[] = $pageSize;
+    $queryParams[] = $offset;
 
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param($types, ...$params);
+    if (!$stmt) {
+        throw new Exception('Failed to prepare pallet query');
+    }
+    $stmt->bind_param($queryTypes, ...$queryParams);
     $stmt->execute();
     $result = $stmt->get_result();
 
@@ -204,50 +278,72 @@ try {
     }
     $stmt->close();
 
-    // Get filter options for dropdowns (only on first page load or when needed)
     $filterOptions = [];
     if ($page === 1) {
-        // Get distinct projects
-        $projectsSql = "SELECT DISTINCT COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') as project_name
-                        FROM inventory_pallets ip
-                        LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
-                        LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
-                        WHERE ip.status IN ($status_placeholders)";
-        if ($role === 'admin' && $account_id_for_admin) {
-            $projectsSql .= " AND (p_current.account_id = ? OR p_assigned.account_id = ?)";
+        $projectsSql = "SELECT DISTINCT COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') AS project_name
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            WHERE ip.status IN ($status_placeholders)";
+
+        if (!$is_global_admin && $account_id_for_user) {
+            $projectsSql .= ' AND (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)';
         }
-        $projectsSql .= " ORDER BY project_name";
+        $projectsSql .= ' ORDER BY project_name';
 
         $pStmt = $conn->prepare($projectsSql);
-        if ($role === 'admin' && $account_id_for_admin) {
-            $pParams = array_merge($allowed_statuses, [$account_id_for_admin, $account_id_for_admin]);
-            $pTypes = str_repeat('s', count($allowed_statuses)) . 'ii';
+        if ($pStmt) {
+            if (!$is_global_admin && $account_id_for_user) {
+                $pParams = array_merge($allowed_statuses, [$account_id_for_user, $account_id_for_user, $account_id_for_user]);
+                $pTypes = str_repeat('s', count($allowed_statuses)) . 'iii';
+            } else {
+                $pParams = $allowed_statuses;
+                $pTypes = str_repeat('s', count($allowed_statuses));
+            }
             $pStmt->bind_param($pTypes, ...$pParams);
-        } else {
-            $pTypes = str_repeat('s', count($allowed_statuses));
-            $pStmt->bind_param($pTypes, ...$allowed_statuses);
+            $pStmt->execute();
+            $pResult = $pStmt->get_result();
+            $filterOptions['projects'] = [];
+            while ($pRow = $pResult->fetch_assoc()) {
+                $filterOptions['projects'][] = $pRow['project_name'];
+            }
+            $pStmt->close();
         }
-        $pStmt->execute();
-        $pResult = $pStmt->get_result();
-        $filterOptions['projects'] = [];
-        while ($pRow = $pResult->fetch_assoc()) {
-            $filterOptions['projects'][] = $pRow['project_name'];
-        }
-        $pStmt->close();
 
-        // Get distinct wattages
-        $wattagesSql = "SELECT DISTINCT ip.wattage FROM inventory_pallets ip WHERE ip.status IN ($status_placeholders) ORDER BY ip.wattage";
+        $wattagesSql = "SELECT DISTINCT ip.wattage
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            WHERE ip.status IN ($status_placeholders)";
+
+        if (!$is_global_admin && $account_id_for_user) {
+            $wattagesSql .= ' AND (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)';
+        }
+        $wattagesSql .= ' ORDER BY ip.wattage';
+
         $wStmt = $conn->prepare($wattagesSql);
-        $wStmt->bind_param(str_repeat('s', count($allowed_statuses)), ...$allowed_statuses);
-        $wStmt->execute();
-        $wResult = $wStmt->get_result();
-        $filterOptions['wattages'] = [];
-        while ($wRow = $wResult->fetch_assoc()) {
-            $filterOptions['wattages'][] = $wRow['wattage'];
+        if ($wStmt) {
+            if (!$is_global_admin && $account_id_for_user) {
+                $wParams = array_merge($allowed_statuses, [$account_id_for_user, $account_id_for_user, $account_id_for_user]);
+                $wTypes = str_repeat('s', count($allowed_statuses)) . 'iii';
+            } else {
+                $wParams = $allowed_statuses;
+                $wTypes = str_repeat('s', count($allowed_statuses));
+            }
+            $wStmt->bind_param($wTypes, ...$wParams);
+            $wStmt->execute();
+            $wResult = $wStmt->get_result();
+            $filterOptions['wattages'] = [];
+            while ($wRow = $wResult->fetch_assoc()) {
+                $filterOptions['wattages'][] = $wRow['wattage'];
+            }
+            $wStmt->close();
         }
-        $wStmt->close();
 
-        // Statuses are fixed
         $filterOptions['statuses'] = $allowed_statuses;
     }
 
@@ -257,12 +353,12 @@ try {
         'totalCount' => $totalCount,
         'page' => $page,
         'pageSize' => $pageSize,
-        'totalPages' => ceil($totalCount / $pageSize),
-        'filterOptions' => $filterOptions
+        'totalPages' => (int)ceil($totalCount / max(1, $pageSize)),
+        'filterOptions' => $filterOptions,
+        'statusCounts' => $statusCounts
     ]);
-
 } catch (Exception $e) {
-    error_log("Error in get_shipment_pallets.php: " . $e->getMessage());
+    error_log('Error in get_shipment_pallets.php: ' . $e->getMessage());
     echo json_encode(['success' => false, 'message' => 'Server error: ' . $e->getMessage()]);
 }
 
