@@ -8,7 +8,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $role = $_SESSION['role'] ?? 'user';
-$can_upload = in_array($role, ['admin','global_admin']);
+$can_upload = in_array($role, ['admin','global_admin','customer_admin']);
 $user_id = intval($_SESSION['user_id']);
 
 if (!isset($_GET['project_id']) || !ctype_digit($_GET['project_id'])) {
@@ -72,17 +72,18 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
   <title>Project Photos - <?php echo htmlspecialchars($project_name); ?></title>
   <link rel="stylesheet" href="portal.css">
   <link rel="icon" href="pictures/favicon.png" type="image/x-icon" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
-    .page-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow:hidden; }
+    .page-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow:visible; }
     .page-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
     .header-content { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:24px; }
     .header-left { display:flex; align-items:center; gap:24px; }
     .header-right { display:flex; align-items:center; justify-content:flex-end; }
-    .header-info h1 { font-size: 2.5em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 8px 0; line-height: 1.2; }
-    .header-subtitle { color: #6c757d; font-size: 1.1em; font-weight: 500; margin: 0 0 6px 0; }
-    .header-note { color: #6c757d; font-size: 0.95em; margin: 0; }
-    .cover-preview { width: 200px; height: 130px; background:#eaeff2; border-radius: 16px; overflow:hidden; box-shadow: 0 10px 20px rgba(72,140,154,0.2); border:1px solid rgba(72,140,154,0.15); }
+    .header-info h1 { font-size: 2.2em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 6px 0; line-height: 1.2; }
+    .header-subtitle { color: #6c757d; font-size: 1.1em; font-weight: 500; margin: 0 0 4px 0; }
+    .header-note { color: #94a3b8; font-size: 0.9em; margin: 0; }
+    .cover-preview { width: 150px; height: 120px; background:#eaeff2; border-radius: 20px; overflow:hidden; flex-shrink:0; box-shadow: 0 12px 24px rgba(72,140,154,0.3); border:1px solid rgba(72,140,154,0.15); }
     .cover-preview img { width:100%; height:100%; object-fit:cover; display:block; }
 
     .header-save-btn { width:auto; padding:12px 18px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; box-shadow: 0 4px 15px rgba(72,140,154,0.3); cursor:pointer; transition: transform 0.06s ease, box-shadow 0.2s ease; }
