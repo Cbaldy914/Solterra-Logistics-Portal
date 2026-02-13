@@ -26,7 +26,7 @@ if ($role === 'global_admin') {
   $stmt = $conn->prepare('SELECT id FROM projects WHERE id = ?');
   $stmt->bind_param('i', $project_id);
 } else {
-  $stmt = $conn->prepare('SELECT p.id FROM projects p JOIN customer_account_users cau ON p.account_id = cau.account_id WHERE p.id = ? AND cau.user_id = ? AND cau.role IN (\'admin\',\'user\')');
+  $stmt = $conn->prepare('SELECT p.id FROM projects p JOIN customer_account_users cau ON p.account_id = cau.account_id WHERE p.id = ? AND cau.user_id = ? AND cau.role IN (\'admin\',\'customer_admin\',\'user\')');
   $stmt->bind_param('ii', $project_id, $user_id);
 }
 $stmt->execute();
