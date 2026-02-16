@@ -8,14 +8,23 @@ class SunnyChat {
         this.pendingUpload = null;
         this.brighterMode = false;
         this.usageRemainingPercent = 100;
+        this.activeConversationId = null;
+        this.quickActions = [
+            { label: 'Recent Deliveries', message: 'Show my recent deliveries' },
+            { label: 'Project Status', message: 'Show the status of my active projects' },
+            { label: 'Inventory Summary', message: 'Show my inventory summary' }
+        ];
         this.init();
     }
 
     init() {
         this.createChatInterface();
         this.bindEvents();
+        this.updateUsageMeter(this.usageRemainingPercent);
         this.testConnection();
         this.loadQuickActions();
+        this.ensureSessionScopedConversationStorage();
+        this.restoreActiveConversation();
     }
 
     createChatInterface() {
@@ -96,7 +105,7 @@ class SunnyChat {
                 <div class="usage-footer-bar">
                     <div class="usage-footer-fill" id="sunny-usage-bar" style="width: 100%"></div>
                 </div>
-                <span class="usage-footer-text" id="sunny-usage-text">100% daily budget remaining</span>
+                <span class="usage-footer-text" id="sunny-usage-text" title="Resets daily at midnight.">100% daily usage remaining</span>
             </div>
 
             <div class="sunny-input-container">
@@ -229,12 +238,12 @@ class SunnyChat {
             chatWindow?.classList.add('brighter-mode');
             if (label) label.textContent = 'Brighter';
             if (avatar) avatar.textContent = '🌟';
-            this.showModeToast('Brighter Sunny enabled — uses a more powerful AI model. Messages use ~3x more of your daily budget.');
+            this.showModeToast('Brighter Sunny enabled — uses a more powerful AI model. Messages use ~3x more of your daily usage.');
         } else {
             chatWindow?.classList.remove('brighter-mode');
             if (label) label.textContent = 'Standard';
             if (avatar) avatar.textContent = '☀️';
-            this.showModeToast('Standard Sunny restored — uses less of your daily budget per message.');
+            this.showModeToast('Standard Sunny restored — uses less of your daily usage per message.');
         }
 
         // Sync checkbox state
@@ -270,6 +279,7 @@ class SunnyChat {
         this.usageRemainingPercent = percent;
         const bar = document.getElementById('sunny-usage-bar');
         const text = document.getElementById('sunny-usage-text');
+        const resetTooltip = this.getUsageResetTooltip();
 
         if (bar) {
             bar.style.width = percent + '%';
@@ -279,7 +289,8 @@ class SunnyChat {
             else bar.classList.add('usage-red');
         }
         if (text) {
-            text.textContent = percent + '% daily budget remaining';
+            text.textContent = percent + '% daily usage remaining';
+            text.title = resetTooltip;
         }
 
         // Also update preferences panel if open
@@ -287,6 +298,18 @@ class SunnyChat {
         const prefPercent = document.getElementById('pref-usage-percent');
         if (prefBar) prefBar.style.width = percent + '%';
         if (prefPercent) prefPercent.textContent = percent + '% remaining';
+    }
+
+    getUsageResetTooltip() {
+        const resetAt = new Date();
+        resetAt.setHours(24, 0, 0, 0);
+        const resetLabel = resetAt.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit'
+        });
+        return `Daily usage resets at ${resetLabel}.`;
     }
 
     async fetchUsageStatus() {
@@ -318,23 +341,145 @@ class SunnyChat {
             const data = await res.json();
             if (!data.success) return;
             const actions = data.data || [];
-            if (actions.length === 0) return; // keep defaults
+            if (actions.length > 0) {
+                this.quickActions = actions.slice(0, 5).map(a => ({ label: a.label, message: a.message }));
+            }
             const container = document.getElementById('sunny-quick-actions');
             if (!container) return;
             // Keep the manage button
             const manage = container.querySelector('#sunny-manage-qa');
             container.innerHTML = '';
-            actions.slice(0, 5).forEach(a => {
+            (actions.length > 0 ? actions.slice(0, 5) : this.quickActions).forEach(a => {
                 const btn = document.createElement('button');
                 btn.className = 'quick-action-btn';
-                btn.textContent = a.label;
-                btn.setAttribute('data-action', a.message);
+                btn.textContent = a.label || '';
+                btn.setAttribute('data-action', a.message || '');
                 container.appendChild(btn);
             });
             if (manage) container.appendChild(manage);
             this.bindQuickActionClicks();
         } catch (e) {
             // ignore, keep defaults
+        }
+    }
+
+    getConversationStorageKey() {
+        return `sunny_active_conversation_id_${window.SunnyConfig?.userId || 'anon'}`;
+    }
+
+    getSessionMarkerStorageKey() {
+        return `sunny_session_marker_${window.SunnyConfig?.userId || 'anon'}`;
+    }
+
+    ensureSessionScopedConversationStorage() {
+        const sessionNonce = window.SunnyConfig?.sessionNonce || null;
+        if (!sessionNonce) return;
+
+        try {
+            const markerKey = this.getSessionMarkerStorageKey();
+            const existingMarker = localStorage.getItem(markerKey);
+            if (existingMarker && existingMarker !== sessionNonce) {
+                localStorage.removeItem(this.getConversationStorageKey());
+                this.activeConversationId = null;
+            }
+            localStorage.setItem(markerKey, sessionNonce);
+        } catch (e) {
+            // Ignore localStorage access failures.
+        }
+    }
+
+    rememberActiveConversation(conversationId) {
+        const numericId = parseInt(conversationId, 10);
+        if (!Number.isFinite(numericId) || numericId <= 0) {
+            this.activeConversationId = null;
+            try { localStorage.removeItem(this.getConversationStorageKey()); } catch (e) {}
+            return;
+        }
+        this.activeConversationId = numericId;
+        try { localStorage.setItem(this.getConversationStorageKey(), String(numericId)); } catch (e) {}
+    }
+
+    getStoredActiveConversationId() {
+        try {
+            const raw = localStorage.getItem(this.getConversationStorageKey());
+            const parsed = parseInt(raw || '', 10);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    renderConversation(messages) {
+        const container = document.getElementById('sunny-messages');
+        if (!container) return;
+
+        container.innerHTML = '';
+        this.messageHistory = [];
+
+        if (!Array.isArray(messages) || messages.length === 0) {
+            const welcomeDiv = document.createElement('div');
+            welcomeDiv.className = 'sunny-welcome-message';
+            welcomeDiv.innerHTML = `
+                <h4>Hi ${window.SunnyConfig?.displayName || window.SunnyConfig?.username || 'there'}! 👋</h4>
+                <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
+            `;
+            container.appendChild(welcomeDiv);
+
+            const quickActionsDiv = document.createElement('div');
+            quickActionsDiv.className = 'sunny-quick-actions';
+            quickActionsDiv.id = 'sunny-quick-actions-loaded';
+            (this.quickActions || []).slice(0, 5).forEach(action => {
+                const btn = document.createElement('button');
+                btn.className = 'quick-action-btn';
+                btn.textContent = action.label || '';
+                btn.setAttribute('data-action', action.message || '');
+                btn.addEventListener('click', () => this.sendMessage(action.message || ''));
+                quickActionsDiv.appendChild(btn);
+            });
+            container.appendChild(quickActionsDiv);
+            return;
+        }
+
+        messages.forEach(m => this.addMessage(m.role, m.content));
+    }
+
+    async restoreActiveConversation() {
+        try {
+            let conversationId = null;
+            const activeRes = await fetch('./ai-assistant/api/conversations.php?action=get-active', { credentials: 'same-origin' });
+            const activeData = await activeRes.json();
+            if (activeData.success && activeData.conversation_id) {
+                conversationId = parseInt(activeData.conversation_id, 10) || null;
+            }
+
+            if (!conversationId) {
+                const stored = this.getStoredActiveConversationId();
+                if (stored) {
+                    const setRes = await fetch('./ai-assistant/api/conversations.php?action=set-active', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ conversation_id: stored })
+                    });
+                    const setData = await setRes.json();
+                    if (setData.success) {
+                        conversationId = stored;
+                    }
+                }
+            }
+
+            if (!conversationId) {
+                return;
+            }
+
+            const res = await fetch(`./ai-assistant/api/conversations.php?action=messages&conversation_id=${conversationId}`, { credentials: 'same-origin' });
+            const data = await res.json();
+            if (data.success) {
+                this.rememberActiveConversation(conversationId);
+                this.renderConversation(data.data || []);
+            }
+        } catch (e) {
+            console.error('Failed to restore active conversation:', e);
         }
     }
 
@@ -512,7 +657,7 @@ class SunnyChat {
                                 <span class="pref-icon">🌟</span>
                                 <div class="pref-info">
                                     <div class="pref-title">Brighter Sunny</div>
-                                    <div class="pref-desc">Uses a more powerful AI model. Consumes your daily budget ~3x faster.</div>
+                                    <div class="pref-desc">Uses a more powerful AI model. Consumes your daily usage ~3x faster.</div>
                                 </div>
                                 <label class="pref-toggle">
                                     <input type="checkbox" id="pref-brighter-toggle" ${this.brighterMode ? 'checked' : ''}>
@@ -525,7 +670,7 @@ class SunnyChat {
                                 <span class="pref-icon">📊</span>
                                 <div class="pref-info">
                                     <div class="pref-title">Daily Usage</div>
-                                    <div class="pref-desc">Your remaining daily budget</div>
+                                    <div class="pref-desc">Your remaining daily usage</div>
                                 </div>
                             </div>
                             <div class="pref-usage-display">
@@ -627,49 +772,21 @@ class SunnyChat {
                     // Don't trigger if clicking on action buttons
                     if (e.target.closest('.item-actions')) return;
 
-                    await fetch('./ai-assistant/api/conversations.php?action=set-active', {
+                    const setActiveRes = await fetch('./ai-assistant/api/conversations.php?action=set-active', {
                         method: 'POST',
                         credentials: 'same-origin',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ conversation_id: item.id })
                     });
+                    const setActiveData = await setActiveRes.json();
+                    if (!setActiveData.success) return;
+
+                    this.rememberActiveConversation(item.id);
                     // Load messages and render
                     const res = await fetch(`./ai-assistant/api/conversations.php?action=messages&conversation_id=${item.id}`, { credentials: 'same-origin' });
                     const data = await res.json();
                     if (data.success) {
-                        const container = document.getElementById('sunny-messages');
-                        container.innerHTML = '';
-                        // Add welcome message and quick actions
-                        const welcomeDiv = document.createElement('div');
-                        welcomeDiv.className = 'sunny-welcome-message';
-                        welcomeDiv.innerHTML = `
-                            <h4>Hi ${window.SunnyConfig?.username || 'there'}! 👋</h4>
-                            <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
-                        `;
-                        container.appendChild(welcomeDiv);
-
-                        // Add quick actions (clone only buttons, not manage button)
-                        const qaContainer = document.getElementById('sunny-quick-actions');
-                        if (qaContainer) {
-                            const qaClone = document.createElement('div');
-                            qaClone.className = 'sunny-quick-actions';
-                            qaClone.id = 'sunny-quick-actions-loaded';
-
-                            // Clone only the action buttons, not the manage button
-                            qaContainer.querySelectorAll('.quick-action-btn').forEach(btn => {
-                                const btnClone = btn.cloneNode(true);
-                                btnClone.addEventListener('click', () => {
-                                    const action = btnClone.getAttribute('data-action');
-                                    this.sendMessage(action);
-                                });
-                                qaClone.appendChild(btnClone);
-                            });
-
-                            container.appendChild(qaClone);
-                        }
-
-                        // Add conversation messages
-                        (data.data || []).forEach(m => this.addMessage(m.role, m.content));
+                        this.renderConversation(data.data || []);
                     }
                     close();
                 });
@@ -694,6 +811,10 @@ class SunnyChat {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ conversation_id: item.id })
                     });
+                    if (this.activeConversationId && parseInt(item.id, 10) === this.activeConversationId) {
+                        this.rememberActiveConversation(null);
+                        this.renderConversation([]);
+                    }
                     load();
                 });
                 listEl.appendChild(el);
@@ -722,39 +843,8 @@ class SunnyChat {
             });
             const data = await res.json();
             if (data.success) {
-                // Clear current window and add welcome message + quick actions for new chat
-                const container = document.getElementById('sunny-messages');
-                container.innerHTML = '';
-
-                // Add welcome message
-                const welcomeDiv = document.createElement('div');
-                welcomeDiv.className = 'sunny-welcome-message';
-                welcomeDiv.innerHTML = `
-                    <h4>Hi ${window.SunnyConfig?.username || 'there'}! 👋</h4>
-                    <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
-                `;
-                container.appendChild(welcomeDiv);
-
-                // Add quick actions (clone only buttons, not manage button)
-                const qaContainer = document.getElementById('sunny-quick-actions');
-                if (qaContainer) {
-                    const qaClone = document.createElement('div');
-                    qaClone.className = 'sunny-quick-actions';
-                    qaClone.id = 'sunny-quick-actions-loaded';
-
-                    // Clone only the action buttons, not the manage button
-                    qaContainer.querySelectorAll('.quick-action-btn').forEach(btn => {
-                        const btnClone = btn.cloneNode(true);
-                        btnClone.addEventListener('click', () => {
-                            const action = btnClone.getAttribute('data-action');
-                            this.sendMessage(action);
-                        });
-                        qaClone.appendChild(btnClone);
-                    });
-
-                    container.appendChild(qaClone);
-                }
-
+                this.rememberActiveConversation(data.id);
+                this.renderConversation([]);
                 close();
             }
         });
@@ -1029,6 +1119,9 @@ class SunnyChat {
                         // Update usage meter from SSE event
                         this.updateUsageMeter(data.remaining_percent);
                     } else if (data.type === 'complete') {
+                        if (data.conversation_id) {
+                            this.rememberActiveConversation(data.conversation_id);
+                        }
                         eventSource.close();
                         this.currentEventSource = null;
                     } else if (data.type === 'error') {

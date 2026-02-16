@@ -109,7 +109,20 @@ try {
     }
 
     if ($action === 'get-active') {
-        echo json_encode(['success'=>true, 'conversation_id'=>($_SESSION['sunny_active_conversation_id'] ?? null)]);
+        $activeId = intval($_SESSION['sunny_active_conversation_id'] ?? 0);
+        if ($activeId > 0) {
+            $stmt = $conn->prepare("SELECT id FROM sunny_conversations WHERE id = ? AND user_id = ? AND is_archived = 0 LIMIT 1");
+            $stmt->bind_param('ii', $activeId, $userId);
+            $stmt->execute();
+            $isValid = $stmt->get_result()->num_rows > 0;
+            $stmt->close();
+            if (!$isValid) {
+                $activeId = 0;
+                unset($_SESSION['sunny_active_conversation_id']);
+            }
+        }
+
+        echo json_encode(['success'=>true, 'conversation_id'=>($activeId > 0 ? $activeId : null)]);
         exit;
     }
 

@@ -142,7 +142,7 @@ try {
             if ($weightedTokens >= $dailyLimit || $totalRequests >= $dailyRequestLimit) {
                 echo "data: " . json_encode([
                     'type' => 'error',
-                    'message' => "You've reached your daily usage limit. Your budget resets at midnight. Try again tomorrow, or switch to standard mode to use less budget per message."
+                    'message' => "You've reached your daily usage limit. Usage resets at midnight. Try again tomorrow, or switch to standard mode to use less daily usage per message."
                 ]) . "\n\n";
                 echo "data: " . json_encode([
                     'type' => 'usage_info',
@@ -191,7 +191,8 @@ try {
         'source' => (string)($accountResolution['source'] ?? 'unknown'),
     ]);
 
-    // Create a conversation if none exists
+    // Resolve active conversation for this authenticated session.
+    // If none exists, create a fresh conversation for this session.
     try {
         if (!$conversationId) {
             $connTmp = getDBConnection();
@@ -648,8 +649,9 @@ try {
 
     // Append dynamic tool context (if any) so the model can ground its answer
     if (!empty($toolResults)) {
+        $toolResultsForPrompt = applyRoleBasedToolDataMask($toolResults, $user_role);
         $systemMessage .= "\n\n**Available Data From Tools**\n";
-        foreach ($toolResults as $tool => $data) {
+        foreach ($toolResultsForPrompt as $tool => $data) {
             if ($data['success'] && !empty($data['data'])) {
                 $systemMessage .= "{$tool}: " . json_encode($data['data']) . "\n";
             } else if ($data['success'] && empty($data['data'])) {
@@ -664,7 +666,7 @@ try {
             }
         }
         // Persist for follow-up turns like "please present them"
-        $_SESSION['sunny_last_tool_results'] = $toolResults;
+        $_SESSION['sunny_last_tool_results'] = $toolResultsForPrompt;
     } else {
         $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, say clearly that no results were found for their request and ask for a different filter or timeframe. Do not invent placeholders.)";
     }
@@ -1290,6 +1292,43 @@ function filterAllowedPlannerTools($tools, $allowedTools) {
     }
 
     return array_values(array_unique($result));
+}
+
+function isSunnyCustomerFacingRole($userRole) {
+    $normalized = strtolower(trim((string)$userRole));
+    return in_array($normalized, ['user', 'customer_admin'], true);
+}
+
+function stripCustomerCostFieldsRecursive($value) {
+    if (is_array($value)) {
+        $result = [];
+        foreach ($value as $key => $child) {
+            $normalizedKey = strtolower(trim((string)$key));
+            if ($normalizedKey === 'customer_cost' || $normalizedKey === 'total_customer_costs') {
+                continue;
+            }
+            $result[$key] = stripCustomerCostFieldsRecursive($child);
+        }
+        return $result;
+    }
+    return $value;
+}
+
+function applyRoleBasedToolDataMask($toolResults, $userRole) {
+    if (!is_array($toolResults) || !isSunnyCustomerFacingRole($userRole)) {
+        return $toolResults;
+    }
+
+    $masked = $toolResults;
+    foreach ($masked as $toolName => $result) {
+        if (!is_array($result)) {
+            continue;
+        }
+        if (!empty($result['data'])) {
+            $masked[$toolName]['data'] = stripCustomerCostFieldsRecursive($result['data']);
+        }
+    }
+    return $masked;
 }
 
 function needsLogisticsTools($message) {

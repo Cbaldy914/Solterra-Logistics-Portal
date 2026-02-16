@@ -13,6 +13,10 @@ $user_role = $_SESSION['role'] ?? 'user';
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'] ?? 'User';
 $user_initials = strtoupper(substr($username, 0, 2));
+if (empty($_SESSION['sunny_session_nonce'])) {
+    $_SESSION['sunny_session_nonce'] = bin2hex(random_bytes(8));
+}
+$sunny_session_nonce = $_SESSION['sunny_session_nonce'];
 
 // Get user's first name for personalized greeting
 $display_name = $username; // default to username
@@ -84,6 +88,7 @@ window.SunnyConfig = {
     userRole: <?php echo json_encode($user_role); ?>,
     userAccountId: <?php echo json_encode($user_account_id); ?>,
     userInitials: <?php echo json_encode($user_initials); ?>,
+    sessionNonce: <?php echo json_encode($sunny_session_nonce); ?>,
     apiUrl: './ai-assistant/api/'
 };
 </script>
