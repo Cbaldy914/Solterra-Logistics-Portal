@@ -272,20 +272,28 @@ function handleParseData($conn, $user_id) {
             $types = str_repeat('s', count($palletIds));
 
             $stmt = $conn->prepare("
-                SELECT pallet_identifier, wattage, quantity
+                SELECT manufacturer_pallet_id, pallet_identifier, wattage, quantity
                 FROM inventory_pallets
-                WHERE assigned_project_id = ? AND pallet_identifier IN ($placeholders)
+                WHERE assigned_project_id = ?
+                  AND (
+                    manufacturer_pallet_id IN ($placeholders)
+                    OR (manufacturer_pallet_id IS NULL AND pallet_identifier IN ($placeholders))
+                  )
             ");
 
-            $params = array_merge([$project_id], $palletIds);
-            $stmt->bind_param('i' . $types, ...$params);
+            $params = array_merge([$project_id], $palletIds, $palletIds);
+            $stmt->bind_param('i' . $types . $types, ...$params);
             $stmt->execute();
             $result = $stmt->get_result();
             $existingPallets = [];
             while ($row = $result->fetch_assoc()) {
-                $existingPallets[$row['pallet_identifier']] = true;
-                $existingPalletsList[] = $row['pallet_identifier'];
-                $existingPalletsData[$row['pallet_identifier']] = [
+                $lookupId = $row['manufacturer_pallet_id'] ?: $row['pallet_identifier'];
+                if ($lookupId === null || $lookupId === '') {
+                    continue;
+                }
+                $existingPallets[$lookupId] = true;
+                $existingPalletsList[] = $lookupId;
+                $existingPalletsData[$lookupId] = [
                     'wattage' => (int)$row['wattage'],
                     'quantity' => (int)$row['quantity']
                 ];
@@ -718,13 +726,18 @@ function handleImport($conn, $user_id) {
                 continue;
             }
 
-            // Check if pallet exists (using pallet_identifier since manufacturer_pallet_id doesn't exist)
+            // Check if pallet exists by manufacturer ID first (legacy fallback to pallet_identifier).
             $stmt = $conn->prepare("
                 SELECT id, wattage as old_wattage, quantity as old_quantity, unassigned_module_item_id
                 FROM inventory_pallets
-                WHERE pallet_identifier = ? AND assigned_project_id = ?
+                WHERE assigned_project_id = ?
+                  AND (
+                    manufacturer_pallet_id = ?
+                    OR (manufacturer_pallet_id IS NULL AND pallet_identifier = ?)
+                  )
+                LIMIT 1
             ");
-            $stmt->bind_param("si", $palletId, $project_id);
+            $stmt->bind_param("iss", $project_id, $palletId, $palletId);
             $stmt->execute();
             $existingPallet = $stmt->get_result()->fetch_assoc();
             $stmt->close();
@@ -746,10 +759,12 @@ function handleImport($conn, $user_id) {
                 // No wattage/quantity change, just update location if needed.
                 $stmt = $conn->prepare("
                     UPDATE inventory_pallets SET
-                        manufacturer_location_id = COALESCE(?, manufacturer_location_id)
+                        manufacturer_location_id = COALESCE(?, manufacturer_location_id),
+                        manufacturer_pallet_id = COALESCE(manufacturer_pallet_id, ?),
+                        pallet_identifier = COALESCE(pallet_identifier, ?)
                     WHERE id = ?
                 ");
-                $stmt->bind_param("ii", $manufacturer_location_id, $existingPallet['id']);
+                $stmt->bind_param("issi", $manufacturer_location_id, $palletId, $palletId, $existingPallet['id']);
                 $stmt->execute();
                 $stmt->close();
                 $palletsUpdated++;
@@ -761,14 +776,14 @@ function handleImport($conn, $user_id) {
                 $defaultStatus = 'At Manufacturer';
                 $stmt = $conn->prepare("
                     INSERT INTO inventory_pallets (
-                        pallet_identifier, unassigned_module_item_id,
+                        pallet_identifier, manufacturer_pallet_id, unassigned_module_item_id,
                         wattage, quantity, status, manufacturer, manufacturer_location_id,
                         assigned_project_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->bind_param(
-                    "siisssii",
-                    $palletId, $moduleItemId, $wattage, $quantity,
+                    "ssiiissii",
+                    $palletId, $palletId, $moduleItemId, $wattage, $quantity,
                     $defaultStatus, $manufacturerName, $manufacturer_location_id,
                     $project_id
                 );

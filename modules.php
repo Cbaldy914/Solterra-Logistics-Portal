@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 // Database connection
 require_once '../config.php';
+require_once 'module_reconciliation_audit_helpers.php';
 $conn = getDBConnection(); // Keep connection open initially
 if (!$conn) {
     die("Database connection failed.");
@@ -178,7 +179,152 @@ function syncProjectWattageOrders($conn, $project_id) {
     }
 }
 
-// --- Handle POST for adding new modules --- 
+function assignUnassignedBatchToProject($conn, $batch_id, $target_project_id, $role, $account_id_for_admin, $actor_user_id, $assign_context = 'single') {
+    $batch_id = (int)$batch_id;
+    $target_project_id = (int)$target_project_id;
+    if ($batch_id <= 0 || $target_project_id <= 0) {
+        throw new Exception("Please select a valid batch and project.");
+    }
+
+    if ($role === 'global_admin') {
+        $stmtBatch = $conn->prepare("SELECT id, account_id, project_id, batch_name FROM modules WHERE id = ? LIMIT 1");
+        if (!$stmtBatch) throw new Exception("Failed preparing batch lookup: " . $conn->error);
+        $stmtBatch->bind_param("i", $batch_id);
+    } else {
+        if (!$account_id_for_admin) {
+            throw new Exception("No valid account found for this admin user.");
+        }
+        $stmtBatch = $conn->prepare("SELECT id, account_id, project_id, batch_name FROM modules WHERE id = ? AND account_id = ? LIMIT 1");
+        if (!$stmtBatch) throw new Exception("Failed preparing batch lookup: " . $conn->error);
+        $stmtBatch->bind_param("ii", $batch_id, $account_id_for_admin);
+    }
+    $stmtBatch->execute();
+    $batchRow = $stmtBatch->get_result()->fetch_assoc();
+    $stmtBatch->close();
+
+    if (!$batchRow) {
+        throw new Exception("Module batch not found or access denied.");
+    }
+    if (!empty($batchRow['project_id'])) {
+        throw new Exception("Batch #" . $batch_id . " is already assigned to a project.");
+    }
+
+    $stmtProject = $conn->prepare("SELECT id, account_id, project_name, status FROM projects WHERE id = ? LIMIT 1");
+    if (!$stmtProject) throw new Exception("Failed preparing project lookup: " . $conn->error);
+    $stmtProject->bind_param("i", $target_project_id);
+    $stmtProject->execute();
+    $projectRow = $stmtProject->get_result()->fetch_assoc();
+    $stmtProject->close();
+
+    if (!$projectRow) {
+        throw new Exception("Target project not found.");
+    }
+    if ((int)$projectRow['account_id'] !== (int)$batchRow['account_id']) {
+        throw new Exception("Batch #" . $batch_id . " does not belong to the selected project's account.");
+    }
+    if (isset($projectRow['status']) && strtolower((string)$projectRow['status']) === 'closed') {
+        throw new Exception("Cannot assign modules to a closed project.");
+    }
+
+    // Guard against re-pointing pallets that are already tied to another project context.
+    $stmtConflicts = $conn->prepare("
+        SELECT COUNT(*) AS conflict_count
+        FROM inventory_pallets ip
+        JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+        LEFT JOIN deliveries d ON d.id = dp.delivery_id
+        WHERE umi.unassigned_module_id = ?
+          AND (
+              (ip.current_project_id IS NOT NULL AND ip.current_project_id <> ?)
+              OR (ip.assigned_project_id IS NOT NULL AND ip.assigned_project_id <> ?)
+              OR (d.project_id IS NOT NULL AND d.project_id <> ?)
+          )
+    ");
+    if (!$stmtConflicts) throw new Exception("Failed preparing conflict check: " . $conn->error);
+    $stmtConflicts->bind_param("iiii", $batch_id, $target_project_id, $target_project_id, $target_project_id);
+    $stmtConflicts->execute();
+    $conflictRow = $stmtConflicts->get_result()->fetch_assoc();
+    $stmtConflicts->close();
+    if ((int)($conflictRow['conflict_count'] ?? 0) > 0) {
+        throw new Exception("Batch #" . $batch_id . " has pallets tied to a different project context.");
+    }
+
+    $assignTxStarted = false;
+    $affectedPalletRows = 0;
+    try {
+        $conn->begin_transaction();
+        $assignTxStarted = true;
+
+        $stmtAssignBatch = $conn->prepare("UPDATE modules SET project_id = ?, last_updated_at = NOW() WHERE id = ?");
+        if (!$stmtAssignBatch) throw new Exception("Failed preparing module batch assignment: " . $conn->error);
+        $stmtAssignBatch->bind_param("ii", $target_project_id, $batch_id);
+        if (!$stmtAssignBatch->execute()) {
+            throw new Exception("Failed assigning module batch: " . $stmtAssignBatch->error);
+        }
+        $stmtAssignBatch->close();
+
+        $stmtAssignPallets = $conn->prepare("
+            UPDATE inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            SET ip.assigned_project_id = ?
+            WHERE umi.unassigned_module_id = ?
+        ");
+        if (!$stmtAssignPallets) throw new Exception("Failed preparing pallet assignment update: " . $conn->error);
+        $stmtAssignPallets->bind_param("ii", $target_project_id, $batch_id);
+        if (!$stmtAssignPallets->execute()) {
+            throw new Exception("Failed updating pallet project assignments: " . $stmtAssignPallets->error);
+        }
+        $affectedPalletRows = (int)$stmtAssignPallets->affected_rows;
+        $stmtAssignPallets->close();
+
+        $conn->commit();
+        $assignTxStarted = false;
+    } catch (Exception $txEx) {
+        if ($assignTxStarted) {
+            $conn->rollback();
+        }
+        throw $txEx;
+    }
+
+    syncProjectWattageOrders($conn, $target_project_id);
+
+    if (function_exists('mr_insert_reconciliation_audit')) {
+        try {
+            mr_insert_reconciliation_audit($conn, [
+                'module_batch_id' => (int)$batch_id,
+                'project_id' => (int)$target_project_id,
+                'account_id' => (int)($batchRow['account_id'] ?? 0),
+                'action_type' => 'assign_batch_to_project',
+                'reason' => ($assign_context === 'bulk') ? 'bulk_assign' : 'single_assign',
+                'reconciliation_mode' => 'direct_assignment',
+                'preview_signature' => '',
+                'actor_user_id' => (int)$actor_user_id,
+                'actor_role' => (string)$role,
+                'source_page' => 'modules.php',
+                'before_state' => [
+                    'project_id' => null
+                ],
+                'after_state' => [
+                    'project_id' => (int)$target_project_id
+                ],
+                'impact' => [
+                    'updated_pallet_rows' => $affectedPalletRows
+                ]
+            ]);
+        } catch (Exception $auditEx) {
+            error_log("Module assignment audit logging failed: " . $auditEx->getMessage());
+        }
+    }
+
+    $batchLabel = !empty($batchRow['batch_name']) ? $batchRow['batch_name'] : ('Batch #' . (int)$batch_id);
+    return [
+        'batch_label' => $batchLabel,
+        'project_name' => (string)($projectRow['project_name'] ?? 'Unknown'),
+        'batch_id' => (int)$batch_id
+    ];
+}
+
+// --- Handle POST actions --- 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Re-establish connection if it was closed (it shouldn't be closed yet based on new logic)
     if (!$conn || !$conn->ping()) {
@@ -190,34 +336,113 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     if ($conn) { // Proceed only if connection is valid
-        $conn->begin_transaction(); // Start transaction
-        try {
-            // Determine correct account_id (using previously fetched variables)
-            if ($role === 'global_admin') {
-                $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : 0;
-                if ($account_id <= 0) {
-                    throw new Exception("Please select a valid Account.");
-                }
-            } else { // admin
-                if (!$account_id_for_admin) { // Double check admin has an account
-                   throw new Exception("No valid account found for this admin user.");
-                }
-                $account_id = $account_id_for_admin;
-            }
-    
-            // Gather main fields
-            $manufacturer_id    = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
-            $project_id_input   = $_POST['project_id'] ?? '';
-            $project_id         = ($project_id_input !== '' && $project_id_input > 0) ? intval($project_id_input) : null;
-    
-            if (!$manufacturer_id) {
-                throw new Exception("Please select a Manufacturer.");
-            }
+        $postAction = $_POST['action'] ?? '';
 
-            // Get manufacturer details and set vendor name and initial location
-            $vendor_name = "Unknown Manufacturer";
-            $initial_location = "Unknown Location";
-            $stmt_mfg = $conn->prepare("
+        if ($postAction === 'assign_batch' || $postAction === 'assign_batch_bulk') {
+            try {
+                if (!$isAdmin) {
+                    throw new Exception("Only admin roles can assign module batches.");
+                }
+
+                $target_project_id = isset($_POST['assign_project_id']) ? (int)$_POST['assign_project_id'] : 0;
+                if ($target_project_id <= 0) {
+                    throw new Exception("Please select a target project.");
+                }
+
+                if ($postAction === 'assign_batch_bulk') {
+                    $rawBatchIds = $_POST['batch_ids'] ?? [];
+                    if (is_string($rawBatchIds)) {
+                        $rawBatchIds = explode(',', $rawBatchIds);
+                    }
+                    if (!is_array($rawBatchIds)) {
+                        $rawBatchIds = [];
+                    }
+
+                    $batchIds = [];
+                    foreach ($rawBatchIds as $rawId) {
+                        $id = (int)$rawId;
+                        if ($id > 0) {
+                            $batchIds[$id] = $id;
+                        }
+                    }
+                    $batchIds = array_values($batchIds);
+                    if (empty($batchIds)) {
+                        throw new Exception("Please select at least one unassigned batch.");
+                    }
+
+                    $successes = [];
+                    $errors = [];
+                    foreach ($batchIds as $batchId) {
+                        try {
+                            $result = assignUnassignedBatchToProject(
+                                $conn,
+                                $batchId,
+                                $target_project_id,
+                                $role,
+                                $account_id_for_admin,
+                                $user_id,
+                                'bulk'
+                            );
+                            $successes[] = $result['batch_label'];
+                        } catch (Exception $assignEx) {
+                            $errors[] = $assignEx->getMessage();
+                        }
+                    }
+
+                    if (!empty($successes)) {
+                        $successMessage = 'Assigned ' . count($successes) . ' batch(es) successfully.';
+                    }
+                    if (!empty($errors)) {
+                        $errorMessage = implode(' ', array_unique($errors));
+                    }
+                    if (empty($successes) && empty($errors)) {
+                        $errorMessage = "No batches were updated.";
+                    }
+                } else {
+                    $batch_id = isset($_POST['batch_id']) ? (int)$_POST['batch_id'] : 0;
+                    $result = assignUnassignedBatchToProject(
+                        $conn,
+                        $batch_id,
+                        $target_project_id,
+                        $role,
+                        $account_id_for_admin,
+                        $user_id,
+                        'single'
+                    );
+                    $successMessage = "Assigned {$result['batch_label']} to project \"{$result['project_name']}\" successfully.";
+                }
+            } catch (Exception $ex) {
+                $errorMessage = $ex->getMessage();
+            }
+        } else {
+            $conn->begin_transaction(); // Start transaction
+            try {
+                // Determine correct account_id (using previously fetched variables)
+                if ($role === 'global_admin') {
+                    $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : 0;
+                    if ($account_id <= 0) {
+                        throw new Exception("Please select a valid Account.");
+                    }
+                } else { // admin
+                    if (!$account_id_for_admin) { // Double check admin has an account
+                       throw new Exception("No valid account found for this admin user.");
+                    }
+                    $account_id = $account_id_for_admin;
+                }
+    
+                // Gather main fields
+                $manufacturer_id    = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
+                $project_id_input   = $_POST['project_id'] ?? '';
+                $project_id         = ($project_id_input !== '' && $project_id_input > 0) ? intval($project_id_input) : null;
+    
+                if (!$manufacturer_id) {
+                    throw new Exception("Please select a Manufacturer.");
+                }
+
+                // Get manufacturer details and set vendor name and initial location
+                $vendor_name = "Unknown Manufacturer";
+                $initial_location = "Unknown Location";
+                $stmt_mfg = $conn->prepare("
                 SELECT 
                     m.name,
                     CONCAT_WS(', ', 
@@ -228,49 +453,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 FROM manufacturers m
                 LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
                 WHERE m.id = ?");
-            if ($stmt_mfg) {
-                $stmt_mfg->bind_param("i", $manufacturer_id);
-                $stmt_mfg->execute();
-                $stmt_mfg->bind_result($mfg_name, $mfg_address);
-                if ($stmt_mfg->fetch()) {
-                    $vendor_name = $mfg_name;
-                    $initial_location = $mfg_address ?: "Unknown Location";
-                } else {
-                    throw new Exception("Selected manufacturer not found.");
-                }
-                $stmt_mfg->close();
-            } else {
-                throw new Exception("Error preparing manufacturer query: " . $conn->error);
-            }
-            
-            if ($role === 'global_admin' && $project_id !== null) {
-                $validProject = false;
-                $stmtCheckProj = $conn->prepare("SELECT 1 FROM projects WHERE id = ? AND account_id = ?");
-                if ($stmtCheckProj) {
-                    $stmtCheckProj->bind_param("ii", $project_id, $account_id);
-                    $stmtCheckProj->execute();
-                    $stmtCheckProj->store_result();
-                    if ($stmtCheckProj->num_rows > 0) {
-                        $validProject = true;
+                if ($stmt_mfg) {
+                    $stmt_mfg->bind_param("i", $manufacturer_id);
+                    $stmt_mfg->execute();
+                    $stmt_mfg->bind_result($mfg_name, $mfg_address);
+                    if ($stmt_mfg->fetch()) {
+                        $vendor_name = $mfg_name;
+                        $initial_location = $mfg_address ?: "Unknown Location";
+                    } else {
+                        throw new Exception("Selected manufacturer not found.");
                     }
-                    $stmtCheckProj->close();
+                    $stmt_mfg->close();
+                } else {
+                    throw new Exception("Error preparing manufacturer query: " . $conn->error);
                 }
-                if (!$validProject) {
-                     throw new Exception("Selected project does not belong to the selected account.");
+            
+                if ($role === 'global_admin' && $project_id !== null) {
+                    $validProject = false;
+                    $stmtCheckProj = $conn->prepare("SELECT 1 FROM projects WHERE id = ? AND account_id = ?");
+                    if ($stmtCheckProj) {
+                        $stmtCheckProj->bind_param("ii", $project_id, $account_id);
+                        $stmtCheckProj->execute();
+                        $stmtCheckProj->store_result();
+                        if ($stmtCheckProj->num_rows > 0) {
+                            $validProject = true;
+                        }
+                        $stmtCheckProj->close();
+                    }
+                    if (!$validProject) {
+                         throw new Exception("Selected project does not belong to the selected account.");
+                    }
                 }
-            }
     
-            // Insert into modules (including new project_id)
-            $stmt = $conn->prepare("INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, NULLIF(?, 0))");
-            if (!$stmt) throw new Exception("Error preparing main insert: " . $conn->error);
-            $stmt->bind_param("issi", $account_id, $vendor_name, $initial_location, $project_id);
-            if (!$stmt->execute()) throw new Exception("Error inserting module batch: " . $stmt->error);
-            $unassigned_module_id = $stmt->insert_id;
-            $stmt->close();
+                // Insert into modules (including new project_id)
+                $stmt = $conn->prepare("INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, NULLIF(?, 0))");
+                if (!$stmt) throw new Exception("Error preparing main insert: " . $conn->error);
+                $stmt->bind_param("issi", $account_id, $vendor_name, $initial_location, $project_id);
+                if (!$stmt->execute()) throw new Exception("Error inserting module batch: " . $stmt->error);
+                $unassigned_module_id = $stmt->insert_id;
+                $stmt->close();
     
-            // Insert wattage+quantity items
-            $wattage_items_added = 0;
-            if (isset($_POST['wattages'], $_POST['quantities'])) {
+                // Insert wattage+quantity items
+                $wattage_items_added = 0;
+                if (isset($_POST['wattages'], $_POST['quantities'])) {
                 $wattages   = $_POST['wattages'];
                 $quantities = $_POST['quantities'];
                 $domestic_content_pcts = $_POST['domestic_content_pcts'] ?? [];
@@ -313,19 +538,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt2NoDomestic->close();
             }
     
-            if ($wattage_items_added === 0) throw new Exception("You must add at least one Wattage/Quantity entry.");
+                if ($wattage_items_added === 0) throw new Exception("You must add at least one Wattage/Quantity entry.");
     
-            $conn->commit();
-            $successMessage = "Module batch (ID: {$unassigned_module_id}) and {$wattage_items_added} item(s) added successfully!";
+                $conn->commit();
+                $successMessage = "Module batch (ID: {$unassigned_module_id}) and {$wattage_items_added} item(s) added successfully!";
     
-            // Sync project_wattage_orders table
-            syncProjectWattageOrders($conn, $project_id);
-    
-        } catch (Exception $ex) {
-            $conn->rollback();
-            $errorMessage = $ex->getMessage();
-        } 
-        // Removed finally block with conn->close()
+                // Sync project_wattage_orders table
+                syncProjectWattageOrders($conn, $project_id);
+
+            } catch (Exception $ex) {
+                $conn->rollback();
+                $errorMessage = $ex->getMessage();
+            } 
+            // Removed finally block with conn->close()
+        }
     }
 }
 
@@ -338,7 +564,7 @@ if ($conn) { // Check connection is still valid
     
     if ($role === 'global_admin') {
         $sqlModules = "SELECT
-                         um.id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
+                         um.id, um.account_id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
                          c.name AS account_name,
                          p.project_name
                        FROM modules um
@@ -347,7 +573,7 @@ if ($conn) { // Check connection is still valid
                        ORDER BY c.name ASC, um.vendor_name ASC";
     } elseif (in_array($role, ['admin', 'customer_admin'], true) && !empty($account_id_for_admin)) {
          $sqlModules = "SELECT
-                          um.id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
+                          um.id, um.account_id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
                           c.name AS account_name,
                           p.project_name
                         FROM modules um
@@ -359,7 +585,7 @@ if ($conn) { // Check connection is still valid
         $paramsModules     = [$account_id_for_admin];
     } elseif ($role === 'user' && !empty($account_id_for_user)) { // Added condition for 'user' role
          $sqlModules = "SELECT
-                          um.id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
+                          um.id, um.account_id, um.batch_name, um.vendor_name, um.initial_location, um.project_id,
                           c.name AS account_name,
                           p.project_name
                         FROM modules um
@@ -548,6 +774,36 @@ if ($conn && $conn instanceof mysqli) {
             font-weight: 600;
             color: #293E4C;
             margin: 0;
+        }
+        .section-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn-bulk-assign {
+            border: none;
+            border-radius: 10px;
+            padding: 8px 14px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 3px 10px rgba(72, 140, 154, 0.28);
+        }
+        .btn-bulk-assign:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        .batch-select-cell {
+            text-align: center;
+            width: 42px;
+        }
+        .batch-select-cell input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
         }
 
         /* Modern Table Styling */
@@ -1041,20 +1297,158 @@ if ($conn && $conn instanceof mysqli) {
         document.addEventListener('DOMContentLoaded', function() {
             var modal = document.getElementById('addModuleModal');
             var btn = document.getElementById('openAddModalBtn');
-            var span = modal.querySelector('.close-button');
+            var span = modal ? modal.querySelector('.close-button') : null;
+            var assignModal = document.getElementById('assignBatchModal');
+            var assignClose = document.getElementById('closeAssignBatchModal');
+            var assignActionInput = document.getElementById('assign_action');
+            var assignBatchIdInput = document.getElementById('assign_batch_id');
+            var assignBatchIdsInput = document.getElementById('assign_batch_ids');
+            var assignProjectSelect = document.getElementById('assign_project_id');
+            var assignBatchHelp = document.getElementById('assignBatchHelp');
+            var assignBatchSubmitBtn = document.getElementById('assignBatchSubmitBtn');
+            var assignSelectedBatchesBtn = document.getElementById('assignSelectedBatchesBtn');
+            var selectAllUnassignedBatches = document.getElementById('selectAllUnassignedBatches');
+            var unassignedBatchCheckboxes = Array.from(document.querySelectorAll('.unassigned-batch-checkbox'));
+            var isGlobalAdminRole = ('<?php echo $role; ?>' === 'global_admin');
+            var assignProjectOptions = assignProjectSelect
+                ? Array.from(assignProjectSelect.options).slice(1).map(function(opt) { return opt.cloneNode(true); })
+                : [];
 
             if(btn) { btn.onclick = function() { modal.style.display = 'block'; } }
             if(span) { span.onclick = function() { modal.style.display = 'none'; } }
-            
-            window.onclick = function(event) {
-                if (event.target == modal) {
+            if (assignClose && assignModal) {
+                assignClose.onclick = function() { assignModal.style.display = 'none'; };
+            }
+            window.addEventListener('click', function(event) {
+                if (modal && event.target === modal) {
                     modal.style.display = 'none';
                 }
+                if (assignModal && event.target === assignModal) {
+                    assignModal.style.display = 'none';
+                }
+            });
+
+            function getSelectedUnassignedBatchCheckboxes() {
+                return unassignedBatchCheckboxes.filter(function(cb) { return cb.checked; });
+            }
+
+            function updateAssignSelectedButtonState() {
+                if (!assignSelectedBatchesBtn) return;
+                assignSelectedBatchesBtn.disabled = (getSelectedUnassignedBatchCheckboxes().length === 0);
+            }
+
+            function rebuildAssignProjectOptions(accountIdForFilter) {
+                if (!assignProjectSelect) return;
+                while (assignProjectSelect.options.length > 1) {
+                    assignProjectSelect.remove(1);
+                }
+                assignProjectOptions.forEach(function(optionTemplate) {
+                    var cloned = optionTemplate.cloneNode(true);
+                    if (isGlobalAdminRole && accountIdForFilter > 0) {
+                        var optionAccountId = parseInt(cloned.getAttribute('data-account-id') || '0', 10);
+                        if (optionAccountId !== accountIdForFilter) {
+                            return;
+                        }
+                    }
+                    assignProjectSelect.add(cloned);
+                });
+            }
+
+            if (selectAllUnassignedBatches) {
+                selectAllUnassignedBatches.addEventListener('change', function() {
+                    unassignedBatchCheckboxes.forEach(function(cb) {
+                        cb.checked = !!selectAllUnassignedBatches.checked;
+                    });
+                    updateAssignSelectedButtonState();
+                });
+            }
+
+            unassignedBatchCheckboxes.forEach(function(cb) {
+                cb.addEventListener('click', function(event) {
+                    event.stopPropagation();
+                });
+                cb.addEventListener('change', function() {
+                    if (selectAllUnassignedBatches) {
+                        selectAllUnassignedBatches.checked = unassignedBatchCheckboxes.length > 0 && unassignedBatchCheckboxes.every(function(item) { return item.checked; });
+                    }
+                    updateAssignSelectedButtonState();
+                });
+            });
+            updateAssignSelectedButtonState();
+
+            window.openAssignBatchModal = function(event, batchId, batchAccountId, batchLabel) {
+                if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                if (!assignModal || !assignBatchIdInput || !assignProjectSelect) return;
+
+                if (assignActionInput) assignActionInput.value = 'assign_batch';
+                assignBatchIdInput.value = String(batchId || '');
+                if (assignBatchIdsInput) assignBatchIdsInput.value = '';
+                if (assignBatchSubmitBtn) assignBatchSubmitBtn.textContent = 'Assign Batch';
+                if (assignBatchHelp) {
+                    assignBatchHelp.textContent = 'Assign "' + (batchLabel || ('Batch #' + batchId)) + '" to a project.';
+                }
+
+                rebuildAssignProjectOptions(parseInt(batchAccountId || '0', 10));
+
+                assignProjectSelect.value = '';
+                assignModal.style.display = 'block';
+            };
+
+            window.openAssignSelectedBatchesModal = function(event) {
+                if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                if (!assignModal || !assignProjectSelect || !assignBatchIdsInput) return;
+
+                var selected = getSelectedUnassignedBatchCheckboxes();
+                if (selected.length === 0) {
+                    alert('Select at least one unassigned batch first.');
+                    return;
+                }
+
+                var accountIds = Array.from(new Set(selected.map(function(cb) {
+                    return parseInt(cb.getAttribute('data-account-id') || '0', 10);
+                }).filter(function(id) { return id > 0; })));
+
+                if (isGlobalAdminRole && accountIds.length > 1) {
+                    alert('Select batches from a single account for bulk assignment.');
+                    return;
+                }
+
+                if (assignActionInput) assignActionInput.value = 'assign_batch_bulk';
+                assignBatchIdInput.value = '';
+                assignBatchIdsInput.value = selected.map(function(cb) { return cb.value; }).join(',');
+                if (assignBatchSubmitBtn) assignBatchSubmitBtn.textContent = 'Assign Selected';
+
+                var singleAccountId = accountIds.length === 1 ? accountIds[0] : 0;
+                rebuildAssignProjectOptions(singleAccountId);
+                assignProjectSelect.value = '';
+
+                if (assignBatchHelp) {
+                    assignBatchHelp.textContent = 'Assign ' + selected.length + ' selected batch(es) to a project.';
+                }
+                assignModal.style.display = 'block';
+            };
+
+            if (assignSelectedBatchesBtn) {
+                assignSelectedBatchesBtn.addEventListener('click', window.openAssignSelectedBatchesModal);
             }
             
             // If there was a POST error, re-open the modal to show the error message within context
             <?php if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($errorMessage)): ?>
-            modal.style.display = 'block';
+            <?php if (isset($_POST['action']) && in_array($_POST['action'], ['assign_batch', 'assign_batch_bulk'], true)): ?>
+            if (assignModal) { assignModal.style.display = 'block'; }
+            <?php if (isset($_POST['action']) && $_POST['action'] === 'assign_batch_bulk'): ?>
+            if (assignActionInput) { assignActionInput.value = 'assign_batch_bulk'; }
+            if (assignBatchSubmitBtn) { assignBatchSubmitBtn.textContent = 'Assign Selected'; }
+            <?php endif; ?>
+            <?php else: ?>
+            if (modal) { modal.style.display = 'block'; }
+            <?php endif; ?>
             <?php endif; ?>
 
             var trackDomesticCheckbox = document.getElementById('track_domestic_content');
@@ -1402,11 +1796,17 @@ if ($conn && $conn instanceof mysqli) {
     <!-- Unassigned Modules Table -->
     <div class="section-header" style="margin-top: 40px;">
         <h2>Unassigned (Stock) Module Batches</h2>
+        <?php if ($isAdmin): ?>
+            <div class="section-header-actions">
+                <button type="button" class="btn-bulk-assign" id="assignSelectedBatchesBtn" disabled>Assign Selected</button>
+            </div>
+        <?php endif; ?>
     </div>
     <div class="table-container">
         <table>
             <thead>
                 <tr>
+                    <?php if ($isAdmin): ?><th class="batch-select-cell"><input type="checkbox" id="selectAllUnassignedBatches" title="Select all unassigned batches"></th><?php endif; ?>
                     <th>Batch</th>
                     <th>Vendor & Location</th>
                     <th>Status</th>
@@ -1418,7 +1818,20 @@ if ($conn && $conn instanceof mysqli) {
             <tbody>
                 <?php if (!empty($unassignedModulesData)): ?>
                     <?php foreach ($unassignedModulesData as $batch): ?>
-                        <tr class="clickable-row" data-href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" onclick="window.location='module_overview.php?batch_id=<?php echo $batch['id']; ?>'">
+                        <tr class="clickable-row" data-href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" onclick="if (event.target.closest('a, button, input, .dropdown')) { return; } window.location='module_overview.php?batch_id=<?php echo $batch['id']; ?>';">
+                            <?php if ($isAdmin): ?>
+                            <td class="batch-select-cell" onclick="event.stopPropagation();">
+                                <input
+                                    type="checkbox"
+                                    class="unassigned-batch-checkbox"
+                                    value="<?php echo (int)$batch['id']; ?>"
+                                    data-batch-id="<?php echo (int)$batch['id']; ?>"
+                                    data-account-id="<?php echo (int)($batch['account_id'] ?? 0); ?>"
+                                    data-batch-label="<?php echo htmlspecialchars(!empty($batch['batch_name']) ? $batch['batch_name'] : ('Batch #' . (int)$batch['id']), ENT_QUOTES); ?>"
+                                    title="Select batch"
+                                >
+                            </td>
+                            <?php endif; ?>
                             <td>
                                 <div class="batch-name"><?php echo !empty($batch['batch_name']) ? htmlspecialchars($batch['batch_name']) : 'Batch #' . $batch['id']; ?></div>
                                 <div class="batch-vendor"><?php echo htmlspecialchars($batch['vendor_name']); ?></div>
@@ -1471,6 +1884,14 @@ if ($conn && $conn instanceof mysqli) {
                                     <div id="dropdown-menu-u<?php echo $batch['id']; ?>" class="dropdown-menu">
                                         <a href="module_overview.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item">View</a>
                                         <a href="edit_module_batch.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
+                                        <button
+                                            type="button"
+                                            class="dropdown-item edit"
+                                            style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;"
+                                            onclick="openAssignBatchModal(event, <?php echo (int)$batch['id']; ?>, <?php echo (int)($batch['account_id'] ?? 0); ?>, <?php echo json_encode(!empty($batch['batch_name']) ? $batch['batch_name'] : ('Batch #' . (int)$batch['id'])); ?>)"
+                                        >
+                                            Assign to Project
+                                        </button>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
                                             <button type="submit" class="dropdown-item delete" style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;">Delete</button>
@@ -1483,7 +1904,7 @@ if ($conn && $conn instanceof mysqli) {
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr class="empty-row">
-                        <td colspan="<?php echo $isAdmin ? 6 : 5; ?>">
+                        <td colspan="<?php echo $isAdmin ? 7 : 5; ?>">
                             <div class="empty-state-content">
                                 <span class="empty-icon">📦</span>
                                 <p>No unassigned module batches found<?php echo (in_array($role, ['admin', 'customer_admin'], true) && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if ($isAdmin): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
@@ -1494,6 +1915,38 @@ if ($conn && $conn instanceof mysqli) {
             </tbody>
         </table>
     </div>
+
+    <?php if ($isAdmin): ?>
+    <div id="assignBatchModal" class="modal">
+        <div class="modal-content">
+            <span id="closeAssignBatchModal" class="close-button">&times;</span>
+            <h2>Assign Unassigned Batch</h2>
+            <form method="POST" id="assignBatchForm">
+                <input type="hidden" name="action" value="assign_batch" id="assign_action">
+                <input type="hidden" name="batch_id" id="assign_batch_id">
+                <input type="hidden" name="batch_ids" id="assign_batch_ids">
+
+                <p id="assignBatchHelp" style="margin-top: 0; color: #6c757d;"></p>
+
+                <label for="assign_project_id">Assign to Project:</label>
+                <select name="assign_project_id" id="assign_project_id" required>
+                    <option value="">--Select Project--</option>
+                    <?php foreach ($projects_for_account as $proj): ?>
+                        <option
+                            value="<?php echo (int)$proj['id']; ?>"
+                            <?php if ($role === 'global_admin') echo ' data-account-id="' . (int)$proj['account_id'] . '"'; ?>
+                        >
+                            <?php echo htmlspecialchars($proj['project_name']); ?>
+                            <?php if ($role === 'global_admin') echo ' (Account ID: ' . (int)$proj['account_id'] . ')'; ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <button type="submit" class="btn-submit" id="assignBatchSubmitBtn">Assign Batch</button>
+            </form>
+        </div>
+    </div>
+    <?php endif; ?>
 
 </main>
 </body>

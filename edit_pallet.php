@@ -81,20 +81,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
         try {
             /* --- Collect Basic Inputs --- */
             $new_identifier = trim($_POST['pallet_identifier'] ?? '');
+            $new_manufacturer_pallet_id_raw = trim($_POST['manufacturer_pallet_id'] ?? '');
+            $new_manufacturer_pallet_id = ($new_manufacturer_pallet_id_raw === '') ? null : $new_manufacturer_pallet_id_raw;
 
             /* --- Basic Validation --- */
             if (empty($new_identifier)) throw new Exception("Pallet Identifier cannot be empty.");
+            if ($new_manufacturer_pallet_id !== null && strlen($new_manufacturer_pallet_id) > 100) {
+                throw new Exception("Manufacturer Pallet ID must be 100 characters or fewer.");
+            }
+
+            // Keep manufacturer pallet IDs unique within the same assigned project scope.
+            if ($new_manufacturer_pallet_id !== null) {
+                $assignedProjectId = isset($pallet['assigned_project_id']) ? (int)$pallet['assigned_project_id'] : 0;
+                if ($assignedProjectId > 0) {
+                    $stmtDup = $conn->prepare("
+                        SELECT id
+                        FROM inventory_pallets
+                        WHERE manufacturer_pallet_id = ? AND id <> ? AND assigned_project_id = ?
+                        LIMIT 1
+                    ");
+                    if (!$stmtDup) throw new Exception("Failed to prepare duplicate check: " . $conn->error);
+                    $stmtDup->bind_param("sii", $new_manufacturer_pallet_id, $pallet_id, $assignedProjectId);
+                } else {
+                    $stmtDup = $conn->prepare("
+                        SELECT id
+                        FROM inventory_pallets
+                        WHERE manufacturer_pallet_id = ? AND id <> ? AND assigned_project_id IS NULL
+                        LIMIT 1
+                    ");
+                    if (!$stmtDup) throw new Exception("Failed to prepare duplicate check: " . $conn->error);
+                    $stmtDup->bind_param("si", $new_manufacturer_pallet_id, $pallet_id);
+                }
+                $stmtDup->execute();
+                $dupRow = $stmtDup->get_result()->fetch_assoc();
+                $stmtDup->close();
+                if ($dupRow) {
+                    throw new Exception("Manufacturer Pallet ID is already linked to another pallet in this project scope.");
+                }
+            }
 
             /* --- Prepare and Execute Update --- */
-            // Edit Pallet now only updates identifier. Flash test data lives at module document level.
+            // Edit pallet identifiers. Flash test data lives at module document level.
             $sql_update = "UPDATE inventory_pallets SET 
-                                pallet_identifier = ? 
+                                pallet_identifier = ?,
+                                manufacturer_pallet_id = ?
                            WHERE id = ?";
             $stmt_update = $conn->prepare($sql_update);
             if (!$stmt_update) throw new Exception("Failed to prepare update statement: " . $conn->error);
             
-            $stmt_update->bind_param("si", 
+            $stmt_update->bind_param("ssi", 
                 $new_identifier,
+                $new_manufacturer_pallet_id,
                 $pallet_id
             );
 
@@ -133,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
 <link rel="icon" href="pictures/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;600;700&display=swap" rel="stylesheet">
 <style>
-  .edit-pallet-page { max-width: 980px; margin: 0 auto; padding: 0 20px 26px; }
+  .edit-pallet-page { padding: 0 20px 26px; }
   .form-header {
       background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
       border-radius: 24px;
@@ -292,7 +329,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
     <div class="form-header">
         <h1 class="header-title">Edit Pallet</h1>
         <p class="header-subtitle">
-            Update the internal pallet identifier. Wattage, quantity, and status are derived from module and shipment workflow.
+            Update internal and manufacturer pallet identifiers. Wattage, quantity, and status are derived from module and shipment workflow.
         </p>
     </div>
 
@@ -322,7 +359,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
                 required
             >
             <p class="helper-text">
-                This is the internal Solterra label. Manufacturer pallet IDs should be linked separately through import/reconciliation workflow.
+                This is the internal Solterra label used in Solterra workflows.
+            </p>
+
+            <label class="field-label" for="manufacturer_pallet_id" style="margin-top: 14px;">Manufacturer Pallet ID</label>
+            <input
+                class="text-input"
+                type="text"
+                id="manufacturer_pallet_id"
+                name="manufacturer_pallet_id"
+                maxlength="100"
+                value="<?php echo htmlspecialchars($pallet['manufacturer_pallet_id'] ?? ''); ?>"
+                placeholder="Optional manufacturer-provided pallet ID"
+            >
+            <p class="helper-text">
+                Link the real manufacturer pallet ID to this Solterra pallet for reconciliation and import matching.
             </p>
         </div>
 
@@ -353,7 +404,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
 
         <div class="actions">
             <a class="btn-link" href="<?php echo htmlspecialchars($backUrl); ?>">Cancel &amp; Go Back</a>
-            <button class="btn-primary" type="submit" name="update_pallet">Save Identifier</button>
+            <button class="btn-primary" type="submit" name="update_pallet">Save Pallet Updates</button>
         </div>
     </form>
     <?php endif; // End if($pallet) ?>
