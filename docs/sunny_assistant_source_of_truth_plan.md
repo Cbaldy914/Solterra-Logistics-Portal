@@ -99,7 +99,7 @@ Priority: Critical
 3. Every tool run is auditable in logs.
 
 ## Phase 1 - Intent Planner and Smart Tool Selection
-Status: Pending  
+Status: In Progress  
 Priority: Critical
 
 ### Goals
@@ -107,7 +107,7 @@ Priority: Critical
 2. Increase tool selection accuracy across broad phrasing.
 
 ### Tasks
-1. Implement planner schema (JSON):
+1. Implement planner schema (JSON): (In progress)
    - `intent`
    - `sub_intent`
    - `entities`
@@ -115,10 +115,10 @@ Priority: Critical
    - `confidence`
    - `needs_clarification`
    - `clarification_question`
-2. Integrate Gemini function/tool calling for planner mode.
-3. Add deterministic fallback if planner fails:
+2. Integrate Gemini planner call path for tool routing. (In progress)
+3. Add deterministic fallback if planner fails: (In progress)
    - fallback heuristic with explicit low-confidence marker.
-4. Add policy rules:
+4. Add policy rules: (In progress)
    - if confidence < threshold and multiple likely entities -> ask one targeted clarification.
    - otherwise execute.
 5. Add planner evaluation harness with labeled prompts.
@@ -330,3 +330,8 @@ Priority: Critical
 6. Additional Phase 0 hardening completed:
    - report generation endpoint now enforces strict account-context resolution
    - account mapping ambiguity now fails closed for non-global roles
+7. Phase 1 started:
+   - added planner config (enabled/model/timeout/confidence/history turns)
+   - integrated Gemini planner call returning strict JSON decision
+   - added confidence-gated planner->tools routing with regex fallback
+   - added one-question planner clarification bypass path (no extra model call)

@@ -216,6 +216,8 @@ try {
     $lastToolResults = $_SESSION['sunny_last_tool_results'] ?? [];
     $memoryResults = [];
     $needsTools = needsLogisticsTools($message);
+    $plannerDecision = null;
+    $plannerDirectReply = null;
 
     // Always try to load memory context and detect memory operations
     try {
@@ -274,7 +276,58 @@ try {
             if (!isset($sunnyTools)) {
                 $sunnyTools = new SunnyTools($user_role, $account_id);
             }
-            $toolsToUse = detectToolsFromMessage($message);
+
+            $toolsToUse = [];
+            $plannerEnabled = !isset($sunnyConfig['planner']['enabled']) || !empty($sunnyConfig['planner']['enabled']);
+            $plannerThreshold = floatval($sunnyConfig['planner']['confidence_threshold'] ?? 0.62);
+
+            if ($plannerEnabled) {
+                $plannerResponse = planToolsWithGemini(
+                    $message,
+                    $chatHistory,
+                    $user_role,
+                    $account_id,
+                    $_GET['page'] ?? '',
+                    $sunnyConfig,
+                    $apiKey
+                );
+                if (!empty($plannerResponse['success']) && !empty($plannerResponse['plan'])) {
+                    $plannerDecision = $plannerResponse['plan'];
+                    sunnyTraceLog('planner_result', [
+                        'trace_id' => $sunnyTraceId,
+                        'confidence' => $plannerDecision['confidence'] ?? null,
+                        'intent' => $plannerDecision['intent'] ?? null,
+                        'sub_intent' => $plannerDecision['sub_intent'] ?? null,
+                        'needs_clarification' => !empty($plannerDecision['needs_clarification']),
+                        'tools' => $plannerDecision['tools'] ?? [],
+                        'entities' => $plannerDecision['entities'] ?? [],
+                    ]);
+
+                    if (!empty($plannerDecision['needs_clarification']) && !empty($plannerDecision['clarification_question'])) {
+                        $plannerDirectReply = trim((string)$plannerDecision['clarification_question']);
+                        sunnyTraceLog('planner_clarification', [
+                            'trace_id' => $sunnyTraceId,
+                            'question' => $plannerDirectReply,
+                        ]);
+                    } elseif (!empty($plannerDecision['tools']) && floatval($plannerDecision['confidence'] ?? 0) >= $plannerThreshold) {
+                        $toolsToUse = $plannerDecision['tools'];
+                    }
+                } else {
+                    sunnyTraceLog('planner_fallback', [
+                        'trace_id' => $sunnyTraceId,
+                        'reason' => $plannerResponse['error'] ?? 'planner_unavailable',
+                    ]);
+                }
+            }
+
+            if (empty($plannerDirectReply) && empty($toolsToUse)) {
+                $toolsToUse = detectToolsFromMessage($message);
+                sunnyTraceLog('planner_fallback', [
+                    'trace_id' => $sunnyTraceId,
+                    'reason' => 'heuristic_routing',
+                    'tools' => $toolsToUse,
+                ]);
+            }
             sunnyTraceLog('tools_selected', [
                 'trace_id' => $sunnyTraceId,
                 'user_id' => (int)$user_id,
@@ -284,40 +337,42 @@ try {
             ]);
 
             // Execute tools
-            foreach ($toolsToUse as $tool) {
-                try {
-                    $result = $sunnyTools->executeTool($tool, $message, [
-                        'user_id' => $user_id,
-                        'user_name' => $user_name,
-                        'role' => $user_role,
-                        'account_id' => $account_id
-                    ]);
-                    if ($result) {
-                        $normalized = normalizeToolResultEnvelope($tool, $result);
+            if (empty($plannerDirectReply)) {
+                foreach ($toolsToUse as $tool) {
+                    try {
+                        $result = $sunnyTools->executeTool($tool, $message, [
+                            'user_id' => $user_id,
+                            'user_name' => $user_name,
+                            'role' => $user_role,
+                            'account_id' => $account_id
+                        ]);
+                        if ($result) {
+                            $normalized = normalizeToolResultEnvelope($tool, $result);
+                            $toolResults[$tool] = $normalized;
+                            sunnyTraceLog('tool_result', [
+                                'trace_id' => $sunnyTraceId,
+                                'tool' => (string)$tool,
+                                'success' => !empty($normalized['success']),
+                                'error_code' => $normalized['error_code'] ?? null,
+                                'row_count' => is_array($normalized['data'] ?? null) ? count($normalized['data']) : null,
+                            ]);
+                        }
+                    } catch (Exception $e) {
+                        error_log("Tool execution error for $tool: " . $e->getMessage());
+                        $normalized = normalizeToolResultEnvelope($tool, [
+                            'success' => false,
+                            'error' => 'Tool execution exception: ' . $e->getMessage(),
+                            'data' => []
+                        ]);
                         $toolResults[$tool] = $normalized;
                         sunnyTraceLog('tool_result', [
                             'trace_id' => $sunnyTraceId,
                             'tool' => (string)$tool,
-                            'success' => !empty($normalized['success']),
-                            'error_code' => $normalized['error_code'] ?? null,
-                            'row_count' => is_array($normalized['data'] ?? null) ? count($normalized['data']) : null,
+                            'success' => false,
+                            'error_code' => $normalized['error_code'] ?? 'tool_exception',
+                            'row_count' => 0,
                         ]);
                     }
-                } catch (Exception $e) {
-                    error_log("Tool execution error for $tool: " . $e->getMessage());
-                    $normalized = normalizeToolResultEnvelope($tool, [
-                        'success' => false,
-                        'error' => 'Tool execution exception: ' . $e->getMessage(),
-                        'data' => []
-                    ]);
-                    $toolResults[$tool] = $normalized;
-                    sunnyTraceLog('tool_result', [
-                        'trace_id' => $sunnyTraceId,
-                        'tool' => (string)$tool,
-                        'success' => false,
-                        'error_code' => $normalized['error_code'] ?? 'tool_exception',
-                        'row_count' => 0,
-                    ]);
                 }
             }
         } catch (Exception $e) {
@@ -331,7 +386,7 @@ try {
     }
 
     // If no tools executed this turn, but we have prior tool results, reuse them to let the model present them
-    if (empty($toolResults) && !empty($lastToolResults)) {
+    if ($plannerDirectReply === null && empty($toolResults) && !empty($lastToolResults)) {
         $toolResults = $lastToolResults;
         sunnyTraceLog('tool_results_reused', [
             'trace_id' => $sunnyTraceId,
@@ -638,78 +693,87 @@ try {
         $docContextText = "Document Content (" . $docName . ")\n---\n" . $docText . "\n---\nUse the document content above to answer or summarize as requested.";
     }
 
-    // ── Build Gemini API payload ──
-    // Convert chat history + current message to Gemini format
-    $geminiContents = [];
-
-    // Add document context as a user turn if present
-    if ($docContextText) {
-        $geminiContents[] = ['role' => 'user', 'parts' => [['text' => $docContextText]]];
-        $geminiContents[] = ['role' => 'model', 'parts' => [['text' => 'I have reviewed the document content. How can I help you with it?']]];
-    }
-
-    // Append recent history (convert OpenAI roles to Gemini roles)
-    foreach ($chatHistory as $entry) {
-        $geminiRole = ($entry['role'] === 'assistant') ? 'model' : 'user';
-        $geminiContents[] = [
-            'role' => $geminiRole,
-            'parts' => [['text' => $entry['content']]]
-        ];
-    }
-
-    // Current user message
-    $geminiContents[] = ['role' => 'user', 'parts' => [['text' => $message]]];
-
-    // Gemini API payload — use config values for generation settings
-    $geminiOptions = $sunnyConfig['gemini']['options'] ?? [];
-    $chatData = [
-        'system_instruction' => [
-            'parts' => [['text' => $systemMessage]]
-        ],
-        'contents' => $geminiContents,
-        'generationConfig' => [
-            'maxOutputTokens' => $geminiOptions['maxOutputTokens'] ?? 1000,
-            'temperature' => $geminiOptions['temperature'] ?? 0.3,
-            'topP' => $geminiOptions['topP'] ?? 0.8,
-        ]
-    ];
-
-    // Make streaming request to Gemini
-    $geminiUrl = $sunnyConfig['gemini']['base_url']
-        . '/models/' . $selectedModel
-        . ':streamGenerateContent?alt=sse&key=' . urlencode($apiKey);
-
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $geminiUrl,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode($chatData),
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json'
-        ],
-        CURLOPT_WRITEFUNCTION => 'handleGeminiStreamData',
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_SSL_VERIFYHOST => 2
-    ]);
-
-    // Capture assistant response globally during stream
     global $assistantResponseBuffer;
     $assistantResponseBuffer = '';
 
-    $result = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
+    // Planner can emit a deterministic clarification question without spending model budget.
+    if ($plannerDirectReply !== null) {
+        $assistantResponseBuffer = $plannerDirectReply;
+        echo "data: " . json_encode([
+            'type' => 'token',
+            'content' => $assistantResponseBuffer
+        ]) . "\n\n";
+        flush();
+    } else {
+        // ── Build Gemini API payload ──
+        // Convert chat history + current message to Gemini format
+        $geminiContents = [];
 
-    if ($result === false || !empty($error)) {
-        echo "data: " . json_encode(['type' => 'error', 'message' => 'Gemini API request failed: ' . $error]) . "\n\n";
-        exit;
-    }
+        // Add document context as a user turn if present
+        if ($docContextText) {
+            $geminiContents[] = ['role' => 'user', 'parts' => [['text' => $docContextText]]];
+            $geminiContents[] = ['role' => 'model', 'parts' => [['text' => 'I have reviewed the document content. How can I help you with it?']]];
+        }
 
-    if ($httpCode !== 200) {
-        echo "data: " . json_encode(['type' => 'error', 'message' => 'Gemini API returned HTTP ' . $httpCode]) . "\n\n";
-        exit;
+        // Append recent history (convert OpenAI roles to Gemini roles)
+        foreach ($chatHistory as $entry) {
+            $geminiRole = ($entry['role'] === 'assistant') ? 'model' : 'user';
+            $geminiContents[] = [
+                'role' => $geminiRole,
+                'parts' => [['text' => $entry['content']]]
+            ];
+        }
+
+        // Current user message
+        $geminiContents[] = ['role' => 'user', 'parts' => [['text' => $message]]];
+
+        // Gemini API payload — use config values for generation settings
+        $geminiOptions = $sunnyConfig['gemini']['options'] ?? [];
+        $chatData = [
+            'system_instruction' => [
+                'parts' => [['text' => $systemMessage]]
+            ],
+            'contents' => $geminiContents,
+            'generationConfig' => [
+                'maxOutputTokens' => $geminiOptions['maxOutputTokens'] ?? 1000,
+                'temperature' => $geminiOptions['temperature'] ?? 0.3,
+                'topP' => $geminiOptions['topP'] ?? 0.8,
+            ]
+        ];
+
+        // Make streaming request to Gemini
+        $geminiUrl = $sunnyConfig['gemini']['base_url']
+            . '/models/' . $selectedModel
+            . ':streamGenerateContent?alt=sse&key=' . urlencode($apiKey);
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $geminiUrl,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($chatData),
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json'
+            ],
+            CURLOPT_WRITEFUNCTION => 'handleGeminiStreamData',
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2
+        ]);
+
+        $result = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($result === false || !empty($error)) {
+            echo "data: " . json_encode(['type' => 'error', 'message' => 'Gemini API request failed: ' . $error]) . "\n\n";
+            exit;
+        }
+
+        if ($httpCode !== 200) {
+            echo "data: " . json_encode(['type' => 'error', 'message' => 'Gemini API returned HTTP ' . $httpCode]) . "\n\n";
+            exit;
+        }
     }
 
     // ── Usage recording (best effort) ──
@@ -822,6 +886,9 @@ try {
         'user_id' => (int)$user_id,
         'account_id' => $account_id !== null ? (int)$account_id : null,
         'role' => (string)$user_role,
+        'planner_intent' => $plannerDecision['intent'] ?? null,
+        'planner_confidence' => $plannerDecision['confidence'] ?? null,
+        'planner_clarification' => $plannerDirectReply !== null,
         'duration_ms' => (int)round((microtime(true) - $sunnyRequestStartedAt) * 1000),
         'tools_executed' => array_keys($toolResults),
         'assistant_chars' => strlen((string)($assistantResponseBuffer ?? '')),
@@ -1001,6 +1068,225 @@ function suggestSunnyToolNextStep($errorCode, $toolName) {
         default:
             return 'Try specifying a project, warehouse, or timeframe.';
     }
+}
+
+function planToolsWithGemini($message, $chatHistory, $userRole, $accountId, $currentPage, $sunnyConfig, $apiKey) {
+    try {
+        $plannerModel = $sunnyConfig['planner']['model'] ?? ($sunnyConfig['gemini']['models']['default'] ?? 'gemini-2.5-flash');
+        $plannerTimeout = intval($sunnyConfig['planner']['timeout_seconds'] ?? 12);
+        $maxHistoryTurns = intval($sunnyConfig['planner']['max_history_turns'] ?? 4);
+        if ($maxHistoryTurns < 0) { $maxHistoryTurns = 0; }
+
+        $allowedTools = [
+            'getProjectSummary',
+            'getDeliveryStatus',
+            'getUpcomingDeliveries',
+            'getWarehouseInventory',
+            'getProjectCostAnalysis',
+            'getDeliveryPerformance',
+            'getKPIDashboard',
+            'getProjectDocuments',
+            'getGlobalDocuments',
+            'getPODStatus',
+            'getWarrantyClaims',
+            'getWarrantyReplacements',
+            'getPalletMovements',
+            'getBOLInformation',
+            'searchLogistics',
+            'analyzeDocument'
+        ];
+
+        $recentHistory = [];
+        if (is_array($chatHistory) && $maxHistoryTurns > 0) {
+            $recentHistory = array_slice($chatHistory, -1 * $maxHistoryTurns);
+        }
+        $historyLines = [];
+        foreach ($recentHistory as $entry) {
+            $role = ($entry['role'] ?? 'user') === 'assistant' ? 'assistant' : 'user';
+            $content = trim((string)($entry['content'] ?? ''));
+            if ($content === '') { continue; }
+            $historyLines[] = strtoupper($role) . ': ' . substr($content, 0, 400);
+        }
+        $historyText = empty($historyLines) ? '(none)' : implode("\n", $historyLines);
+
+        $plannerSystemPrompt = "You are Sunny's tool planner for Solterra logistics data.\n"
+            . "Return ONLY valid JSON (no markdown).\n"
+            . "Select from allowed tools only.\n"
+            . "For non-global users, assume strict single-account scope and never expand beyond it.\n"
+            . "If project is unspecified, prefer account-level portfolio answers (do not force clarification).\n"
+            . "Ask clarification only when a required entity is truly ambiguous or missing for the requested metric.\n"
+            . "JSON schema:\n"
+            . "{\n"
+            . "  \"intent\": \"string\",\n"
+            . "  \"sub_intent\": \"string|null\",\n"
+            . "  \"entities\": {\n"
+            . "    \"project_name\": \"string|null\",\n"
+            . "    \"project_id\": \"number|null\",\n"
+            . "    \"warehouse_name\": \"string|null\",\n"
+            . "    \"warehouse_id\": \"number|null\",\n"
+            . "    \"timeframe\": \"string|null\",\n"
+            . "    \"metric\": \"string|null\"\n"
+            . "  },\n"
+            . "  \"tools\": [\"toolName\"],\n"
+            . "  \"confidence\": 0.0,\n"
+            . "  \"needs_clarification\": false,\n"
+            . "  \"clarification_question\": \"string|null\"\n"
+            . "}\n"
+            . "Allowed tools: " . implode(', ', $allowedTools) . ".";
+
+        $plannerUserPrompt = "User role: {$userRole}\n"
+            . "Account scope: " . ($accountId === null ? 'global_admin_all_accounts' : ('account_id_' . intval($accountId))) . "\n"
+            . "Current page: " . ($currentPage !== '' ? $currentPage : 'unknown') . "\n"
+            . "Recent conversation:\n{$historyText}\n\n"
+            . "Current user message:\n{$message}";
+
+        $plannerRequest = [
+            'system_instruction' => [
+                'parts' => [['text' => $plannerSystemPrompt]]
+            ],
+            'contents' => [
+                ['role' => 'user', 'parts' => [['text' => $plannerUserPrompt]]]
+            ],
+            'generationConfig' => [
+                'temperature' => 0.1,
+                'topP' => 0.8,
+                'maxOutputTokens' => 500,
+                'responseMimeType' => 'application/json'
+            ]
+        ];
+
+        $plannerUrl = ($sunnyConfig['gemini']['base_url'] ?? 'https://generativelanguage.googleapis.com/v1beta')
+            . '/models/' . $plannerModel
+            . ':generateContent?key=' . urlencode($apiKey);
+
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $plannerUrl,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($plannerRequest),
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json'
+            ],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $plannerTimeout,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2
+        ]);
+        $responseRaw = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($responseRaw === false || !empty($curlError)) {
+            return ['success' => false, 'error' => 'planner_request_failed'];
+        }
+        if ((int)$httpCode !== 200) {
+            return ['success' => false, 'error' => 'planner_http_' . intval($httpCode)];
+        }
+
+        $plannerText = extractPlannerTextFromGeminiResponse($responseRaw);
+        if ($plannerText === null) {
+            return ['success' => false, 'error' => 'planner_response_parse_failed'];
+        }
+
+        $plan = normalizePlannerDecision($plannerText, $allowedTools);
+        if ($plan === null) {
+            return ['success' => false, 'error' => 'planner_json_invalid'];
+        }
+
+        return [
+            'success' => true,
+            'plan' => $plan
+        ];
+    } catch (Exception $e) {
+        return ['success' => false, 'error' => 'planner_exception'];
+    }
+}
+
+function extractPlannerTextFromGeminiResponse($responseRaw) {
+    $decoded = json_decode($responseRaw, true);
+    if (!is_array($decoded)) {
+        return null;
+    }
+
+    if (!empty($decoded['candidates'][0]['content']['parts']) && is_array($decoded['candidates'][0]['content']['parts'])) {
+        $parts = $decoded['candidates'][0]['content']['parts'];
+        $combined = '';
+        foreach ($parts as $part) {
+            if (isset($part['text']) && is_string($part['text'])) {
+                $combined .= $part['text'];
+            }
+        }
+        $combined = trim($combined);
+        return $combined === '' ? null : $combined;
+    }
+    return null;
+}
+
+function normalizePlannerDecision($plannerText, $allowedTools) {
+    $text = trim((string)$plannerText);
+    $text = preg_replace('/^```json\s*/i', '', $text);
+    $text = preg_replace('/^```\s*/', '', $text);
+    $text = preg_replace('/\s*```$/', '', $text);
+    $text = trim($text);
+    if ($text === '') {
+        return null;
+    }
+
+    $decoded = json_decode($text, true);
+    if (!is_array($decoded)) {
+        return null;
+    }
+
+    $confidence = floatval($decoded['confidence'] ?? 0);
+    if ($confidence > 1 && $confidence <= 100) {
+        $confidence = $confidence / 100;
+    }
+    if ($confidence < 0) { $confidence = 0; }
+    if ($confidence > 1) { $confidence = 1; }
+
+    $entities = is_array($decoded['entities'] ?? null) ? $decoded['entities'] : [];
+    $tools = filterAllowedPlannerTools($decoded['tools'] ?? [], $allowedTools);
+    $needsClarification = !empty($decoded['needs_clarification']);
+    $clarificationQuestion = isset($decoded['clarification_question']) ? trim((string)$decoded['clarification_question']) : null;
+    if ($clarificationQuestion === '') { $clarificationQuestion = null; }
+    if ($needsClarification && $clarificationQuestion === null) {
+        $clarificationQuestion = 'Could you clarify which project or warehouse you want me to use?';
+    }
+
+    return [
+        'intent' => trim((string)($decoded['intent'] ?? 'general_logistics')),
+        'sub_intent' => isset($decoded['sub_intent']) ? trim((string)$decoded['sub_intent']) : null,
+        'entities' => $entities,
+        'tools' => $tools,
+        'confidence' => $confidence,
+        'needs_clarification' => $needsClarification,
+        'clarification_question' => $clarificationQuestion
+    ];
+}
+
+function filterAllowedPlannerTools($tools, $allowedTools) {
+    if (!is_array($tools)) {
+        return [];
+    }
+
+    $allowedMap = [];
+    foreach ($allowedTools as $tool) {
+        $allowedMap[strtolower($tool)] = $tool;
+    }
+
+    $result = [];
+    foreach ($tools as $toolName) {
+        $normalized = strtolower(trim((string)$toolName));
+        if ($normalized === '') {
+            continue;
+        }
+        if (isset($allowedMap[$normalized])) {
+            $result[] = $allowedMap[$normalized];
+        }
+    }
+
+    return array_values(array_unique($result));
 }
 
 function needsLogisticsTools($message) {

@@ -58,6 +58,15 @@ return [
         'cost_tracking' => true,
     ],
 
+    // Planner Settings (Phase 1): model-assisted intent -> tool routing
+    'planner' => [
+        'enabled' => true,
+        'model' => 'gemini-2.5-flash',
+        'timeout_seconds' => 12,
+        'confidence_threshold' => 0.62,
+        'max_history_turns' => 4,
+    ],
+
     // Security Settings
     'security' => [
         'require_authentication' => true,
