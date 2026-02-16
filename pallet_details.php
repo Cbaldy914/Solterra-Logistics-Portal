@@ -10,6 +10,12 @@ if (!isset($_SESSION['user_id'])) {
 
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
+$is_global_admin = ($role === 'global_admin');
+$can_manage_pallet_updates = in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
+
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 
 require_once '../config.php';
 require_once 'milestone_helpers.php';
@@ -23,7 +29,20 @@ $pallet_id = (int)$_GET['pallet_id'];
 
 $pallet_data = null;
 $associated_deliveries = [];
+$warehouse_history = [];
 $errorMessage = '';
+$successMessage = '';
+$total_delivery_cost = 0.0;
+$total_warehouse_cost = 0.0;
+$total_module_cost = 0.0;
+$total_pallet_cost = 0.0;
+$module_cost_per_watt = 0.0;
+$pallet_wattage = 0.0;
+$pallet_quantity = 0;
+$full_module_cost = 0.0;
+$has_module_cost = false;
+$has_milestones = false;
+$module_milestone_rows = [];
 $breadcrumbProjectId = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 $fromWarehouseInfo = (($_GET['from'] ?? '') === 'warehouse_info');
 $fromCostDetails   = (($_GET['from'] ?? '') === 'cost_details');
@@ -32,6 +51,34 @@ $breadcrumbWarehouseId = isset($_GET['warehouse_id']) ? (int)$_GET['warehouse_id
 $breadcrumbWarehouseName = '';
 $originBatchId = isset($_GET['origin_batch_id']) ? (int)$_GET['origin_batch_id'] : 0;
 
+if (!empty($_SESSION['pallet_details_success'])) {
+    $successMessage = (string)$_SESSION['pallet_details_success'];
+    unset($_SESSION['pallet_details_success']);
+}
+if (!empty($_SESSION['pallet_details_error']) && $errorMessage === '') {
+    $errorMessage = (string)$_SESSION['pallet_details_error'];
+    unset($_SESSION['pallet_details_error']);
+}
+
+$account_id_for_user = null;
+if (!$is_global_admin) {
+    if (in_array($role, ['admin', 'customer_admin'], true)) {
+        $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
+    } else {
+        $stmtAccount = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
+    }
+
+    if ($stmtAccount) {
+        $stmtAccount->bind_param('i', $user_id);
+        $stmtAccount->execute();
+        $stmtAccount->bind_result($acct);
+        if ($stmtAccount->fetch()) {
+            $account_id_for_user = (int)$acct;
+        }
+        $stmtAccount->close();
+    }
+}
+
 
 try {
     // 1. Fetch Pallet Master Data
@@ -39,10 +86,12 @@ try {
                         ip.id AS pallet_id,
                         ip.pallet_identifier,
                         ip.manufacturer_pallet_id,
+                        COALESCE(NULLIF(TRIM(ip.manufacturer_pallet_id), ''), ip.pallet_identifier) AS display_identifier,
                         ip.wattage,
                         ip.quantity,
                         ip.current_warehouse_id AS current_warehouse_id,
                         ip.current_project_id AS current_project_id,
+                        ip.assigned_project_id AS assigned_project_id,
                         ip.status,
                         ip.arrival_date,
                         -- Clean manufacturer name by removing project suffix
@@ -119,6 +168,122 @@ try {
         }
     }
     $stmt_pallet->close();
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet_ids'])) {
+        try {
+            if (!$can_manage_pallet_updates) {
+                throw new Exception('You are not authorized to update pallet IDs.');
+            }
+            if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf_token'])) {
+                throw new Exception('Invalid request token. Please refresh and try again.');
+            }
+            if (!$is_global_admin && !$account_id_for_user) {
+                throw new Exception('Unable to resolve account scope for this user.');
+            }
+
+            $new_display_identifier = trim((string)($_POST['display_pallet_id'] ?? ''));
+            $solterra_identifier = trim((string)($pallet_data['pallet_identifier'] ?? ''));
+            if ($new_display_identifier === '') {
+                throw new Exception('Pallet ID cannot be empty.');
+            }
+            if ($solterra_identifier === '') {
+                throw new Exception('This pallet does not have a base Solterra identifier.');
+            }
+
+            // Single editable Pallet ID UX:
+            // - if equal to Solterra identifier -> clear stored override
+            // - otherwise -> store the entered display ID as an override
+            $new_manufacturer_pallet_id = (strcasecmp($new_display_identifier, $solterra_identifier) === 0)
+                ? null
+                : $new_display_identifier;
+
+            if ($new_manufacturer_pallet_id !== null && strlen($new_manufacturer_pallet_id) > 100) {
+                throw new Exception('Pallet ID must be 100 characters or fewer.');
+            }
+
+            if (!$is_global_admin) {
+                $stmtScope = $conn->prepare("
+                    SELECT ip.id
+                    FROM inventory_pallets ip
+                    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+                    LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+                    LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+                    WHERE ip.id = ?
+                      AND (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)
+                    LIMIT 1
+                ");
+                if (!$stmtScope) {
+                    throw new Exception('Failed to validate pallet scope: ' . $conn->error);
+                }
+                $stmtScope->bind_param('iiii', $pallet_id, $account_id_for_user, $account_id_for_user, $account_id_for_user);
+                $stmtScope->execute();
+                $scopeRow = $stmtScope->get_result()->fetch_assoc();
+                $stmtScope->close();
+                if (!$scopeRow) {
+                    throw new Exception('This pallet is outside your account scope.');
+                }
+            }
+
+            if ($new_manufacturer_pallet_id !== null) {
+                $assignedProjectId = isset($pallet_data['assigned_project_id']) ? (int)$pallet_data['assigned_project_id'] : 0;
+                if ($assignedProjectId > 0) {
+                    $stmtDup = $conn->prepare("
+                        SELECT id
+                        FROM inventory_pallets
+                        WHERE manufacturer_pallet_id = ? AND id <> ? AND assigned_project_id = ?
+                        LIMIT 1
+                    ");
+                    if (!$stmtDup) {
+                        throw new Exception('Failed to prepare duplicate check: ' . $conn->error);
+                    }
+                    $stmtDup->bind_param('sii', $new_manufacturer_pallet_id, $pallet_id, $assignedProjectId);
+                } else {
+                    $stmtDup = $conn->prepare("
+                        SELECT id
+                        FROM inventory_pallets
+                        WHERE manufacturer_pallet_id = ? AND id <> ? AND assigned_project_id IS NULL
+                        LIMIT 1
+                    ");
+                    if (!$stmtDup) {
+                        throw new Exception('Failed to prepare duplicate check: ' . $conn->error);
+                    }
+                    $stmtDup->bind_param('si', $new_manufacturer_pallet_id, $pallet_id);
+                }
+
+                $stmtDup->execute();
+                $dupRow = $stmtDup->get_result()->fetch_assoc();
+                $stmtDup->close();
+
+                if ($dupRow) {
+                    throw new Exception('This pallet ID is already used by another pallet in this project scope.');
+                }
+            }
+
+            $stmtUpdate = $conn->prepare("
+                UPDATE inventory_pallets
+                SET manufacturer_pallet_id = ?
+                WHERE id = ?
+            ");
+            if (!$stmtUpdate) {
+                throw new Exception('Failed to prepare pallet update: ' . $conn->error);
+            }
+            $stmtUpdate->bind_param('si', $new_manufacturer_pallet_id, $pallet_id);
+            if (!$stmtUpdate->execute()) {
+                $stmtUpdate->close();
+                throw new Exception('Failed to update pallet IDs: ' . $conn->error);
+            }
+            $stmtUpdate->close();
+
+            $_SESSION['pallet_details_success'] = 'Pallet ID updated successfully.';
+            $redirectParams = $_GET;
+            $redirectParams['pallet_id'] = $pallet_id;
+            header('Location: pallet_details.php?' . http_build_query($redirectParams));
+            exit();
+        } catch (Exception $updateError) {
+            $errorMessage = $updateError->getMessage();
+        }
+    }
 
     // 2. Fetch Associated Deliveries with BOL-based cost calculations
     $sql_deliveries = "SELECT 
@@ -479,6 +644,11 @@ try {
     $errorMessage = $e->getMessage();
 }
 
+$edit_display_identifier_value = (string)($pallet_data['display_identifier'] ?? ($pallet_data['pallet_identifier'] ?? ''));
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet_ids']) && !empty($errorMessage)) {
+    $edit_display_identifier_value = trim((string)($_POST['display_pallet_id'] ?? $edit_display_identifier_value));
+}
+
 $conn->close();
 
 // (Breadcrumbs handled in template using the shared helper)
@@ -526,6 +696,12 @@ $conn->close();
             margin: 0;
             color: #6c757d;
             font-size: 0.95rem;
+        }
+        .main-content {
+            width: 100%;
+            max-width: none;
+            margin: 0;
+            box-sizing: border-box;
         }
         .details-container {
             background-color: #fff;
@@ -578,6 +754,65 @@ $conn->close();
              border: 1px solid red;
              border-radius: 5px;
              margin: 20px;
+        }
+        .success-message {
+             color: #155724;
+             background-color: #e6f6eb;
+             padding: 10px;
+             border: 1px solid #8fd19e;
+             border-radius: 5px;
+             margin: 20px;
+        }
+        .inline-edit-card {
+            margin-top: 18px;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 16px;
+        }
+        .inline-edit-card h3 {
+            margin: 0 0 10px;
+            font-size: 1rem;
+            color: #293E4C;
+        }
+        .inline-edit-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+        }
+        .inline-edit-field label {
+            display: block;
+            font-weight: 600;
+            color: #334155;
+            margin-bottom: 6px;
+        }
+        .inline-edit-field input[type="text"] {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 0.95rem;
+        }
+        .inline-edit-hint {
+            margin: 10px 0 0;
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+        .inline-edit-actions {
+            margin-top: 14px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .inline-edit-actions button {
+            border: none;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .inline-edit-actions button:hover {
+            opacity: 0.95;
         }
         .table-responsive {
              width: 100%;
@@ -772,6 +1007,9 @@ $conn->close();
                 padding-left: 10px;
                 border-left: 3px solid #488C9A;
             }
+            .inline-edit-grid {
+                grid-template-columns: 1fr;
+            }
             th, td {
                 padding: 8px 4px;
                 font-size: 0.9em;
@@ -851,22 +1089,43 @@ $conn->close();
             </p>
         </div>
 
+        <?php if (!empty($successMessage)): ?>
+            <div class="success-message">
+                <strong>Success:</strong> <?php echo htmlspecialchars($successMessage); ?>
+            </div>
+        <?php endif; ?>
         <?php if (!empty($errorMessage)): ?>
             <div class="error-message">
                 <strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?>
             </div>
-        <?php elseif ($pallet_data): ?>
+        <?php endif; ?>
+        <?php if ($pallet_data): ?>
             <div class="details-container">
                 <h2>Pallet Information</h2>
                 <dl class="details-list">
                     <dt>Pallet ID:</dt>
-                    <dd><?php echo $pallet_data['pallet_id']; ?></dd>
-                    
-                    <dt>Identifier:</dt>
-                    <dd><?php echo htmlspecialchars($pallet_data['pallet_identifier'] ?? 'N/A'); ?></dd>
-
-                    <dt>Manufacturer Pallet ID:</dt>
-                    <dd><?php echo htmlspecialchars($pallet_data['manufacturer_pallet_id'] ?? 'Unlinked'); ?></dd>
+                    <dd>
+                        <?php if ($can_manage_pallet_updates): ?>
+                            <form method="post" action="pallet_details.php?<?php echo htmlspecialchars(http_build_query($_GET)); ?>" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                                <input type="hidden" name="update_pallet_ids" value="1">
+                                <input
+                                    type="text"
+                                    id="display_pallet_id"
+                                    name="display_pallet_id"
+                                    value="<?php echo htmlspecialchars($edit_display_identifier_value); ?>"
+                                    required
+                                    style="min-width:240px; padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:0.95rem;"
+                                >
+                                <button type="submit" style="border:none; background:linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; padding:8px 14px; border-radius:8px; font-weight:600; cursor:pointer;">Save</button>
+                            </form>
+                            <div style="margin-top:6px; font-size:0.82rem; color:#64748b;">
+                                Defaults to the Solterra generated ID. Enter the real pallet ID once available.
+                            </div>
+                        <?php else: ?>
+                            <?php echo htmlspecialchars($pallet_data['display_identifier'] ?? ($pallet_data['pallet_identifier'] ?? 'N/A')); ?>
+                        <?php endif; ?>
+                    </dd>
 
                     <dt>Manufacturer:</dt>
                     <dd><?php echo htmlspecialchars($pallet_data['origin_vendor'] ?? 'N/A'); ?></dd>

@@ -170,7 +170,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
 <link rel="icon" href="pictures/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;600;700&display=swap" rel="stylesheet">
 <style>
-  .edit-pallet-page { padding: 0 20px 26px; }
+  .edit-pallet-page {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 0 20px 26px;
+      box-sizing: border-box;
+  }
   .form-header {
       background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
       border-radius: 24px;

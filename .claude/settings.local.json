@@ -34,7 +34,10 @@
       "WebFetch(domain:www.appaca.ai)",
       "WebFetch(domain:pricepertoken.com)",
       "WebFetch(domain:blog.google)",
-      "WebFetch(domain:www.vellum.ai)"
+      "WebFetch(domain:www.vellum.ai)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:github.com)",
+      "Bash(more:*)"
     ],
     "deny": [],
     "ask": []

@@ -49,7 +49,7 @@ if ($role === 'global_admin') {
             $accounts[] = $row;
         }
     }
-    $sqlAllProj = "SELECT id, project_name, account_id FROM projects ORDER BY account_id, project_name ASC";
+    $sqlAllProj = "SELECT id, project_name, account_id, project_size FROM projects ORDER BY account_id, project_name ASC";
     $resAllProj = $conn->query($sqlAllProj);
     if ($resAllProj && $resAllProj->num_rows > 0) {
         while ($proj = $resAllProj->fetch_assoc()) {
@@ -58,7 +58,7 @@ if ($role === 'global_admin') {
     }
 } elseif (in_array($role, ['admin', 'customer_admin'], true) && $account_id_for_admin) {
     // Admins see projects for their assigned account in dropdown
-    $sqlAdminProjs = "SELECT id, project_name, account_id FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+    $sqlAdminProjs = "SELECT id, project_name, account_id, project_size FROM projects WHERE account_id = ? ORDER BY project_name ASC";
     $stmtAdminProjs = $conn->prepare($sqlAdminProjs);
     if (!$stmtAdminProjs) die("Error preparing project lookup for admin: " . $conn->error);
     $stmtAdminProjs->bind_param("i", $account_id_for_admin);
@@ -83,7 +83,7 @@ if ($role === 'global_admin') {
 
     if ($account_id_for_user) {
         // Fetch projects for this user's account (for the dropdown, if ever needed by user)
-        $sqlUserProj = "SELECT id, project_name, account_id FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $sqlUserProj = "SELECT id, project_name, account_id, project_size FROM projects WHERE account_id = ? ORDER BY project_name ASC";
         $stmtUserProj = $conn->prepare($sqlUserProj);
         if (!$stmtUserProj) die("Error preparing project lookup for user: " . $conn->error);
         $stmtUserProj->bind_param("i", $account_id_for_user);
@@ -132,6 +132,7 @@ if ($resManufacturers && $resManufacturers->num_rows > 0) {
 // Prepare variables to hold user messages:
 $successMessage = "";
 $errorMessage   = "";
+$projectImpactData = [];
 
 // Function to sync project_wattage_orders table from actual module batches
 function syncProjectWattageOrders($conn, $project_id) {
@@ -619,6 +620,7 @@ if ($conn) { // Check connection is still valid
                 $batch_id = $batch['id'];
                 $batch['items'] = [];
                 $batch['total_quantity'] = 0;
+                $batch['total_watts'] = 0;
             
                 $stmtItems->bind_param("i", $batch_id);
                 $stmtItems->execute();
@@ -626,6 +628,7 @@ if ($conn) { // Check connection is still valid
                 while ($item = $resultItems->fetch_assoc()) {
                     $batch['items'][] = $item;
                     $batch['total_quantity'] += $item['quantity'];
+                    $batch['total_watts'] += ((int)$item['wattage']) * ((int)$item['quantity']);
                 }
                 
                 // NEW: Fetch palletization status for this batch
@@ -678,6 +681,84 @@ if ($conn) { // Check connection is still valid
             $projectModulesData[] = $module;
         } else {
             $unassignedModulesData[] = $module;
+        }
+    }
+
+    if (!empty($projects_for_account)) {
+        foreach ($projects_for_account as $proj) {
+            $pid = (int)($proj['id'] ?? 0);
+            if ($pid <= 0) {
+                continue;
+            }
+            $projectSizeMw = (float)($proj['project_size'] ?? 0);
+            $projectImpactData[$pid] = [
+                'project_name' => (string)($proj['project_name'] ?? ('Project #' . $pid)),
+                'project_size_mw' => $projectSizeMw,
+                'target_modules' => null,
+                'target_watts' => $projectSizeMw > 0 ? ($projectSizeMw * 1000000) : 0.0,
+                'current_modules' => 0,
+                'current_watts' => 0.0
+            ];
+        }
+
+        $projectIds = array_keys($projectImpactData);
+        if (!empty($projectIds)) {
+            $placeholders = implode(',', array_fill(0, count($projectIds), '?'));
+            $types = str_repeat('i', count($projectIds));
+
+            $sqlTarget = "
+                SELECT
+                    pwo.project_id,
+                    COALESCE(SUM(pwo.total_order), 0) AS target_modules,
+                    COALESCE(SUM(CAST(pwo.wattage AS DECIMAL(10,2)) * pwo.total_order), 0) AS target_watts
+                FROM project_wattage_orders pwo
+                WHERE pwo.project_id IN ($placeholders)
+                GROUP BY pwo.project_id
+            ";
+            $stmtTarget = $conn->prepare($sqlTarget);
+            if ($stmtTarget) {
+                $stmtTarget->bind_param($types, ...$projectIds);
+                $stmtTarget->execute();
+                $resTarget = $stmtTarget->get_result();
+                while ($row = $resTarget->fetch_assoc()) {
+                    $pid = (int)($row['project_id'] ?? 0);
+                    if (!isset($projectImpactData[$pid])) {
+                        continue;
+                    }
+                    // Project target is based on project_size (MW). Only fall back to PWO if project_size is unavailable.
+                    if ((float)($projectImpactData[$pid]['target_watts'] ?? 0) <= 0) {
+                        $projectImpactData[$pid]['target_modules'] = (int)($row['target_modules'] ?? 0);
+                        $projectImpactData[$pid]['target_watts'] = (float)($row['target_watts'] ?? 0);
+                    }
+                }
+                $stmtTarget->close();
+            }
+
+            $sqlCurrent = "
+                SELECT
+                    m.project_id,
+                    COALESCE(SUM(umi.quantity), 0) AS current_modules,
+                    COALESCE(SUM(umi.wattage * umi.quantity), 0) AS current_watts
+                FROM modules m
+                JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+                WHERE m.project_id IN ($placeholders)
+                GROUP BY m.project_id
+            ";
+            $stmtCurrent = $conn->prepare($sqlCurrent);
+            if ($stmtCurrent) {
+                $stmtCurrent->bind_param($types, ...$projectIds);
+                $stmtCurrent->execute();
+                $resCurrent = $stmtCurrent->get_result();
+                while ($row = $resCurrent->fetch_assoc()) {
+                    $pid = (int)($row['project_id'] ?? 0);
+                    if (!isset($projectImpactData[$pid])) {
+                        continue;
+                    }
+                    $projectImpactData[$pid]['current_modules'] = (int)($row['current_modules'] ?? 0);
+                    $projectImpactData[$pid]['current_watts'] = (float)($row['current_watts'] ?? 0);
+                }
+                $stmtCurrent->close();
+            }
         }
     }
 } // end if($conn)
@@ -1208,6 +1289,41 @@ if ($conn && $conn instanceof mysqli) {
         /* Adjust form styles within modal if needed */
         .modal-content form label { margin-top: 10px; }
         .modal-content .btn-submit { margin-top: 15px; }
+        .assign-impact-panel {
+            margin-top: 14px;
+            border: 1px solid #d6e5ea;
+            border-radius: 10px;
+            background: #f8fcfd;
+            padding: 12px;
+        }
+        .assign-impact-title {
+            font-weight: 700;
+            color: #2d4a55;
+            margin-bottom: 8px;
+        }
+        .assign-impact-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px 12px;
+            font-size: 0.92em;
+        }
+        .assign-impact-grid .k {
+            color: #64748b;
+            font-weight: 600;
+        }
+        .assign-impact-grid .v {
+            color: #1f2937;
+            font-weight: 700;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .assign-impact-note {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px dashed #c9dbe1;
+            color: #334155;
+            font-size: 0.9em;
+        }
     </style>
     <script>
         // Wattage field adder - remains the same
@@ -1310,14 +1426,26 @@ if ($conn && $conn instanceof mysqli) {
             var selectAllUnassignedBatches = document.getElementById('selectAllUnassignedBatches');
             var unassignedBatchCheckboxes = Array.from(document.querySelectorAll('.unassigned-batch-checkbox'));
             var isGlobalAdminRole = ('<?php echo $role; ?>' === 'global_admin');
+            var projectImpactById = <?php echo json_encode($projectImpactData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+            var selectedAssignMetrics = { modules: 0, watts: 0 };
             var assignProjectOptions = assignProjectSelect
                 ? Array.from(assignProjectSelect.options).slice(1).map(function(opt) { return opt.cloneNode(true); })
                 : [];
+            var impactPanel = document.getElementById('assignImpactPanel');
+            var impactTargetEl = document.getElementById('impact_target');
+            var impactCurrentEl = document.getElementById('impact_current');
+            var impactSelectedEl = document.getElementById('impact_selected');
+            var impactProjectedEl = document.getElementById('impact_projected');
+            var impactNoteEl = document.getElementById('impact_note');
 
             if(btn) { btn.onclick = function() { modal.style.display = 'block'; } }
             if(span) { span.onclick = function() { modal.style.display = 'none'; } }
             if (assignClose && assignModal) {
-                assignClose.onclick = function() { assignModal.style.display = 'none'; };
+                assignClose.onclick = function() {
+                    assignModal.style.display = 'none';
+                    selectedAssignMetrics = { modules: 0, watts: 0 };
+                    if (impactPanel) impactPanel.style.display = 'none';
+                };
             }
             window.addEventListener('click', function(event) {
                 if (modal && event.target === modal) {
@@ -1325,6 +1453,8 @@ if ($conn && $conn instanceof mysqli) {
                 }
                 if (assignModal && event.target === assignModal) {
                     assignModal.style.display = 'none';
+                    selectedAssignMetrics = { modules: 0, watts: 0 };
+                    if (impactPanel) impactPanel.style.display = 'none';
                 }
             });
 
@@ -1335,6 +1465,82 @@ if ($conn && $conn instanceof mysqli) {
             function updateAssignSelectedButtonState() {
                 if (!assignSelectedBatchesBtn) return;
                 assignSelectedBatchesBtn.disabled = (getSelectedUnassignedBatchCheckboxes().length === 0);
+            }
+
+            function formatModulesAndMw(modules, watts) {
+                var safeModules = Number(modules || 0);
+                var safeWatts = Number(watts || 0);
+                var mw = safeWatts / 1000000;
+                return safeModules.toLocaleString() + ' modules (' + mw.toFixed(3) + ' MW)';
+            }
+
+            function formatTargetValue(projectStats) {
+                var targetWatts = Number(projectStats.target_watts || 0);
+                var targetModulesRaw = projectStats.target_modules;
+                var hasTargetModules = (targetModulesRaw !== null && targetModulesRaw !== '' && !isNaN(Number(targetModulesRaw)) && Number(targetModulesRaw) > 0);
+                if (hasTargetModules) {
+                    return formatModulesAndMw(Number(targetModulesRaw), targetWatts);
+                }
+                if (targetWatts > 0) {
+                    return (targetWatts / 1000000).toFixed(3) + ' MW (Project Size)';
+                }
+                return '-';
+            }
+
+            function renderAssignImpact() {
+                if (!impactPanel || !assignProjectSelect) return;
+                var selectedProjectId = parseInt(assignProjectSelect.value || '0', 10);
+                if (!selectedProjectId || !projectImpactById[selectedProjectId]) {
+                    impactPanel.style.display = selectedAssignMetrics.modules > 0 ? 'block' : 'none';
+                    if (impactTargetEl) impactTargetEl.textContent = '-';
+                    if (impactCurrentEl) impactCurrentEl.textContent = '-';
+                    if (impactSelectedEl) impactSelectedEl.textContent = formatModulesAndMw(selectedAssignMetrics.modules, selectedAssignMetrics.watts);
+                    if (impactProjectedEl) impactProjectedEl.textContent = '-';
+                    if (impactNoteEl) impactNoteEl.textContent = 'Select a project to see projected totals.';
+                    return;
+                }
+
+                var projectStats = projectImpactById[selectedProjectId] || {};
+                var rawTargetModules = projectStats.target_modules;
+                var hasTargetModules = (rawTargetModules !== null && rawTargetModules !== '' && !isNaN(Number(rawTargetModules)) && Number(rawTargetModules) > 0);
+                var targetModules = hasTargetModules ? Number(rawTargetModules) : null;
+                var targetWatts = Number(projectStats.target_watts || 0);
+                var currentModules = Number(projectStats.current_modules || 0);
+                var currentWatts = Number(projectStats.current_watts || 0);
+                var selectedModules = Number(selectedAssignMetrics.modules || 0);
+                var selectedWatts = Number(selectedAssignMetrics.watts || 0);
+
+                var projectedModules = currentModules + selectedModules;
+                var projectedWatts = currentWatts + selectedWatts;
+
+                if (impactTargetEl) impactTargetEl.textContent = formatTargetValue(projectStats);
+                if (impactCurrentEl) impactCurrentEl.textContent = formatModulesAndMw(currentModules, currentWatts);
+                if (impactSelectedEl) impactSelectedEl.textContent = formatModulesAndMw(selectedModules, selectedWatts);
+                if (impactProjectedEl) impactProjectedEl.textContent = formatModulesAndMw(projectedModules, projectedWatts);
+
+                if (impactNoteEl) {
+                    if (targetWatts > 0) {
+                        var wattsDiff = projectedWatts - targetWatts;
+                        var mwDiff = Math.abs(wattsDiff) / 1000000;
+                        var mwDiffText = mwDiff.toFixed(3) + ' MW';
+                        var moduleDiffText = '';
+                        if (hasTargetModules && targetModules !== null) {
+                            var moduleDiff = projectedModules - targetModules;
+                            moduleDiffText = Math.abs(moduleDiff).toLocaleString() + ' modules';
+                        }
+                        var unitDetail = moduleDiffText ? (moduleDiffText + ' / ' + mwDiffText) : mwDiffText;
+                        if (wattsDiff > 0) {
+                            impactNoteEl.textContent = 'Projected to be over target by ' + unitDetail + '.';
+                        } else if (wattsDiff < 0) {
+                            impactNoteEl.textContent = 'Projected to remain under target by ' + unitDetail + '.';
+                        } else {
+                            impactNoteEl.textContent = 'Projected to match target exactly.';
+                        }
+                    } else {
+                        impactNoteEl.textContent = 'No project target defined. Review projected totals above.';
+                    }
+                }
+                impactPanel.style.display = 'block';
             }
 
             function rebuildAssignProjectOptions(accountIdForFilter) {
@@ -1376,7 +1582,7 @@ if ($conn && $conn instanceof mysqli) {
             });
             updateAssignSelectedButtonState();
 
-            window.openAssignBatchModal = function(event, batchId, batchAccountId, batchLabel) {
+            window.openAssignBatchModal = function(event, batchId, batchAccountId, batchLabel, totalQuantity, totalWatts) {
                 if (event) {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1387,6 +1593,10 @@ if ($conn && $conn instanceof mysqli) {
                 assignBatchIdInput.value = String(batchId || '');
                 if (assignBatchIdsInput) assignBatchIdsInput.value = '';
                 if (assignBatchSubmitBtn) assignBatchSubmitBtn.textContent = 'Assign Batch';
+                selectedAssignMetrics = {
+                    modules: Number(totalQuantity || 0),
+                    watts: Number(totalWatts || 0)
+                };
                 if (assignBatchHelp) {
                     assignBatchHelp.textContent = 'Assign "' + (batchLabel || ('Batch #' + batchId)) + '" to a project.';
                 }
@@ -1394,6 +1604,7 @@ if ($conn && $conn instanceof mysqli) {
                 rebuildAssignProjectOptions(parseInt(batchAccountId || '0', 10));
 
                 assignProjectSelect.value = '';
+                renderAssignImpact();
                 assignModal.style.display = 'block';
             };
 
@@ -1423,6 +1634,11 @@ if ($conn && $conn instanceof mysqli) {
                 assignBatchIdInput.value = '';
                 assignBatchIdsInput.value = selected.map(function(cb) { return cb.value; }).join(',');
                 if (assignBatchSubmitBtn) assignBatchSubmitBtn.textContent = 'Assign Selected';
+                selectedAssignMetrics = selected.reduce(function(acc, cb) {
+                    acc.modules += Number(cb.getAttribute('data-total-quantity') || 0);
+                    acc.watts += Number(cb.getAttribute('data-total-watts') || 0);
+                    return acc;
+                }, { modules: 0, watts: 0 });
 
                 var singleAccountId = accountIds.length === 1 ? accountIds[0] : 0;
                 rebuildAssignProjectOptions(singleAccountId);
@@ -1431,11 +1647,15 @@ if ($conn && $conn instanceof mysqli) {
                 if (assignBatchHelp) {
                     assignBatchHelp.textContent = 'Assign ' + selected.length + ' selected batch(es) to a project.';
                 }
+                renderAssignImpact();
                 assignModal.style.display = 'block';
             };
 
             if (assignSelectedBatchesBtn) {
                 assignSelectedBatchesBtn.addEventListener('click', window.openAssignSelectedBatchesModal);
+            }
+            if (assignProjectSelect) {
+                assignProjectSelect.addEventListener('change', renderAssignImpact);
             }
             
             // If there was a POST error, re-open the modal to show the error message within context
@@ -1827,6 +2047,8 @@ if ($conn && $conn instanceof mysqli) {
                                     value="<?php echo (int)$batch['id']; ?>"
                                     data-batch-id="<?php echo (int)$batch['id']; ?>"
                                     data-account-id="<?php echo (int)($batch['account_id'] ?? 0); ?>"
+                                    data-total-quantity="<?php echo (int)($batch['total_quantity'] ?? 0); ?>"
+                                    data-total-watts="<?php echo (float)($batch['total_watts'] ?? 0); ?>"
                                     data-batch-label="<?php echo htmlspecialchars(!empty($batch['batch_name']) ? $batch['batch_name'] : ('Batch #' . (int)$batch['id']), ENT_QUOTES); ?>"
                                     title="Select batch"
                                 >
@@ -1888,7 +2110,7 @@ if ($conn && $conn instanceof mysqli) {
                                             type="button"
                                             class="dropdown-item edit"
                                             style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;"
-                                            onclick="openAssignBatchModal(event, <?php echo (int)$batch['id']; ?>, <?php echo (int)($batch['account_id'] ?? 0); ?>, <?php echo json_encode(!empty($batch['batch_name']) ? $batch['batch_name'] : ('Batch #' . (int)$batch['id'])); ?>)"
+                                            onclick="openAssignBatchModal(event, <?php echo (int)$batch['id']; ?>, <?php echo (int)($batch['account_id'] ?? 0); ?>, <?php echo json_encode(!empty($batch['batch_name']) ? $batch['batch_name'] : ('Batch #' . (int)$batch['id'])); ?>, <?php echo (int)($batch['total_quantity'] ?? 0); ?>, <?php echo (float)($batch['total_watts'] ?? 0); ?>)"
                                         >
                                             Assign to Project
                                         </button>
@@ -1941,6 +2163,17 @@ if ($conn && $conn instanceof mysqli) {
                         </option>
                     <?php endforeach; ?>
                 </select>
+
+                <div id="assignImpactPanel" class="assign-impact-panel" style="display:none;">
+                    <div class="assign-impact-title">Assignment Impact</div>
+                    <div class="assign-impact-grid">
+                        <div class="k">Project Target</div><div class="v" id="impact_target">-</div>
+                        <div class="k">Currently Assigned</div><div class="v" id="impact_current">-</div>
+                        <div class="k">Selected to Assign</div><div class="v" id="impact_selected">-</div>
+                        <div class="k">Projected Total</div><div class="v" id="impact_projected">-</div>
+                    </div>
+                    <div class="assign-impact-note" id="impact_note">Select a project to see the impact.</div>
+                </div>
 
                 <button type="submit" class="btn-submit" id="assignBatchSubmitBtn">Assign Batch</button>
             </form>

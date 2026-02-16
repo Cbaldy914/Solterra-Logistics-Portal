@@ -2092,19 +2092,6 @@ if (!empty($bolCompletionMessage)) {
         .shipment-details-modal-content {
             padding: 0;
         }
-        .link-mfr-modal-body {
-            padding: 22px 26px 24px;
-        }
-        .link-mfr-modal-body .link-mfr-intro {
-            margin: 0 0 16px;
-            color: #64748b;
-            text-align: center;
-        }
-        @media (max-width: 768px) {
-            .link-mfr-modal-body {
-                padding: 16px;
-            }
-        }
         .shipment-details-modal-content h2 {
             margin: 0 0 0 0;
             padding: 24px 36px;
@@ -2648,7 +2635,7 @@ if (!empty($bolCompletionMessage)) {
                             <div class="admin-tools-buttons">
                                 <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id=' . $project_id_from_url : ''; ?>" class="action-btn action-btn-import"><i class="fas fa-file-import"></i> Import Shipments</a>
                                 <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
-                                <button type="button" id="openLinkManufacturerModalBtn" class="action-btn action-btn-warning" disabled><i class="fas fa-link"></i> Link Mfr IDs</button>
+                                <a href="upload_manufacturer_links.php<?php echo $project_id_from_url ? '?project_id=' . $project_id_from_url : ''; ?>" class="action-btn action-btn-warning"><i class="fas fa-link"></i> Map Real Pallet IDs</a>
                                 <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
                             </div>
                         </div>
@@ -2663,8 +2650,7 @@ if (!empty($bolCompletionMessage)) {
                                 <tr>
                                     <?php if ($can_manage_shipments): ?><th><input type="checkbox" id="selectAllPallets" disabled></th><?php endif; ?>
                                     <th>Project</th>
-                                    <th>Identifier</th>
-                                    <th>Mfr Pallet ID</th>
+                                    <th>Pallet ID</th>
                                     <th>Manufacturer</th>
                                     <th>Wattage</th>
                                     <th>Quantity</th>
@@ -2675,7 +2661,7 @@ if (!empty($bolCompletionMessage)) {
                             </thead>
                             <tbody id="palletsTableBody">
                                 <tr>
-                                    <td colspan="<?php echo $can_manage_shipments ? 10 : 9; ?>" style="text-align: center; padding: 40px;">
+                                    <td colspan="<?php echo $can_manage_shipments ? 9 : 8; ?>" style="text-align: center; padding: 40px;">
                                         <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
                                         <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
                                     </td>
@@ -2970,42 +2956,6 @@ if (!empty($bolCompletionMessage)) {
     </div>
 </div>
 
-<?php if ($can_manage_shipments): ?>
-<div id="linkManufacturerModal" class="modal" style="display: none;">
-    <div class="modal-content" style="max-width: 900px;">
-        <span class="close-modal-btn" id="closeLinkManufacturerModalBtn">&times;</span>
-        <div class="shipment-details-modal-content">
-            <h2 style="margin-top: 0; text-align: center;">Link Manufacturer Pallet IDs</h2>
-            <div class="link-mfr-modal-body">
-                <p class="link-mfr-intro">
-                    Map manufacturer pallet IDs to selected Solterra pallet identifiers.
-                </p>
-                <div style="max-height: 430px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
-                    <table style="margin: 0; width: 100%;">
-                        <thead>
-                            <tr>
-                                <th style="text-align: left;">Pallet ID</th>
-                                <th style="text-align: left;">Solterra Identifier</th>
-                                <th style="text-align: left;">Manufacturer Pallet ID</th>
-                            </tr>
-                        </thead>
-                        <tbody id="linkManufacturerTableBody">
-                            <tr>
-                                <td colspan="3" style="text-align: center; color: #64748b; padding: 20px;">Select pallets to start linking.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px;">
-                    <button type="button" class="action-button" id="cancelLinkManufacturerBtn" style="background: #475569;">Cancel</button>
-                    <button type="button" class="action-button" id="saveLinkManufacturerBtn">Save Links</button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-<?php endif; ?>
-
 <!-- Status Breakdown Modal -->
 <div id="statusBreakdownModal" class="modal" style="display: none;">
     <div class="modal-content status-breakdown-modal-content">
@@ -3045,7 +2995,7 @@ if (!empty($bolCompletionMessage)) {
     const projectIdFromUrl = <?php echo (int)$project_id_from_url; ?>;
     const canManageShipments = <?php echo $can_manage_shipments ? 'true' : 'false'; ?>;
     const isStandardUser = <?php echo $is_standard_user ? 'true' : 'false'; ?>;
-    const tableColumnCount = canManageShipments ? 10 : 9;
+    const tableColumnCount = canManageShipments ? 9 : 8;
     // Pallets are now loaded via AJAX
     let palletsData = [];
     let currentStatusCounts = {};
@@ -3100,10 +3050,6 @@ function updateSelectedCount() {
     const delBtn = document.getElementById('deletePalletsBtn');
     if (delBtn) {
         delBtn.disabled = (count === 0);
-    }
-    const linkBtn = document.getElementById('openLinkManufacturerModalBtn');
-    if (linkBtn) {
-        linkBtn.disabled = (count === 0);
     }
 }
 
@@ -3318,7 +3264,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Wire up Export and Delete controls
     initializeExportCsv();
     initializeDeletePallets();
-    initializeManufacturerLinking();
     
     // Initialize header stats
     updateHeaderStats();
@@ -3333,32 +3278,40 @@ function initializeExportCsv() {
         if (!table) return;
         const rows = Array.from(table.querySelectorAll('tbody tr'));
         const csvData = [];
-        const headers = ["id", "pallet_identifier", "manufacturer_pallet_id", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
+        const headers = ["id", "identifier", "identifier_source", "solterra_identifier", "manufacturer_pallet_id", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
         csvData.push(headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(','));
         rows.forEach(row => {
             if (row.style.display === 'none') return;
             const cells = row.querySelectorAll('td');
             const rowData = [];
             const id = row.getAttribute('data-id') || '';
+            if (!id) return;
+            const pallet = palletsMap.get(Number(id)) || {};
             const colOffset = canManageShipments ? 1 : 0;
-            const mapping = {
-                pallet_identifier: colOffset + 1,
-                manufacturer_pallet_id: colOffset + 2,
-                wattage: colOffset + 4,
-                quantity: colOffset + 5,
-                status: colOffset + 6,
-                Project: colOffset + 0,
-                deliveries: colOffset + 7
-            };
+            const deliveryCellIdx = colOffset + 6;
             headers.forEach(h => {
                 let val = '';
-                if (h === 'id') { val = id; }
-                else if (h === 'Associated Deliveries') { val = (cells[mapping.deliveries]?.textContent || '').trim(); }
-                else if (h === 'Project') { val = (cells[mapping.Project]?.textContent || '').trim(); }
-                else {
-                    const key = h.replace(/\s+/g,'_');
-                    const idx = mapping[key] ?? mapping[h];
-                    val = (cells[idx]?.textContent || '').trim();
+                if (h === 'id') {
+                    val = id;
+                } else if (h === 'identifier') {
+                    val = String(pallet.display_identifier || pallet.pallet_identifier || '');
+                } else if (h === 'identifier_source') {
+                    const hasManufacturerId = String(pallet.manufacturer_pallet_id || '').trim() !== '';
+                    val = hasManufacturerId ? 'Linked Manufacturer ID' : 'Solterra Generated ID';
+                } else if (h === 'solterra_identifier') {
+                    val = String(pallet.pallet_identifier || '');
+                } else if (h === 'manufacturer_pallet_id') {
+                    val = String(pallet.manufacturer_pallet_id || '');
+                } else if (h === 'wattage') {
+                    val = String(pallet.wattage || '');
+                } else if (h === 'quantity') {
+                    val = String(pallet.quantity || '');
+                } else if (h === 'status') {
+                    val = String(pallet.status || '');
+                } else if (h === 'Project') {
+                    val = String(pallet.display_project_name || 'Unassigned');
+                } else if (h === 'Associated Deliveries') {
+                    val = (cells[deliveryCellIdx]?.textContent || '').trim();
                 }
                 val = val.replace(/"/g,'""');
                 if (val.includes(',')) val = '"' + val + '"';
@@ -3387,119 +3340,6 @@ function initializeDeletePallets() {
         if (!actionInput) { actionInput = document.createElement('input'); actionInput.type='hidden'; actionInput.name='action'; form.appendChild(actionInput); }
         actionInput.value = 'delete_pallets';
         form.submit();
-    });
-}
-
-function initializeManufacturerLinking() {
-    const openBtn = document.getElementById('openLinkManufacturerModalBtn');
-    const modal = document.getElementById('linkManufacturerModal');
-    const closeBtn = document.getElementById('closeLinkManufacturerModalBtn');
-    const cancelBtn = document.getElementById('cancelLinkManufacturerBtn');
-    const saveBtn = document.getElementById('saveLinkManufacturerBtn');
-    const tableBody = document.getElementById('linkManufacturerTableBody');
-
-    if (!openBtn || !modal || !saveBtn || !tableBody) return;
-
-    function closeModal() {
-        modal.style.display = 'none';
-    }
-
-    function buildRows() {
-        const selected = getSelectedPallets().slice().sort((a, b) => Number(a.pallet_id) - Number(b.pallet_id));
-        if (selected.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#64748b; padding:20px;">Select pallets to start linking.</td></tr>';
-            return false;
-        }
-
-        tableBody.innerHTML = selected.map(pallet => {
-            const palletId = Number(pallet.pallet_id || 0);
-            const solterraIdentifier = escapeHtml(String(pallet.pallet_identifier || ('Pallet #' + palletId)));
-            const manufacturerPalletId = escapeHtml(String(pallet.manufacturer_pallet_id || ''));
-            return `
-                <tr data-link-row="${palletId}">
-                    <td style="font-weight:600;">${palletId}</td>
-                    <td>${solterraIdentifier}</td>
-                    <td>
-                        <input
-                            type="text"
-                            class="link-manufacturer-input"
-                            data-pallet-id="${palletId}"
-                            value="${manufacturerPalletId}"
-                            maxlength="100"
-                            placeholder="Enter manufacturer pallet ID"
-                            style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px;"
-                        >
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        return true;
-    }
-
-    async function saveLinks() {
-        const inputs = Array.from(tableBody.querySelectorAll('.link-manufacturer-input'));
-        if (inputs.length === 0) {
-            alert('No selected pallets to update.');
-            return;
-        }
-
-        const payload = inputs.map(input => ({
-            pallet_id: Number(input.getAttribute('data-pallet-id') || 0),
-            manufacturer_pallet_id: (input.value || '').trim()
-        }));
-
-        saveBtn.disabled = true;
-        saveBtn.textContent = 'Saving...';
-        try {
-            const endpoint = 'create_shipment.php' + (projectIdFromUrl > 0 ? ('?project_id=' + projectIdFromUrl) : '');
-            const body = new URLSearchParams();
-            body.append('action', 'bulk_link_manufacturer_ids');
-            body.append('links_json', JSON.stringify(payload));
-
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-                body: body.toString()
-            });
-            const result = await response.json();
-
-            if (!result.success) {
-                throw new Error(result.message || 'Failed to link manufacturer pallet IDs.');
-            }
-
-            closeModal();
-            await loadPallets();
-            updateSelectedCount();
-
-            const updatedCount = Number(result.updated_count || 0);
-            const linkedCount = Number(result.linked_count || 0);
-            const clearedCount = Number(result.cleared_count || 0);
-            alert(`Updated ${updatedCount} pallet(s). Linked: ${linkedCount}. Cleared: ${clearedCount}.`);
-        } catch (error) {
-            alert(error.message || 'Failed to save manufacturer pallet IDs.');
-        } finally {
-            saveBtn.disabled = false;
-            saveBtn.textContent = 'Save Links';
-        }
-    }
-
-    openBtn.addEventListener('click', function() {
-        if (!buildRows()) {
-            alert('Select at least one pallet to link manufacturer IDs.');
-            return;
-        }
-        modal.style.display = 'block';
-    });
-
-    saveBtn.addEventListener('click', saveLinks);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
-
-    modal.addEventListener('click', function(event) {
-        if (event.target === modal) {
-            closeModal();
-        }
     });
 }
 
@@ -3711,22 +3551,27 @@ function renderPalletsTable(pallets) {
         }
 
         const detailsUrl = `pallet_details.php?pallet_id=${pallet.pallet_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}`;
+        const hasManufacturerIdentifier = String(pallet.manufacturer_pallet_id || '').trim() !== '';
+        const identifierBadge = hasManufacturerIdentifier
+            ? '<span style="display:inline-block; margin-top:4px; padding:2px 7px; font-size:11px; border-radius:999px; background:#dcfce7; color:#166534; font-weight:600;">Linked Manufacturer ID</span>'
+            : '<span style="display:inline-block; margin-top:4px; padding:2px 7px; font-size:11px; border-radius:999px; background:#eef2ff; color:#334155; font-weight:600;">Solterra Generated ID</span>';
 
         const checkboxHtml = canManageShipments
             ? `<td><input type="checkbox" name="selected_pallets[]" value="${pallet.pallet_id}" class="pallet-checkbox" data-status="${escapeHtml(status)}"></td>`
             : '';
 
         const actionsHtml = `
-            <a href="${detailsUrl}" class="action-button">Pallet Details</a>
-            ${canManageShipments ? `<a href="edit_pallet.php?pallet_id=${pallet.pallet_id}" class="action-button" style="background-color:#f0ad4e;">Edit Pallet</a>` : ''}
+            <a href="${detailsUrl}" class="action-button">${canManageShipments ? 'View/Edit Details' : 'Pallet Details'}</a>
         `;
 
         html += `
             <tr data-id="${pallet.pallet_id}">
                 ${checkboxHtml}
                 <td>${escapeHtml(pallet.display_project_name || 'Unassigned')}</td>
-                <td>${escapeHtml(pallet.pallet_identifier || 'N/A')}</td>
-                <td>${escapeHtml(pallet.manufacturer_pallet_id || '') || '<span style="color:#999;">Unlinked</span>'}</td>
+                <td>
+                    <div>${escapeHtml(pallet.display_identifier || pallet.pallet_identifier || 'N/A')}</div>
+                    <div>${identifierBadge}</div>
+                </td>
                 <td>${escapeHtml(manufacturerName || 'N/A')}</td>
                 <td>${escapeHtml(pallet.wattage || '')}</td>
                 <td>${Number(pallet.quantity || 0).toLocaleString()}</td>
