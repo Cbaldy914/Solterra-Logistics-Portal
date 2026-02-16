@@ -27,6 +27,12 @@ class OpenAIClient {
         } else {
             $this->systemPrompt = $this->getDefaultSystemPrompt();
         }
+
+        // Append FAQ & glossary knowledge
+        $faqFile = dirname(__DIR__) . '/sunny_faq_knowledge.md';
+        if (file_exists($faqFile)) {
+            $this->systemPrompt .= "\n\n" . file_get_contents($faqFile);
+        }
     }
     
     private function getDefaultSystemPrompt() {

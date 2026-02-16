@@ -216,6 +216,12 @@ try {
         $systemMessage = "You are Sunny, a helpful logistics assistant for Solterra Solutions.";
     }
 
+    // Append FAQ & glossary knowledge so Sunny can answer portal "how do I" questions
+    $faqKnowledgePath = dirname(__DIR__) . '/sunny_faq_knowledge.md';
+    if (file_exists($faqKnowledgePath)) {
+        $systemMessage .= "\n\n" . file_get_contents($faqKnowledgePath);
+    }
+
     // Append dynamic tool context (if any) so the model can ground its answer
     if (!empty($toolResults)) {
         $systemMessage .= "\n\n**Available Data From Tools**\n";
