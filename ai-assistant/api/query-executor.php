@@ -12,7 +12,8 @@ class SunnyQueryExecutor {
     private $allowedTables;
     
     public function __construct($userRole, $userAccountId = null) {
-        $this->userRole = $userRole;
+        // Normalize role casing (e.g. DDPm -> ddpm) to avoid allow-list mismatches.
+        $this->userRole = strtolower(trim((string)$userRole));
         $this->userAccountId = $userAccountId;
         
         // Define allowed tables based on role
@@ -43,8 +44,11 @@ class SunnyQueryExecutor {
                 // Admins may need to read account-user mapping in some contexts
                 'customer_account_users'
             ]),
+            'customer_admin' => array_merge($common, [
+                'customer_account_users'
+            ]),
             'user' => $common,
-            'DDPm' => $common
+            'ddpm' => $common
         ];
     }
     
@@ -208,7 +212,7 @@ class SunnyQueryExecutor {
         }
         
         // Mask email addresses for non-admin users
-        if ($this->userRole !== 'global_admin' && $this->userRole !== 'admin') {
+        if ($this->userRole !== 'global_admin' && $this->userRole !== 'admin' && $this->userRole !== 'customer_admin') {
             foreach ($row as $key => $value) {
                 if (strpos($key, 'email') !== false && is_string($value)) {
                     $row[$key] = $this->maskEmail($value);

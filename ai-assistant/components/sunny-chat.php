@@ -36,14 +36,36 @@ if ($conn) {
     
     // For non-global admins, get their account_id
     if ($user_role !== 'global_admin') {
-        $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
-        $stmt->bind_param("i", $user_id);
+        $resolved_accounts = [];
+
+        // Prefer account mapping that matches the active session role.
+        $stmt = $conn->prepare("SELECT DISTINCT account_id FROM customer_account_users WHERE user_id = ? AND LOWER(role) = LOWER(?) ORDER BY account_id ASC LIMIT 2");
+        $stmt->bind_param("is", $user_id, $user_role);
         $stmt->execute();
         $stmt->bind_result($account_id);
-        if ($stmt->fetch()) {
-            $user_account_id = $account_id;
+        while ($stmt->fetch()) {
+            $resolved_accounts[] = (int)$account_id;
         }
         $stmt->close();
+
+        // Legacy fallback for environments where role mapping rows are incomplete.
+        if (count($resolved_accounts) === 0) {
+            $stmt = $conn->prepare("SELECT DISTINCT account_id FROM customer_account_users WHERE user_id = ? ORDER BY account_id ASC LIMIT 2");
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $stmt->bind_result($account_id);
+            while ($stmt->fetch()) {
+                $resolved_accounts[] = (int)$account_id;
+            }
+            $stmt->close();
+        }
+
+        if (count($resolved_accounts) === 1) {
+            $user_account_id = $resolved_accounts[0];
+        } elseif (count($resolved_accounts) > 1) {
+            // Keep null for safety; backend will refuse ambiguous account scope.
+            error_log("Sunny account context ambiguous for user {$user_id} (role {$user_role})");
+        }
     }
     $conn->close();
 }

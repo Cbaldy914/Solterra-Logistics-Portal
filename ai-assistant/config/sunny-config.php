@@ -61,7 +61,7 @@ return [
     // Security Settings
     'security' => [
         'require_authentication' => true,
-        'allowed_roles' => ['user', 'admin', 'global_admin', 'DDPm'],
+        'allowed_roles' => ['user', 'admin', 'customer_admin', 'global_admin', 'DDPm'],
         'enable_sql_filtering' => true,
         'log_queries' => true
     ],
