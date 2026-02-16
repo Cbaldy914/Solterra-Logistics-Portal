@@ -1082,6 +1082,7 @@ function planToolsWithGemini($message, $chatHistory, $userRole, $accountId, $cur
             'getDeliveryStatus',
             'getUpcomingDeliveries',
             'getWarehouseInventory',
+            'getInventoryValue',
             'getProjectCostAnalysis',
             'getDeliveryPerformance',
             'getKPIDashboard',
@@ -1114,6 +1115,8 @@ function planToolsWithGemini($message, $chatHistory, $userRole, $accountId, $cur
             . "Select from allowed tools only.\n"
             . "For non-global users, assume strict single-account scope and never expand beyond it.\n"
             . "If project is unspecified, prefer account-level portfolio answers (do not force clarification).\n"
+            . "If user asks for monetary value of modules/inventory/storage, prefer getInventoryValue.\n"
+            . "Use getProjectCostAnalysis for freight/accessorial/accounts-payable type questions.\n"
             . "Ask clarification only when a required entity is truly ambiguous or missing for the requested metric.\n"
             . "JSON schema:\n"
             . "{\n"
@@ -1352,7 +1355,18 @@ function detectToolsFromMessage($message) {
     }
 
     // Cost / value related
-    if (preg_match('/\b(cost|costs|value|valuation|price|pricing|spend|spent|payable|financial|\$)\b/i', $message)) {
+    $hasValueIntent = preg_match('/\b(cost|costs|value|valuation|price|pricing|spend|spent|financial|\$)\b/i', $message);
+    $hasInventoryValueContext = preg_match('/\b(module|modules|inventory|warehouse|storage|stored|stock|pallet|pallets)\b/i', $message);
+    $hasLogisticsCostContext = preg_match('/\b(freight|accessorial|payable|accounts payable|invoice|invoices|delivery cost|shipping cost|transport cost)\b/i', $message);
+
+    if ($hasValueIntent && $hasInventoryValueContext) {
+        $tools[] = 'getInventoryValue';
+        // Pair inventory facts with valuation for better answer grounding.
+        if (!in_array('getWarehouseInventory', $tools, true)) {
+            $tools[] = 'getWarehouseInventory';
+        }
+    }
+    if ($hasLogisticsCostContext || ($hasValueIntent && !$hasInventoryValueContext)) {
         $tools[] = 'getProjectCostAnalysis';
     }
 
