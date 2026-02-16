@@ -352,3 +352,17 @@ Priority: Critical
     - clarified that freight/accessorial analysis is not a substitute for inventory module value requests
 12. Improved project-cost tool entity resolution:
     - `getProjectCostAnalysis` dispatcher path now resolves project names to scoped project IDs before query execution
+13. Chat UX updates:
+    - usage footer wording now says "daily usage remaining" (not budget)
+    - usage footer hover tooltip now shows when daily usage resets
+14. Conversation continuity hardened:
+    - chat frontend restores active conversation on page load
+    - frontend persists active conversation ID in local storage per user
+    - initial backend fallback reused most recent valid conversation when session active ID was missing (later replaced by session-bound behavior in item 16)
+15. Customer-role cost visibility tightened:
+    - `customer_admin` and `user` cost analysis payloads no longer include `customer_cost`
+    - cost analysis now includes freight, accessorial, warehousing, total logistics, and `modules_paid_so_far`
+    - system prompt updated with explicit customer-role cost reporting policy
+16. Session-bound conversation continuity:
+    - conversation restore is now tied to a per-session nonce so logout/login starts a fresh chat
+    - removed backend "reuse most recent conversation" fallback in `get-active` and stream initialization

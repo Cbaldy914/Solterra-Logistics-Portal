@@ -992,24 +992,42 @@ class SunnyTools {
      */
     public function getProjectCostAnalysis($projectId = null) {
         try {
+            $normalizedRole = strtolower(trim((string)$this->userRole));
+            $isCustomerFacingRole = in_array($normalizedRole, ['customer_admin', 'user'], true);
+
             $sql = "
                 SELECT 
                     p.id,
                     p.project_name,
                     p.solterra_fee,
-                    COUNT(DISTINCT d.id) as delivery_count,
-                    SUM(d.freight_cost) as total_freight_cost,
-                    SUM(d.accessorial_costs) as total_accessorial_costs,
-                    SUM(d.customer_cost) as total_customer_costs,
-                    AVG(d.freight_cost) as avg_freight_per_delivery,
-                    SUM(ap.amount) as total_payables,
-                    -- Calculate total MW delivered
-                    SUM(d.wattage * d.quantity) / 1000000 as total_delivered_mw
+                    (SELECT COUNT(*) FROM deliveries d WHERE d.project_id = p.id) AS delivery_count,
+                    (SELECT COALESCE(SUM(COALESCE(d.freight_cost, 0)), 0) FROM deliveries d WHERE d.project_id = p.id) AS total_freight_cost,
+                    (SELECT COALESCE(SUM(COALESCE(d.accessorial_costs, 0)), 0) FROM deliveries d WHERE d.project_id = p.id) AS total_accessorial_costs,
+                    (SELECT COALESCE(SUM(COALESCE(ip.warehouse_cost, 0)), 0) FROM inventory_pallets ip WHERE ip.assigned_project_id = p.id OR ip.current_project_id = p.id) AS total_warehousing_cost,
+                    (
+                        (SELECT COALESCE(SUM(COALESCE(d.freight_cost, 0)), 0) FROM deliveries d WHERE d.project_id = p.id)
+                        + (SELECT COALESCE(SUM(COALESCE(d.accessorial_costs, 0)), 0) FROM deliveries d WHERE d.project_id = p.id)
+                        + (SELECT COALESCE(SUM(COALESCE(ip.warehouse_cost, 0)), 0) FROM inventory_pallets ip WHERE ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
+                    ) AS total_logistics_cost,
+                    (SELECT COALESCE(AVG(NULLIF(d.freight_cost, 0)), 0) FROM deliveries d WHERE d.project_id = p.id) AS avg_freight_per_delivery,
+                    (SELECT COALESCE(SUM(ap.amount), 0) FROM accounts_payable ap WHERE ap.project_id = p.id) AS total_payables,
+                    (SELECT COALESCE(SUM(d.wattage * d.quantity), 0) / 1000000 FROM deliveries d WHERE d.project_id = p.id) AS total_delivered_mw,
+                    (
+                        SELECT COALESCE(SUM(dmi.payment_amount), 0)
+                        FROM delivery_milestone_instances dmi
+                        JOIN deliveries d ON dmi.delivery_id = d.id
+                        WHERE d.project_id = p.id
+                    ) AS modules_paid_so_far";
+
+            if (!$isCustomerFacingRole) {
+                $sql .= ",
+                    (SELECT COALESCE(SUM(COALESCE(d.customer_cost, 0)), 0) FROM deliveries d WHERE d.project_id = p.id) AS total_customer_costs";
+            }
+
+            $sql .= "
                 FROM projects p
-                LEFT JOIN deliveries d ON p.id = d.project_id
-                LEFT JOIN accounts_payable ap ON p.id = ap.project_id
             ";
-            
+
             $params = [];
             if ($projectId) {
                 $sql .= " WHERE p.id = ?";
@@ -1021,7 +1039,7 @@ class SunnyTools {
                 $params[] = $this->userAccountId;
             }
 
-            $sql .= " GROUP BY p.id ORDER BY total_freight_cost DESC LIMIT 20";
+            $sql .= " ORDER BY total_logistics_cost DESC LIMIT 20";
             
             return $this->queryExecutor->executeQuery($sql, $params);
             
