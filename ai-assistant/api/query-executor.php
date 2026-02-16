@@ -33,6 +33,7 @@ class SunnyQueryExecutor {
             'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
             'manufacturers', 'inventory_pallets', 'freight_estimates', 'warehouse_estimates',
             'project_invoices', 'project_wattage_orders', 'project_documents', 'sunny_memory',
+            'unassigned_module_items',
             'flash_test_data', 'site_scheduling', 'warehouse_cost_items', 'accounts_payable'
         ];
 

@@ -335,3 +335,20 @@ Priority: Critical
    - integrated Gemini planner call returning strict JSON decision
    - added confidence-gated planner->tools routing with regex fallback
    - added one-question planner clarification bypass path (no extra model call)
+8. Added inventory valuation capability for module value questions:
+   - new `getInventoryValue` tool in `sunny-tools.php` using `cost_per_watt * wattage * quantity` on in-storage pallets
+   - added priced/unpriced coverage metrics and project/wattage breakdowns in tool payload
+   - expanded query allow-list to include `unassigned_module_items` for safe joins
+   - wired dispatcher aliases (`getInventoryValue`, `inventory_value`, `inventoryvalue`)
+9. Improved routing for "value of modules in storage" prompts:
+   - planner allowed-tools now includes `getInventoryValue`
+   - planner guidance explicitly maps module/inventory value intent to `getInventoryValue`
+   - heuristic fallback now routes inventory+value questions to `getInventoryValue` (with inventory context), while preserving freight/accessorial routing to `getProjectCostAnalysis`
+10. Tightened project-name resolution to preserve account scope:
+    - added scoped project resolver helper in Sunny tools
+    - updated POD/doc project-name lookup paths to use scoped resolver
+11. Updated system prompt contract:
+    - documented inventory valuation capability and `getInventoryValue` tool usage
+    - clarified that freight/accessorial analysis is not a substitute for inventory module value requests
+12. Improved project-cost tool entity resolution:
+    - `getProjectCostAnalysis` dispatcher path now resolves project names to scoped project IDs before query execution

@@ -826,6 +826,168 @@ class SunnyTools {
     }
     
     /**
+     * Calculate current module value in storage using cost_per_watt * wattage * quantity.
+     * Supports account portfolio scope by default, with optional project/warehouse filters.
+     */
+    public function getInventoryValue($projectId = null, $warehouseId = null) {
+        try {
+            $baseFrom = "
+                FROM inventory_pallets ip
+                LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+                LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+                LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            ";
+
+            $where = ["ip.status = 'In Warehouse'"];
+            $params = [];
+
+            if ($projectId) {
+                $where[] = "(ip.assigned_project_id = ? OR ip.current_project_id = ? OR m.project_id = ?)";
+                $params[] = $projectId;
+                $params[] = $projectId;
+                $params[] = $projectId;
+            }
+
+            if ($warehouseId) {
+                $where[] = "ip.current_warehouse_id = ?";
+                $params[] = $warehouseId;
+            }
+
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $where[] = "(m.account_id = ? OR p_assigned.account_id = ? OR p_current.account_id = ?)";
+                $params[] = $this->userAccountId;
+                $params[] = $this->userAccountId;
+                $params[] = $this->userAccountId;
+            }
+
+            $whereSql = " WHERE " . implode(" AND ", $where);
+
+            $summarySql = "
+                SELECT
+                    COUNT(ip.id) AS pallets_in_storage,
+                    COALESCE(SUM(ip.quantity), 0) AS modules_in_storage,
+                    COALESCE(SUM(ip.wattage * ip.quantity), 0) AS total_watts_in_storage,
+                    COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL AND m.cost_per_watt > 0 THEN ip.wattage * ip.quantity ELSE 0 END), 0) AS priced_watts,
+                    COALESCE(SUM(CASE WHEN m.cost_per_watt IS NULL OR m.cost_per_watt <= 0 THEN ip.wattage * ip.quantity ELSE 0 END), 0) AS unpriced_watts,
+                    COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL AND m.cost_per_watt > 0 THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE 0 END), 0) AS total_module_value,
+                    SUM(CASE WHEN m.cost_per_watt IS NOT NULL AND m.cost_per_watt > 0 THEN 1 ELSE 0 END) AS priced_pallets,
+                    SUM(CASE WHEN m.cost_per_watt IS NULL OR m.cost_per_watt <= 0 THEN 1 ELSE 0 END) AS unpriced_pallets
+                {$baseFrom}
+                {$whereSql}
+            ";
+            $summaryResult = $this->queryExecutor->executeQuery($summarySql, $params);
+            if (!$summaryResult['success']) {
+                return $summaryResult;
+            }
+
+            $summary = $summaryResult['data'][0] ?? [];
+            $palletsInStorage = intval($summary['pallets_in_storage'] ?? 0);
+            $modulesInStorage = intval($summary['modules_in_storage'] ?? 0);
+            $totalWattsInStorage = floatval($summary['total_watts_in_storage'] ?? 0);
+            $pricedWatts = floatval($summary['priced_watts'] ?? 0);
+            $unpricedWatts = floatval($summary['unpriced_watts'] ?? 0);
+            $totalModuleValue = round(floatval($summary['total_module_value'] ?? 0), 2);
+            $pricedPallets = intval($summary['priced_pallets'] ?? 0);
+            $unpricedPallets = intval($summary['unpriced_pallets'] ?? 0);
+
+            $coveragePct = $totalWattsInStorage > 0 ? round(($pricedWatts / $totalWattsInStorage) * 100, 1) : 0.0;
+            $avgCostPerWatt = $pricedWatts > 0 ? round($totalModuleValue / $pricedWatts, 6) : null;
+
+            $projectBreakdownSql = "
+                SELECT
+                    COALESCE(p_assigned.id, p_current.id, m.project_id) AS project_id,
+                    COALESCE(p_assigned.project_name, p_current.project_name, 'Unassigned Project') AS project_name,
+                    COUNT(ip.id) AS pallets_in_storage,
+                    SUM(ip.quantity) AS modules_in_storage,
+                    SUM(ip.wattage * ip.quantity) / 1000000 AS mw_in_storage,
+                    COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL AND m.cost_per_watt > 0 THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE 0 END), 0) AS module_value,
+                    COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL AND m.cost_per_watt > 0 THEN ip.wattage * ip.quantity ELSE 0 END), 0) AS priced_watts
+                {$baseFrom}
+                {$whereSql}
+                GROUP BY COALESCE(p_assigned.id, p_current.id, m.project_id), COALESCE(p_assigned.project_name, p_current.project_name, 'Unassigned Project')
+                ORDER BY modules_in_storage DESC
+                LIMIT 20
+            ";
+            $projectBreakdownResult = $this->queryExecutor->executeQuery($projectBreakdownSql, $params);
+
+            $wattageBreakdownSql = "
+                SELECT
+                    ip.wattage,
+                    m.cost_per_watt,
+                    COUNT(ip.id) AS pallets_in_storage,
+                    SUM(ip.quantity) AS modules_in_storage,
+                    SUM(ip.wattage * ip.quantity) AS total_watts,
+                    COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL AND m.cost_per_watt > 0 THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE 0 END), 0) AS module_value
+                {$baseFrom}
+                {$whereSql}
+                GROUP BY ip.wattage, m.cost_per_watt
+                ORDER BY ip.wattage ASC, m.cost_per_watt ASC
+                LIMIT 50
+            ";
+            $wattageBreakdownResult = $this->queryExecutor->executeQuery($wattageBreakdownSql, $params);
+
+            $projectBreakdown = [];
+            if (!empty($projectBreakdownResult['success']) && !empty($projectBreakdownResult['data'])) {
+                foreach ($projectBreakdownResult['data'] as $row) {
+                    $projectBreakdown[] = [
+                        'project_id' => isset($row['project_id']) ? intval($row['project_id']) : null,
+                        'project_name' => $row['project_name'] ?? 'Unassigned Project',
+                        'pallets_in_storage' => intval($row['pallets_in_storage'] ?? 0),
+                        'modules_in_storage' => intval($row['modules_in_storage'] ?? 0),
+                        'mw_in_storage' => round(floatval($row['mw_in_storage'] ?? 0), 3),
+                        'module_value' => round(floatval($row['module_value'] ?? 0), 2),
+                        'priced_watts' => intval($row['priced_watts'] ?? 0)
+                    ];
+                }
+            }
+
+            $wattageBreakdown = [];
+            if (!empty($wattageBreakdownResult['success']) && !empty($wattageBreakdownResult['data'])) {
+                foreach ($wattageBreakdownResult['data'] as $row) {
+                    $wattageBreakdown[] = [
+                        'wattage' => intval($row['wattage'] ?? 0),
+                        'cost_per_watt' => isset($row['cost_per_watt']) ? floatval($row['cost_per_watt']) : null,
+                        'pallets_in_storage' => intval($row['pallets_in_storage'] ?? 0),
+                        'modules_in_storage' => intval($row['modules_in_storage'] ?? 0),
+                        'total_watts' => intval($row['total_watts'] ?? 0),
+                        'module_value' => round(floatval($row['module_value'] ?? 0), 2)
+                    ];
+                }
+            }
+
+            return [
+                'success' => true,
+                'data' => [
+                    'filters' => [
+                        'project_id' => $projectId ? intval($projectId) : null,
+                        'warehouse_id' => $warehouseId ? intval($warehouseId) : null
+                    ],
+                    'totals' => [
+                        'pallets_in_storage' => $palletsInStorage,
+                        'modules_in_storage' => $modulesInStorage,
+                        'mw_in_storage' => round($totalWattsInStorage / 1000000, 3),
+                        'total_module_value' => $totalModuleValue,
+                        'priced_watts' => intval($pricedWatts),
+                        'unpriced_watts' => intval($unpricedWatts),
+                        'priced_pallets' => $pricedPallets,
+                        'unpriced_pallets' => $unpricedPallets,
+                        'pricing_coverage_pct' => $coveragePct,
+                        'avg_cost_per_watt_priced' => $avgCostPerWatt
+                    ],
+                    'breakdown_by_project' => $projectBreakdown,
+                    'breakdown_by_wattage' => $wattageBreakdown
+                ]
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
      * Get project cost analysis with freight and accessorial costs
      */
     public function getProjectCostAnalysis($projectId = null) {
@@ -1171,12 +1333,7 @@ class SunnyTools {
                     $projectId = $this->extractProjectId($message);
                     if (!$projectId) {
                         $pname = $this->extractProjectName($message);
-                        if ($pname) {
-                            $res = $this->queryExecutor->executeQuery("SELECT id FROM projects WHERE project_name LIKE ? ORDER BY created_at DESC LIMIT 1", ["%{$pname}%"]);
-                            if ($res['success'] && !empty($res['data'])) {
-                                $projectId = intval($res['data'][0]['id']);
-                            }
-                        }
+                        if ($pname) { $projectId = $this->resolveProjectIdByName($pname); }
                     }
                     return $this->getPODStatus($projectId);
                     
@@ -1197,7 +1354,23 @@ class SunnyTools {
                 case 'project_cost_analysis':
                 case 'projectcostanalysis':
                     $projectId = $this->extractProjectId($message);
+                    if (!$projectId) {
+                        $pname = $this->extractProjectName($message);
+                        if ($pname) { $projectId = $this->resolveProjectIdByName($pname); }
+                    }
                     return $this->getProjectCostAnalysis($projectId);
+
+                case 'getinventoryvalue':
+                case 'inventory_value':
+                case 'inventoryvalue':
+                case 'getaccountinventoryvalue':
+                    $projectId = $this->extractProjectId($message);
+                    if (!$projectId) {
+                        $pname = $this->extractProjectName($message);
+                        if ($pname) { $projectId = $this->resolveProjectIdByName($pname); }
+                    }
+                    $warehouseId = $this->extractWarehouseId($message);
+                    return $this->getInventoryValue($projectId, $warehouseId);
                     
                 case 'searchlogistics':
                 case 'search_logistics':
@@ -1317,11 +1490,7 @@ class SunnyTools {
         if (is_numeric($projectSpecifier)) {
             $projectId = intval($projectSpecifier);
         } elseif (is_string($projectSpecifier) && $projectSpecifier !== '') {
-            $sql = "SELECT id FROM projects WHERE project_name LIKE ? ORDER BY created_at DESC LIMIT 1";
-            $res = $this->queryExecutor->executeQuery($sql, ["%{$projectSpecifier}%"]);
-            if ($res['success'] && !empty($res['data'])) {
-                $projectId = intval($res['data'][0]['id']);
-            }
+            $projectId = $this->resolveProjectIdByName($projectSpecifier);
         }
         if (!$projectId) {
             // Best-effort: if not specified, return empty success to let model ask for clarification
@@ -1518,6 +1687,27 @@ class SunnyTools {
         }, $result['data']);
 
         return ['success' => true, 'data' => $docs];
+    }
+
+    private function resolveProjectIdByName($projectName) {
+        $clean = trim((string)$projectName);
+        if ($clean === '') {
+            return null;
+        }
+
+        $sql = "SELECT id FROM projects WHERE project_name LIKE ?";
+        $params = ["%{$clean}%"];
+        if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+            $sql .= " AND account_id = ?";
+            $params[] = $this->userAccountId;
+        }
+        $sql .= " ORDER BY created_at DESC LIMIT 1";
+
+        $res = $this->queryExecutor->executeQuery($sql, $params);
+        if (!$res['success'] || empty($res['data'])) {
+            return null;
+        }
+        return intval($res['data'][0]['id']);
     }
     
     private function extractProjectName($message) {
