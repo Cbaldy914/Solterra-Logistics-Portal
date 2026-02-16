@@ -24,7 +24,17 @@
       "Bash(ls \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\migrations\"\" 2>/dev/null || echo \"No migrations dir \")",
       "Bash(C:\\\\xampp\\\\php\\\\php.exe:*)",
       "Bash(\"C:/xampp/php/php.exe\" -l \"C:/xampp/htdocs/Solterra-Solutions/Solterra-Logistics-Portal/upload_pallets.php\")",
-      "Bash(\"C:/xampp/php/php.exe\" -l:*)"
+      "Bash(\"C:/xampp/php/php.exe\" -l:*)",
+      "WebSearch",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:docsbot.ai)",
+      "Bash(ls:*)",
+      "WebFetch(domain:artificialanalysis.ai)",
+      "WebFetch(domain:llm-stats.com)",
+      "WebFetch(domain:www.appaca.ai)",
+      "WebFetch(domain:pricepertoken.com)",
+      "WebFetch(domain:blog.google)",
+      "WebFetch(domain:www.vellum.ai)"
     ],
     "deny": [],
     "ask": []

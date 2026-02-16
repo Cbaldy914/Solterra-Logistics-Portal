@@ -1833,4 +1833,288 @@
         transform: scale(1);
         opacity: 1;
     }
-} 
+}
+
+/* ========================================
+   Mode Toggle (inline subtitle)
+   ======================================== */
+.sunny-subtitle-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 1px;
+}
+
+.mode-toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 28px;
+    height: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.mode-toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.mode-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.25);
+    border-radius: 16px;
+    transition: all 0.3s ease;
+}
+
+.mode-toggle-slider::before {
+    content: '';
+    position: absolute;
+    height: 12px;
+    width: 12px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.mode-toggle-switch input:checked + .mode-toggle-slider {
+    background-color: var(--accent-orange);
+}
+
+.mode-toggle-switch input:checked + .mode-toggle-slider::before {
+    transform: translateX(12px);
+}
+
+.mode-toggle-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
+    font-weight: 400;
+}
+
+/* ========================================
+   Usage Footer (bottom of chat window)
+   ======================================== */
+.sunny-usage-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 20px;
+    background: #f0f2f4;
+    border-top: 1px solid #e8eaed;
+}
+
+.usage-footer-bar {
+    flex: 1;
+    height: 4px;
+    background: #dde0e4;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.usage-footer-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease, background-color 0.3s ease;
+    background-color: var(--success-green);
+}
+
+.usage-footer-fill.usage-green {
+    background-color: var(--success-green);
+}
+
+.usage-footer-fill.usage-yellow {
+    background-color: var(--accent-orange);
+}
+
+.usage-footer-fill.usage-red {
+    background-color: var(--error-red);
+}
+
+.usage-footer-text {
+    font-size: 11px;
+    color: #6c757d;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* ========================================
+   Mode Toast Notification
+   ======================================== */
+.sunny-mode-toast {
+    background: linear-gradient(135deg, #f0f7f9 0%, #e8f4f7 100%);
+    border: 1px solid rgba(72, 140, 154, 0.25);
+    border-left: 3px solid var(--secondary-blue);
+    color: var(--primary-blue);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 4px 0;
+    animation: toastSlideIn 0.3s ease;
+}
+
+.sunny-mode-toast.fade-out {
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+
+@keyframes toastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ========================================
+   Brighter Mode Visual Indicator
+   ======================================== */
+#sunny-chat-window.brighter-mode .sunny-chat-header {
+    background: linear-gradient(135deg, #293E4C 0%, #488C9A 50%, #d4a843 100%);
+}
+
+#sunny-chat-window.brighter-mode .mode-toggle-label {
+    color: #fdd680;
+    font-weight: 500;
+}
+
+/* ========================================
+   Preferences Panel Styles
+   ======================================== */
+.pref-group {
+    background: #f8f9fa;
+    border: 1px solid #e8eaed;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.pref-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.pref-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.pref-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.pref-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary-blue);
+    margin-bottom: 2px;
+}
+
+.pref-desc {
+    font-size: 12px;
+    color: #6c757d;
+    line-height: 1.4;
+}
+
+/* Preferences toggle switch */
+.pref-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.pref-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.pref-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    border-radius: 24px;
+    transition: all 0.3s ease;
+}
+
+.pref-slider::before {
+    content: '';
+    position: absolute;
+    height: 20px;
+    width: 20px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.pref-toggle input:checked + .pref-slider {
+    background-color: var(--secondary-blue);
+}
+
+.pref-toggle input:checked + .pref-slider::before {
+    transform: translateX(20px);
+}
+
+/* Preferences usage display */
+.pref-usage-display {
+    margin-top: 12px;
+}
+
+.pref-usage-bar-track {
+    width: 100%;
+    height: 8px;
+    background: #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.pref-usage-bar-fill {
+    height: 100%;
+    background: var(--success-green);
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.pref-usage-label {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
+}
+
+.pref-usage-label span {
+    font-size: 12px;
+    color: #6c757d;
+    font-weight: 500;
+}
+
+/* ========================================
+   Mobile adjustments for new elements
+   ======================================== */
+@media (max-width: 480px) {
+    .usage-footer-text {
+        font-size: 10px;
+    }
+}
