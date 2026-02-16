@@ -39,6 +39,13 @@ $projectId = isset($_GET['project_id']) ? intval($_GET['project_id']) : (isset($
 
 $userRole = $_SESSION['role'] ?? 'user';
 $accountId = $_SESSION['account_id'] ?? null;
+$accountResolution = resolveSunnyReportAccountContext($userRole, (int)$_SESSION['user_id'], $accountId);
+if (!$accountResolution['success']) {
+    http_response_code(403);
+    echo $accountResolution['error_message'] ?? 'Unable to resolve account scope';
+    exit;
+}
+$accountId = $accountResolution['account_id'];
 
 $tools = new SunnyTools($userRole, $accountId);
 
@@ -132,5 +139,66 @@ header('Content-Type: application/pdf');
 header('Content-Disposition: attachment; filename="' . $filename . '"');
 echo $dompdf->output();
 exit;
+
+function resolveSunnyReportAccountContext($role, $userId, $sessionAccountId) {
+    $normalizedRole = strtolower(trim((string)$role));
+    if ($normalizedRole === 'global_admin') {
+        return ['success' => true, 'account_id' => null];
+    }
+
+    $sessionAccountId = is_numeric($sessionAccountId) ? (int)$sessionAccountId : null;
+    if (!empty($sessionAccountId) && $sessionAccountId > 0) {
+        return ['success' => true, 'account_id' => $sessionAccountId];
+    }
+
+    $conn = function_exists('getDBConnection') ? getDBConnection() : null;
+    if (!$conn) {
+        return [
+            'success' => false,
+            'error_message' => 'Account scope unavailable (database connection failed).'
+        ];
+    }
+
+    $accounts = [];
+    $stmt = $conn->prepare("SELECT DISTINCT account_id FROM customer_account_users WHERE user_id = ? AND LOWER(role) = LOWER(?) ORDER BY account_id ASC LIMIT 2");
+    if ($stmt) {
+        $stmt->bind_param("is", $userId, $role);
+        $stmt->execute();
+        $stmt->bind_result($acctId);
+        while ($stmt->fetch()) {
+            $accounts[] = (int)$acctId;
+        }
+        $stmt->close();
+    }
+
+    if (count($accounts) === 0) {
+        $stmt = $conn->prepare("SELECT DISTINCT account_id FROM customer_account_users WHERE user_id = ? ORDER BY account_id ASC LIMIT 2");
+        if ($stmt) {
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $stmt->bind_result($acctId);
+            while ($stmt->fetch()) {
+                $accounts[] = (int)$acctId;
+            }
+            $stmt->close();
+        }
+    }
+    $conn->close();
+
+    if (count($accounts) === 1) {
+        return ['success' => true, 'account_id' => $accounts[0]];
+    }
+    if (count($accounts) > 1) {
+        return [
+            'success' => false,
+            'error_message' => 'Ambiguous account mapping for this user role.'
+        ];
+    }
+
+    return [
+        'success' => false,
+        'error_message' => 'No account mapping found for this user role.'
+    ];
+}
 ?>
 

@@ -32,6 +32,10 @@ $streamBuffer = '';
 
 // Global variable to capture usageMetadata from Gemini's final chunk
 $geminiUsageMetadata = null;
+$sunnyRequestStartedAt = microtime(true);
+$sunnyTraceId = function_exists('random_bytes')
+    ? bin2hex(random_bytes(8))
+    : uniqid('sunny_', true);
 
 try {
     // Try to load config files with multiple paths
@@ -76,8 +80,22 @@ try {
     $user_role = $_SESSION['role'] ?? 'user';
     $account_id = $_SESSION['account_id'] ?? null;
     $user_name = $_SESSION['username'] ?? 'User';
+    $allowedRoles = $sunnyConfig['security']['allowed_roles'] ?? [];
+    if (!isSunnyRoleAllowed($user_role, $allowedRoles)) {
+        echo "data: " . json_encode(['type' => 'error', 'message' => 'Your role is not authorized for Sunny access.']) . "\n\n";
+        flush();
+        exit;
+    }
     // Ensure we have an active conversation id for this user
     $conversationId = $_SESSION['sunny_active_conversation_id'] ?? null;
+
+    sunnyTraceLog('request_start', [
+        'trace_id' => $sunnyTraceId,
+        'user_id' => (int)$user_id,
+        'role' => (string)$user_role,
+        'has_session_account_id' => $account_id !== null,
+        'message_length' => strlen($message),
+    ]);
 
     // Load existing chat history from session (max 10 messages)
     $chatHistory = $_SESSION['sunny_chat_history'] ?? [];
@@ -147,24 +165,31 @@ try {
         error_log("Usage cap check failed (proceeding anyway): " . $e->getMessage());
     }
 
-    // Get account_id if needed (for tools)
-    if ($user_role !== 'global_admin' && $account_id === null) {
-        try {
-            $conn = getDBConnection();
-            if ($conn) {
-                $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ?");
-                $stmt->bind_param("i", $user_id);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                if ($row = $result->fetch_assoc()) {
-                    $account_id = $row['account_id'];
-                }
-                $stmt->close();
-            }
-        } catch (Exception $e) {
-            error_log("Failed to get account_id for user {$user_id}: " . $e->getMessage());
-        }
+    // Resolve account context deterministically (strict tenant isolation).
+    $accountResolution = resolveSunnyAccountContext($user_id, $user_role, $account_id);
+    if (!$accountResolution['success']) {
+        sunnyTraceLog('account_context_error', [
+            'trace_id' => $sunnyTraceId,
+            'user_id' => (int)$user_id,
+            'role' => (string)$user_role,
+            'error_code' => (string)($accountResolution['error_code'] ?? 'unknown'),
+            'error_message' => (string)($accountResolution['error_message'] ?? 'Unknown account context error'),
+        ]);
+        echo "data: " . json_encode([
+            'type' => 'error',
+            'message' => $accountResolution['error_message'] ?? 'Unable to determine your account scope for this request.'
+        ]) . "\n\n";
+        flush();
+        exit;
     }
+    $account_id = $accountResolution['account_id'];
+    sunnyTraceLog('account_context_resolved', [
+        'trace_id' => $sunnyTraceId,
+        'user_id' => (int)$user_id,
+        'role' => (string)$user_role,
+        'account_id' => $account_id !== null ? (int)$account_id : null,
+        'source' => (string)($accountResolution['source'] ?? 'unknown'),
+    ]);
 
     // Create a conversation if none exists
     try {
@@ -208,10 +233,14 @@ try {
             try {
                 $doc = $sunnyTools->analyzeDocument('summary');
                 if ($doc) {
-                    $toolResults['analyzeDocument'] = $doc;
+                    $toolResults['analyzeDocument'] = normalizeToolResultEnvelope('analyzeDocument', $doc);
                 }
             } catch (Exception $e) {
-                // Ignore, continue
+                $toolResults['analyzeDocument'] = normalizeToolResultEnvelope('analyzeDocument', [
+                    'success' => false,
+                    'error' => 'Document analysis failed: ' . $e->getMessage(),
+                    'data' => []
+                ]);
             }
         }
 
@@ -246,6 +275,13 @@ try {
                 $sunnyTools = new SunnyTools($user_role, $account_id);
             }
             $toolsToUse = detectToolsFromMessage($message);
+            sunnyTraceLog('tools_selected', [
+                'trace_id' => $sunnyTraceId,
+                'user_id' => (int)$user_id,
+                'account_id' => $account_id !== null ? (int)$account_id : null,
+                'role' => (string)$user_role,
+                'tools' => array_values($toolsToUse),
+            ]);
 
             // Execute tools
             foreach ($toolsToUse as $tool) {
@@ -257,14 +293,39 @@ try {
                         'account_id' => $account_id
                     ]);
                     if ($result) {
-                        $toolResults[$tool] = $result;
+                        $normalized = normalizeToolResultEnvelope($tool, $result);
+                        $toolResults[$tool] = $normalized;
+                        sunnyTraceLog('tool_result', [
+                            'trace_id' => $sunnyTraceId,
+                            'tool' => (string)$tool,
+                            'success' => !empty($normalized['success']),
+                            'error_code' => $normalized['error_code'] ?? null,
+                            'row_count' => is_array($normalized['data'] ?? null) ? count($normalized['data']) : null,
+                        ]);
                     }
                 } catch (Exception $e) {
                     error_log("Tool execution error for $tool: " . $e->getMessage());
+                    $normalized = normalizeToolResultEnvelope($tool, [
+                        'success' => false,
+                        'error' => 'Tool execution exception: ' . $e->getMessage(),
+                        'data' => []
+                    ]);
+                    $toolResults[$tool] = $normalized;
+                    sunnyTraceLog('tool_result', [
+                        'trace_id' => $sunnyTraceId,
+                        'tool' => (string)$tool,
+                        'success' => false,
+                        'error_code' => $normalized['error_code'] ?? 'tool_exception',
+                        'row_count' => 0,
+                    ]);
                 }
             }
         } catch (Exception $e) {
             error_log("Tools loading error: " . $e->getMessage());
+            sunnyTraceLog('tools_loading_error', [
+                'trace_id' => $sunnyTraceId,
+                'error' => $e->getMessage(),
+            ]);
             // Continue without tools if they fail
         }
     }
@@ -272,6 +333,10 @@ try {
     // If no tools executed this turn, but we have prior tool results, reuse them to let the model present them
     if (empty($toolResults) && !empty($lastToolResults)) {
         $toolResults = $lastToolResults;
+        sunnyTraceLog('tool_results_reused', [
+            'trace_id' => $sunnyTraceId,
+            'count' => count($toolResults),
+        ]);
     }
 
     // Build system message starting with the canonical Sunny system prompt (markdown file)
@@ -535,7 +600,12 @@ try {
             } else if ($data['success'] && empty($data['data'])) {
                 $systemMessage .= "{$tool}: (no rows returned)\n";
             } else {
-                $systemMessage .= "{$tool}: (error: " . ($data['error'] ?? 'unknown') . ")\n";
+                $toolError = $data['error_message'] ?? $data['error'] ?? 'unknown';
+                $nextStep = $data['actionable_next_step'] ?? null;
+                $systemMessage .= "{$tool}: (error: " . $toolError . ")\n";
+                if (!empty($nextStep)) {
+                    $systemMessage .= "{$tool}_next_step: {$nextStep}\n";
+                }
             }
         }
         // Persist for follow-up turns like "please present them"
@@ -747,13 +817,190 @@ try {
         }
     }
 
+    sunnyTraceLog('request_complete', [
+        'trace_id' => $sunnyTraceId,
+        'user_id' => (int)$user_id,
+        'account_id' => $account_id !== null ? (int)$account_id : null,
+        'role' => (string)$user_role,
+        'duration_ms' => (int)round((microtime(true) - $sunnyRequestStartedAt) * 1000),
+        'tools_executed' => array_keys($toolResults),
+        'assistant_chars' => strlen((string)($assistantResponseBuffer ?? '')),
+    ]);
+
     // Send completion signal (after persistence)
     echo "data: " . json_encode(['type' => 'complete', 'conversation_id' => ($_SESSION['sunny_active_conversation_id'] ?? null)]) . "\n\n";
     flush();
 
 } catch (Exception $e) {
+    sunnyTraceLog('request_exception', [
+        'trace_id' => $sunnyTraceId ?? null,
+        'message' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+    ]);
     error_log("Chat stream error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
     echo "data: " . json_encode(['type' => 'error', 'message' => 'Error: ' . $e->getMessage()]) . "\n\n";
+}
+
+function sunnyTraceLog($event, $payload = []) {
+    $entry = [
+        'event' => $event,
+        'at' => date('c'),
+        'payload' => $payload
+    ];
+    error_log('[SUNNY_TRACE] ' . json_encode($entry));
+}
+
+function isSunnyRoleAllowed($role, $allowedRoles) {
+    if (empty($allowedRoles) || !is_array($allowedRoles)) {
+        return true;
+    }
+
+    $roleNormalized = strtolower(trim((string)$role));
+    foreach ($allowedRoles as $allowedRole) {
+        if ($roleNormalized === strtolower(trim((string)$allowedRole))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function resolveSunnyAccountContext($userId, $userRole, $sessionAccountId = null) {
+    $roleNormalized = strtolower(trim((string)$userRole));
+    if ($roleNormalized === 'global_admin') {
+        return [
+            'success' => true,
+            'account_id' => null,
+            'source' => 'global_admin'
+        ];
+    }
+
+    $sessionAccountId = is_numeric($sessionAccountId) ? (int)$sessionAccountId : null;
+    if (!empty($sessionAccountId) && $sessionAccountId > 0) {
+        return [
+            'success' => true,
+            'account_id' => $sessionAccountId,
+            'source' => 'session'
+        ];
+    }
+
+    $conn = getDBConnection();
+    if (!$conn) {
+        return [
+            'success' => false,
+            'error_code' => 'account_context_db_unavailable',
+            'error_message' => 'Unable to access account context right now. Please try again.'
+        ];
+    }
+
+    $accounts = [];
+    $stmt = $conn->prepare("SELECT DISTINCT account_id FROM customer_account_users WHERE user_id = ? AND LOWER(role) = LOWER(?) ORDER BY account_id ASC LIMIT 2");
+    if ($stmt) {
+        $stmt->bind_param("is", $userId, $userRole);
+        $stmt->execute();
+        $stmt->bind_result($accountId);
+        while ($stmt->fetch()) {
+            $accounts[] = (int)$accountId;
+        }
+        $stmt->close();
+    }
+
+    // Legacy fallback for environments where role mappings are incomplete.
+    if (count($accounts) === 0) {
+        $stmt = $conn->prepare("SELECT DISTINCT account_id FROM customer_account_users WHERE user_id = ? ORDER BY account_id ASC LIMIT 2");
+        if ($stmt) {
+            $stmt->bind_param("i", $userId);
+            $stmt->execute();
+            $stmt->bind_result($accountId);
+            while ($stmt->fetch()) {
+                $accounts[] = (int)$accountId;
+            }
+            $stmt->close();
+        }
+    }
+    $conn->close();
+
+    if (count($accounts) === 1) {
+        return [
+            'success' => true,
+            'account_id' => $accounts[0],
+            'source' => 'customer_account_users'
+        ];
+    }
+    if (count($accounts) > 1) {
+        return [
+            'success' => false,
+            'error_code' => 'account_context_ambiguous',
+            'error_message' => 'Your account context is ambiguous. Please contact support to correct account mappings.'
+        ];
+    }
+
+    return [
+        'success' => false,
+        'error_code' => 'account_context_missing',
+        'error_message' => 'No account context was found for your login. Please contact support.'
+    ];
+}
+
+function normalizeToolResultEnvelope($toolName, $result) {
+    if (!is_array($result)) {
+        $result = [
+            'success' => false,
+            'error' => 'Tool returned an invalid response format',
+            'data' => []
+        ];
+    }
+
+    $success = !empty($result['success']);
+    if ($success) {
+        $result['success'] = true;
+        $result['data'] = (isset($result['data']) && is_array($result['data'])) ? $result['data'] : [];
+        $result['error_code'] = null;
+        $result['error_message'] = null;
+        $result['actionable_next_step'] = null;
+        return $result;
+    }
+
+    $rawError = trim((string)($result['error'] ?? $result['error_message'] ?? 'Unknown tool error'));
+    $errorCode = classifySunnyToolErrorCode($rawError);
+    $result['success'] = false;
+    $result['data'] = (isset($result['data']) && is_array($result['data'])) ? $result['data'] : [];
+    $result['error_code'] = $errorCode;
+    $result['error_message'] = $rawError;
+    $result['actionable_next_step'] = suggestSunnyToolNextStep($errorCode, $toolName);
+    return $result;
+}
+
+function classifySunnyToolErrorCode($errorMessage) {
+    $lower = strtolower((string)$errorMessage);
+    if (strpos($lower, 'access denied') !== false || strpos($lower, 'unauthorized') !== false || strpos($lower, 'permission') !== false) {
+        return 'permission_denied';
+    }
+    if (strpos($lower, 'database') !== false || strpos($lower, 'query') !== false || strpos($lower, 'prepare') !== false || strpos($lower, 'connection') !== false) {
+        return 'database_error';
+    }
+    if (strpos($lower, 'timeout') !== false) {
+        return 'timeout';
+    }
+    if (strpos($lower, 'unknown tool') !== false) {
+        return 'unknown_tool';
+    }
+    return 'tool_error';
+}
+
+function suggestSunnyToolNextStep($errorCode, $toolName) {
+    switch ($errorCode) {
+        case 'permission_denied':
+            return 'Verify your role permissions for this request scope.';
+        case 'database_error':
+            return 'Try again in a moment. If this continues, contact support.';
+        case 'timeout':
+            return 'Try a narrower filter such as a specific project or timeframe.';
+        case 'unknown_tool':
+            return 'Rephrase the request with the specific data you want.';
+        default:
+            return 'Try specifying a project, warehouse, or timeframe.';
+    }
 }
 
 function needsLogisticsTools($message) {
@@ -796,7 +1043,7 @@ function detectToolsFromMessage($message) {
     $tools = [];
 
     // Project related
-    if (preg_match('/\b(project|projects|status)\b/', $message)) {
+    if (preg_match('/\b(project|projects|status|portfolio)\b/', $message)) {
         $tools[] = 'getProjectSummary';
     }
 
@@ -811,8 +1058,16 @@ function detectToolsFromMessage($message) {
     }
 
     // Inventory/warehouse related
-    if (preg_match('/\b(inventory|warehouse|storage|stock)\b/', $message)) {
+    if (
+        preg_match('/\b(inventory|warehouse|storage|stock)\b/', $message) ||
+        (preg_match('/\b(module|modules)\b/', $message) && preg_match('/\b(in storage|stored|warehouse|inventory)\b/', $message))
+    ) {
         $tools[] = 'getWarehouseInventory';
+    }
+
+    // Cost / value related
+    if (preg_match('/\b(cost|costs|value|valuation|price|pricing|spend|spent|payable|financial|\$)\b/i', $message)) {
+        $tools[] = 'getProjectCostAnalysis';
     }
 
     // Document-related
