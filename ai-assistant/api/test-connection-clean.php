@@ -1,6 +1,6 @@
 <?php
 /**
- * Clean Test OpenAI API Connection for Sunny AI Assistant
+ * Test Google Gemini API Connection for Sunny AI Assistant
  * Returns single JSON response only
  */
 
@@ -28,56 +28,59 @@ if (!isset($_SESSION['user_id'])) {
 try {
     // Load configuration
     $sunnyConfig = require_once __DIR__ . '/../config/sunny-config.php';
-    require_once __DIR__ . '/openai-client.php';
-    
+
     // Check if API key is configured
-    $apiKey = $sunnyConfig['openai']['api_key'];
+    $apiKey = $sunnyConfig['gemini']['api_key'] ?? '';
     if (empty($apiKey)) {
         echo json_encode([
             'success' => false,
-            'error' => 'OpenAI API key not configured',
+            'error' => 'Google AI API key not configured',
             'status' => 'configuration_error'
         ]);
         exit;
     }
-    
-    // Test basic API connectivity with a simple model list request
+
+    // Test basic API connectivity with a model list request
+    $baseUrl = $sunnyConfig['gemini']['base_url'] ?? 'https://generativelanguage.googleapis.com/v1beta';
+    $testUrl = $baseUrl . '/models?key=' . urlencode($apiKey);
+
     $ch = curl_init();
     curl_setopt_array($ch, [
-        CURLOPT_URL => $sunnyConfig['openai']['base_url'] . '/models',
+        CURLOPT_URL => $testUrl,
         CURLOPT_HTTPHEADER => [
-            'Authorization: Bearer ' . $apiKey
+            'Content-Type: application/json'
         ],
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT => 10,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2
     ]);
-    
+
     $modelsResponse = curl_exec($ch);
     $modelsHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $modelsError = curl_error($ch);
     curl_close($ch);
-    
+
     // Check if API connection is working
     if ($modelsHttpCode === 200 && empty($modelsError)) {
+        $defaultModel = $sunnyConfig['gemini']['models']['default'] ?? 'gemini-2.5-flash';
         echo json_encode([
             'success' => true,
-            'message' => 'OpenAI API connection successful!',
+            'message' => 'Gemini API connection successful!',
             'status' => 'connected',
-            'model' => $sunnyConfig['openai']['model'],
+            'model' => $defaultModel,
             'api_key_length' => strlen($apiKey)
         ]);
     } else {
         echo json_encode([
             'success' => false,
-            'error' => 'Failed to connect to OpenAI API',
+            'error' => 'Failed to connect to Gemini API',
             'status' => 'connection_failed',
             'http_code' => $modelsHttpCode,
             'curl_error' => $modelsError
         ]);
     }
-    
+
 } catch (Exception $e) {
     echo json_encode([
         'success' => false,
@@ -86,4 +89,4 @@ try {
         'details' => $e->getMessage()
     ]);
 }
-?> 
+?>

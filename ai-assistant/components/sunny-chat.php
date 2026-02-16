@@ -50,7 +50,7 @@ if ($conn) {
 ?>
 
 <!-- Include Sunny Chat CSS -->
-<link rel="stylesheet" href="ai-assistant/components/sunny-chat.css">
+<link rel="stylesheet" href="ai-assistant/components/sunny-chat.css?v=<?php echo filemtime(__DIR__ . '/sunny-chat.css'); ?>">
 
 <!-- Sunny Chat JavaScript -->
 <script>
@@ -65,4 +65,4 @@ window.SunnyConfig = {
     apiUrl: './ai-assistant/api/'
 };
 </script>
-<script src="ai-assistant/components/sunny-chat.js"></script> 
+<script src="ai-assistant/components/sunny-chat.js?v=<?php echo filemtime(__DIR__ . '/sunny-chat.js'); ?>"></script>

@@ -6,6 +6,8 @@ class SunnyChat {
         this.currentEventSource = null;
         this.messageHistory = [];
         this.pendingUpload = null;
+        this.brighterMode = false;
+        this.usageRemainingPercent = 100;
         this.init();
     }
 
@@ -37,10 +39,16 @@ class SunnyChat {
         chatWindow.id = 'sunny-chat-window';
         chatWindow.innerHTML = `
             <div class="sunny-chat-header">
-                <div class="sunny-avatar-small">☀️</div>
+                <div class="sunny-avatar-small" id="sunny-header-avatar">☀️</div>
                 <div class="sunny-header-info">
                     <div class="sunny-name">Sunny</div>
-                    <div class="sunny-subtitle">Logistics Assistant</div>
+                    <div class="sunny-subtitle-toggle">
+                        <label class="mode-toggle-switch" title="Toggle Brighter Sunny mode">
+                            <input type="checkbox" id="sunny-mode-checkbox">
+                            <span class="mode-toggle-slider"></span>
+                        </label>
+                        <span class="mode-toggle-label" id="sunny-mode-label">Standard</span>
+                    </div>
                 </div>
                 <div class="sunny-connection-status" id="sunny-connection-status">
                     <div class="connection-indicator"></div>
@@ -63,13 +71,13 @@ class SunnyChat {
                     <button class="sunny-chat-close-btn" id="sunny-chat-close-btn" title="Close chat">×</button>
                 </div>
             </div>
-            
+
             <div class="sunny-messages" id="sunny-messages">
                 <div class="sunny-welcome-message">
                     <h4>Hi ${window.SunnyConfig?.displayName || window.SunnyConfig?.username || 'there'}! 👋</h4>
                     <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
                 </div>
-                
+
                 <div class="sunny-quick-actions" id="sunny-quick-actions">
                     <button class="quick-action-btn" data-action="Show my recent deliveries">Recent Deliveries</button>
                     <button class="quick-action-btn" data-action="Show the status of my active projects">Project Status</button>
@@ -83,7 +91,14 @@ class SunnyChat {
                 </div>
             </div>
             <div class="sunny-attachments" id="sunny-attachments"></div>
-            
+
+            <div class="sunny-usage-footer" id="sunny-usage-footer">
+                <div class="usage-footer-bar">
+                    <div class="usage-footer-fill" id="sunny-usage-bar" style="width: 100%"></div>
+                </div>
+                <span class="usage-footer-text" id="sunny-usage-text">100% daily budget remaining</span>
+            </div>
+
             <div class="sunny-input-container">
                 <input type="text" id="sunny-input" placeholder="Ask me anything about your logistics..." disabled>
                 <label class="sunny-attach-label" title="Attach a document" id="sunny-attach-label">
@@ -113,6 +128,7 @@ class SunnyChat {
         const expandBtn = document.getElementById('sunny-expand-btn');
         const settingsBtn = document.getElementById('sunny-settings-btn');
         const manageBtn = document.getElementById('sunny-manage-qa');
+        const modeCheckbox = document.getElementById('sunny-mode-checkbox');
 
         chatButton.addEventListener('click', (e) => {
             if (e.target.id === 'sunny-close-btn') {
@@ -143,7 +159,7 @@ class SunnyChat {
         });
 
         sendBtn.addEventListener('click', () => this.sendMessage());
-        
+
         input.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -161,6 +177,13 @@ class SunnyChat {
             manageBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.openQuickActionsManager();
+            });
+        }
+
+        // Mode toggle
+        if (modeCheckbox) {
+            modeCheckbox.addEventListener('change', () => {
+                this.setBrighterMode(modeCheckbox.checked);
             });
         }
 
@@ -193,6 +216,89 @@ class SunnyChat {
                 fileInput.value = '';
             }
         });
+    }
+
+    setBrighterMode(enabled) {
+        this.brighterMode = enabled;
+        const chatWindow = document.getElementById('sunny-chat-window');
+        const label = document.getElementById('sunny-mode-label');
+        const checkbox = document.getElementById('sunny-mode-checkbox');
+        const avatar = document.getElementById('sunny-header-avatar');
+
+        if (enabled) {
+            chatWindow?.classList.add('brighter-mode');
+            if (label) label.textContent = 'Brighter';
+            if (avatar) avatar.textContent = '🌟';
+            this.showModeToast('Brighter Sunny enabled — uses a more powerful AI model. Messages use ~3x more of your daily budget.');
+        } else {
+            chatWindow?.classList.remove('brighter-mode');
+            if (label) label.textContent = 'Standard';
+            if (avatar) avatar.textContent = '☀️';
+            this.showModeToast('Standard Sunny restored — uses less of your daily budget per message.');
+        }
+
+        // Sync checkbox state
+        if (checkbox && checkbox.checked !== enabled) {
+            checkbox.checked = enabled;
+        }
+    }
+
+    showModeToast(message) {
+        // Remove any existing toast
+        const existing = document.querySelector('.sunny-mode-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.className = 'sunny-mode-toast';
+        toast.textContent = message;
+
+        const chatWindow = document.getElementById('sunny-chat-window');
+        const messagesContainer = document.getElementById('sunny-messages');
+        if (messagesContainer) {
+            messagesContainer.appendChild(toast);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Auto-remove after 4 seconds
+        setTimeout(() => {
+            toast.classList.add('fade-out');
+            setTimeout(() => toast.remove(), 400);
+        }, 4000);
+    }
+
+    updateUsageMeter(percent) {
+        this.usageRemainingPercent = percent;
+        const bar = document.getElementById('sunny-usage-bar');
+        const text = document.getElementById('sunny-usage-text');
+
+        if (bar) {
+            bar.style.width = percent + '%';
+            bar.classList.remove('usage-green', 'usage-yellow', 'usage-red');
+            if (percent > 50) bar.classList.add('usage-green');
+            else if (percent > 20) bar.classList.add('usage-yellow');
+            else bar.classList.add('usage-red');
+        }
+        if (text) {
+            text.textContent = percent + '% daily budget remaining';
+        }
+
+        // Also update preferences panel if open
+        const prefBar = document.getElementById('pref-usage-bar');
+        const prefPercent = document.getElementById('pref-usage-percent');
+        if (prefBar) prefBar.style.width = percent + '%';
+        if (prefPercent) prefPercent.textContent = percent + '% remaining';
+    }
+
+    async fetchUsageStatus() {
+        try {
+            const res = await fetch('./ai-assistant/api/usage-status.php', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (data.success && data.data) {
+                this.updateUsageMeter(data.data.remaining_percent);
+            }
+        } catch (e) {
+            // Ignore, keep default
+        }
     }
 
     bindQuickActionClicks() {
@@ -366,13 +472,13 @@ class SunnyChat {
                     </div>
                     <button class="settings-close">×</button>
                 </div>
-                
+
                 <div class="sunny-settings-tabs">
                     <button class="settings-tab active" data-tab="conversations">Conversations</button>
                     <button class="settings-tab" data-tab="memory">Memory</button>
                     <button class="settings-tab" data-tab="preferences">Preferences</button>
                 </div>
-                
+
                 <div class="sunny-settings-content">
                     <div class="settings-tab-content active" id="tab-conversations">
                         <div class="tab-actions">
@@ -386,7 +492,7 @@ class SunnyChat {
                         </div>
                         <div class="sunny-history-list"></div>
                     </div>
-                    
+
                     <div class="settings-tab-content" id="tab-memory">
                         <div class="tab-actions">
                             <button class="memory-add">
@@ -399,9 +505,38 @@ class SunnyChat {
                         </div>
                         <div class="sunny-memory-list"></div>
                     </div>
-                    
+
                     <div class="settings-tab-content" id="tab-preferences">
-                        <p class="coming-soon">Additional settings coming soon...</p>
+                        <div class="pref-group">
+                            <div class="pref-header">
+                                <span class="pref-icon">🌟</span>
+                                <div class="pref-info">
+                                    <div class="pref-title">Brighter Sunny</div>
+                                    <div class="pref-desc">Uses a more powerful AI model. Consumes your daily budget ~3x faster.</div>
+                                </div>
+                                <label class="pref-toggle">
+                                    <input type="checkbox" id="pref-brighter-toggle" ${this.brighterMode ? 'checked' : ''}>
+                                    <span class="pref-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="pref-group">
+                            <div class="pref-header">
+                                <span class="pref-icon">📊</span>
+                                <div class="pref-info">
+                                    <div class="pref-title">Daily Usage</div>
+                                    <div class="pref-desc">Your remaining daily budget</div>
+                                </div>
+                            </div>
+                            <div class="pref-usage-display">
+                                <div class="pref-usage-bar-track">
+                                    <div class="pref-usage-bar-fill" id="pref-usage-bar" style="width: ${this.usageRemainingPercent}%"></div>
+                                </div>
+                                <div class="pref-usage-label">
+                                    <span id="pref-usage-percent">${this.usageRemainingPercent}% remaining</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>`;
@@ -410,6 +545,20 @@ class SunnyChat {
         const close = () => panel.remove();
         panel.querySelector('.settings-close').addEventListener('click', close);
         panel.addEventListener('click', (e) => { if (e.target === panel) close(); });
+
+        // Sync brighter toggle in preferences with header toggle
+        const prefToggle = panel.querySelector('#pref-brighter-toggle');
+        if (prefToggle) {
+            prefToggle.addEventListener('change', () => {
+                this.setBrighterMode(prefToggle.checked);
+            });
+        }
+
+        // Update the preferences usage bar with current data
+        const prefBar = panel.querySelector('#pref-usage-bar');
+        const prefPercent = panel.querySelector('#pref-usage-percent');
+        if (prefBar) prefBar.style.width = this.usageRemainingPercent + '%';
+        if (prefPercent) prefPercent.textContent = this.usageRemainingPercent + '% remaining';
 
         // Tab switching
         panel.querySelectorAll('.settings-tab').forEach(tab => {
@@ -445,7 +594,7 @@ class SunnyChat {
                 let timeStr = date.toLocaleString();
                 if (isToday) timeStr = 'Today, ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                 else if (isYesterday) timeStr = 'Yesterday, ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                
+
                 el.innerHTML = `
                     <div class="history-item-content">
                         <div class="history-item-icon">
@@ -472,12 +621,12 @@ class SunnyChat {
                             </svg>
                         </button>
                     </div>`;
-                
+
                 // Make entire item clickable to open conversation
                 el.addEventListener('click', async (e) => {
                     // Don't trigger if clicking on action buttons
                     if (e.target.closest('.item-actions')) return;
-                    
+
                     await fetch('./ai-assistant/api/conversations.php?action=set-active', {
                         method: 'POST',
                         credentials: 'same-origin',
@@ -498,14 +647,14 @@ class SunnyChat {
                             <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
                         `;
                         container.appendChild(welcomeDiv);
-                        
+
                         // Add quick actions (clone only buttons, not manage button)
                         const qaContainer = document.getElementById('sunny-quick-actions');
                         if (qaContainer) {
                             const qaClone = document.createElement('div');
                             qaClone.className = 'sunny-quick-actions';
                             qaClone.id = 'sunny-quick-actions-loaded';
-                            
+
                             // Clone only the action buttons, not the manage button
                             qaContainer.querySelectorAll('.quick-action-btn').forEach(btn => {
                                 const btnClone = btn.cloneNode(true);
@@ -515,10 +664,10 @@ class SunnyChat {
                                 });
                                 qaClone.appendChild(btnClone);
                             });
-                            
+
                             container.appendChild(qaClone);
                         }
-                        
+
                         // Add conversation messages
                         (data.data || []).forEach(m => this.addMessage(m.role, m.content));
                     }
@@ -576,7 +725,7 @@ class SunnyChat {
                 // Clear current window and add welcome message + quick actions for new chat
                 const container = document.getElementById('sunny-messages');
                 container.innerHTML = '';
-                
+
                 // Add welcome message
                 const welcomeDiv = document.createElement('div');
                 welcomeDiv.className = 'sunny-welcome-message';
@@ -585,14 +734,14 @@ class SunnyChat {
                     <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
                 `;
                 container.appendChild(welcomeDiv);
-                
+
                 // Add quick actions (clone only buttons, not manage button)
                 const qaContainer = document.getElementById('sunny-quick-actions');
                 if (qaContainer) {
                     const qaClone = document.createElement('div');
                     qaClone.className = 'sunny-quick-actions';
                     qaClone.id = 'sunny-quick-actions-loaded';
-                    
+
                     // Clone only the action buttons, not the manage button
                     qaContainer.querySelectorAll('.quick-action-btn').forEach(btn => {
                         const btnClone = btn.cloneNode(true);
@@ -602,10 +751,10 @@ class SunnyChat {
                         });
                         qaClone.appendChild(btnClone);
                     });
-                    
+
                     container.appendChild(qaClone);
                 }
-                
+
                 close();
             }
         });
@@ -661,7 +810,7 @@ class SunnyChat {
     toggleChat() {
         const chatWindow = document.getElementById('sunny-chat-window');
         const chatButton = document.getElementById('sunny-chat-button');
-        
+
         if (this.isMinimized) {
             // If minimized, restore to normal state
             this.isMinimized = false;
@@ -669,13 +818,15 @@ class SunnyChat {
             chatButton.classList.add('chat-open');
             this.isOpen = true;
             chatWindow.classList.add('open');
+            this.fetchUsageStatus();
         } else {
             // Normal toggle behavior
             this.isOpen = !this.isOpen;
-            
+
             if (this.isOpen) {
                 chatWindow.classList.add('open');
                 chatButton.classList.add('chat-open');
+                this.fetchUsageStatus();
             } else {
                 chatWindow.classList.remove('open');
                 chatButton.classList.remove('chat-open');
@@ -689,7 +840,7 @@ class SunnyChat {
     closeChat() {
         const chatWindow = document.getElementById('sunny-chat-window');
         const chatButton = document.getElementById('sunny-chat-button');
-        
+
         this.isOpen = false;
         chatWindow.classList.remove('open');
         chatButton.classList.remove('chat-open');
@@ -701,7 +852,7 @@ class SunnyChat {
     minimizeChat() {
         const chatWindow = document.getElementById('sunny-chat-window');
         const chatButton = document.getElementById('sunny-chat-button');
-        
+
         this.isOpen = false;
         this.isMinimized = true;
         chatWindow.classList.remove('open');
@@ -715,13 +866,13 @@ class SunnyChat {
     toggleFullscreen() {
         const chatWindow = document.getElementById('sunny-chat-window');
         const isFullscreen = chatWindow.classList.contains('fullscreen');
-        
+
         if (isFullscreen) {
             chatWindow.classList.remove('fullscreen');
         } else {
             chatWindow.classList.add('fullscreen');
         }
-        
+
         this.updateExpandButton(!isFullscreen);
     }
 
@@ -729,7 +880,7 @@ class SunnyChat {
         const expandBtn = document.getElementById('sunny-expand-btn');
         const expandIcon = expandBtn.querySelector('.expand-icon');
         const collapseIcon = expandBtn.querySelector('.collapse-icon');
-        
+
         if (isFullscreen) {
             expandIcon.style.display = 'none';
             collapseIcon.style.display = 'block';
@@ -753,11 +904,11 @@ class SunnyChat {
             });
 
             console.log('Response status:', response.status);
-            
+
             if (response.ok) {
                 const result = await response.json();
                 console.log('Connection test result:', result);
-                
+
                 if (result.success) {
                     this.setConnectionStatus(true, 'Connected to Sunny');
                     this.enableInput();
@@ -779,7 +930,7 @@ class SunnyChat {
         this.isConnected = connected;
         const statusElement = document.getElementById('sunny-connection-status');
         const indicator = statusElement.querySelector('.connection-indicator');
-        
+
         if (connected) {
             indicator.className = 'connection-indicator connected';
         } else {
@@ -791,7 +942,7 @@ class SunnyChat {
         const input = document.getElementById('sunny-input');
         const sendBtn = document.getElementById('sunny-send-btn');
         const quickActionBtns = document.querySelectorAll('.quick-action-btn');
-        
+
         input.disabled = false;
         sendBtn.disabled = false;
         quickActionBtns.forEach(btn => btn.disabled = false);
@@ -800,7 +951,7 @@ class SunnyChat {
     async sendMessage(message = null) {
         const input = document.getElementById('sunny-input');
         let messageText = message || input.value.trim();
-        
+
         // Allow sending if there's an attachment even with blank message
         if ((!messageText || messageText.length === 0) && this.pendingUpload) {
             messageText = ' ';
@@ -825,7 +976,14 @@ class SunnyChat {
             }
 
             // Create new EventSource for streaming response
-            let url = `./ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}`;
+            const currentPage = window.location.pathname.split('/').pop().replace('.php', '') || 'dashboard';
+            let url = `./ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}&page=${encodeURIComponent(currentPage)}`;
+
+            // Add mode param if brighter mode is on
+            if (this.brighterMode) {
+                url += '&mode=bright';
+            }
+
             // If an upload is pending, include it and prep confirmation
             let sentAttachment = null;
             if (this.pendingUpload) {
@@ -850,7 +1008,7 @@ class SunnyChat {
             eventSource.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    
+
                     if (data.type === 'token') {
                         // Remove typing indicator on first token
                         if (typingId) {
@@ -859,7 +1017,7 @@ class SunnyChat {
 
                         // Append the incoming chunk to the running response FIRST
                         fullResponse += data.content;
-                        
+
                         if (!assistantMessageId) {
                             // First chunk – create the assistant message
                             assistantMessageId = this.addMessage('assistant', fullResponse);
@@ -867,6 +1025,9 @@ class SunnyChat {
                             // Subsequent chunks – update existing message
                             this.updateMessage(assistantMessageId, fullResponse);
                         }
+                    } else if (data.type === 'usage_info') {
+                        // Update usage meter from SSE event
+                        this.updateUsageMeter(data.remaining_percent);
                     } else if (data.type === 'complete') {
                         eventSource.close();
                         this.currentEventSource = null;
@@ -896,13 +1057,13 @@ class SunnyChat {
     addMessage(sender, content) {
         const messagesContainer = document.getElementById('sunny-messages');
         const messageId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-        
+
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}`;
         messageDiv.id = messageId;
-        
-        const avatar = sender === 'assistant' ? '☀️' : '👤';
-        
+
+        const avatar = sender === 'assistant' ? (this.brighterMode ? '🌟' : '☀️') : '👤';
+
         messageDiv.innerHTML = `
             <div class="message-avatar">${avatar}</div>
             <div class="message-content">
@@ -911,10 +1072,10 @@ class SunnyChat {
                 ${sender === 'assistant' ? '<div class="message-actions"><button class="thumb-up" title="Helpful">👍</button><button class="thumb-down" title="Not helpful">👎</button></div>' : ''}
             </div>
         `;
-        
+
         messagesContainer.appendChild(messageDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        
+
         // Store in history
         this.messageHistory.push({
             id: messageId,
@@ -922,7 +1083,7 @@ class SunnyChat {
             content: content,
             timestamp: new Date()
         });
-        
+
         if (sender === 'assistant') {
             const up = messageDiv.querySelector('.thumb-up');
             const down = messageDiv.querySelector('.thumb-down');
@@ -931,10 +1092,10 @@ class SunnyChat {
                     // Disable both buttons
                     up.disabled = true;
                     down.disabled = true;
-                    
+
                     // Add active state and animation
                     button.classList.add('feedback-active');
-                    
+
                     const cidRes = await fetch('./ai-assistant/api/conversations.php?action=get-active', { credentials: 'same-origin' });
                     const cidData = await cidRes.json();
                     const conversation_id = cidData.conversation_id || null;
@@ -944,13 +1105,13 @@ class SunnyChat {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ rating, comment, conversation_id, frontend_message_id: messageId })
                     });
-                    
+
                     // Show success state
                     setTimeout(() => {
                         button.classList.add('feedback-submitted');
                         button.classList.remove('feedback-active');
                     }, 300);
-                } catch (e) { 
+                } catch (e) {
                     // Re-enable on error
                     up.disabled = false;
                     down.disabled = false;
@@ -972,14 +1133,14 @@ class SunnyChat {
         if (messageElement) {
             const textElement = messageElement.querySelector('.message-text');
             textElement.innerHTML = this.formatMessage(content);
-            
+
             // Update in history
             const historyItem = this.messageHistory.find(item => item.id === messageId);
             if (historyItem) {
                 historyItem.content = content;
             }
         }
-        
+
         const messagesContainer = document.getElementById('sunny-messages');
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
@@ -987,12 +1148,12 @@ class SunnyChat {
     showTypingIndicator() {
         const typingId = 'typing-' + Date.now();
         const messagesContainer = document.getElementById('sunny-messages');
-        
+
         const typingDiv = document.createElement('div');
         typingDiv.className = 'message assistant typing';
         typingDiv.id = typingId;
         typingDiv.innerHTML = `
-            <div class="message-avatar">☀️</div>
+            <div class="message-avatar">${this.brighterMode ? '🌟' : '☀️'}</div>
             <div class="message-content">
                 <div class="typing-indicator">
                     <span></span>
@@ -1001,10 +1162,10 @@ class SunnyChat {
                 </div>
             </div>
         `;
-        
+
         messagesContainer.appendChild(typingDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        
+
         return typingId;
     }
 
@@ -1028,7 +1189,7 @@ class SunnyChat {
         try {
             const res = await fetch('./ai-assistant/api/memory.php?action=list', { credentials: 'same-origin' });
             const data = await res.json();
-            
+
             if (!data.success || !data.data || data.data.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state">
@@ -1041,7 +1202,7 @@ class SunnyChat {
                     </div>`;
                 return;
             }
-            
+
             container.innerHTML = '';
             data.data.forEach(memory => {
                 const item = document.createElement('div');
@@ -1069,10 +1230,10 @@ class SunnyChat {
                             </svg>
                         </button>
                     </div>`;
-                
+
                 item.querySelector('.edit').addEventListener('click', () => this.editMemoryModal(memory, container));
                 item.querySelector('.delete').addEventListener('click', () => this.deleteMemory(memory.id, container));
-                
+
                 container.appendChild(item);
             });
         } catch (e) {
@@ -1123,23 +1284,23 @@ class SunnyChat {
                     </button>
                 </div>
             </div>`;
-        
+
         document.body.appendChild(modal);
-        
+
         const close = () => modal.remove();
         modal.querySelector('.sunny-modal-close').addEventListener('click', close);
         modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-        
+
         modal.querySelector('.memory-save').addEventListener('click', async () => {
             const title = modal.querySelector('#memory-title').value.trim();
             const content = modal.querySelector('#memory-content').value.trim();
             const importance = parseInt(modal.querySelector('#memory-importance').value);
-            
+
             if (!title || !content) {
                 alert('Please fill in all fields');
                 return;
             }
-            
+
             try {
                 const res = await fetch('./ai-assistant/api/memory.php?action=create', {
                     method: 'POST',
@@ -1147,7 +1308,7 @@ class SunnyChat {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ title, content, importance })
                 });
-                
+
                 const data = await res.json();
                 if (data.success) {
                     close();
@@ -1205,23 +1366,23 @@ class SunnyChat {
                     </button>
                 </div>
             </div>`;
-        
+
         document.body.appendChild(modal);
-        
+
         const close = () => modal.remove();
         modal.querySelector('.sunny-modal-close').addEventListener('click', close);
         modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-        
+
         modal.querySelector('.memory-save').addEventListener('click', async () => {
             const title = modal.querySelector('#memory-title').value.trim();
             const content = modal.querySelector('#memory-content').value.trim();
             const importance = parseInt(modal.querySelector('#memory-importance').value);
-            
+
             if (!title || !content) {
                 alert('Please fill in all fields');
                 return;
             }
-            
+
             try {
                 const res = await fetch('./ai-assistant/api/memory.php?action=update', {
                     method: 'POST',
@@ -1229,7 +1390,7 @@ class SunnyChat {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: memory.id, title, content, importance })
                 });
-                
+
                 const data = await res.json();
                 if (data.success) {
                     close();
@@ -1246,7 +1407,7 @@ class SunnyChat {
 
     async deleteMemory(id, container) {
         if (!confirm('Delete this memory? This action cannot be undone.')) return;
-        
+
         try {
             const res = await fetch('./ai-assistant/api/memory.php?action=delete', {
                 method: 'POST',
@@ -1254,7 +1415,7 @@ class SunnyChat {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id })
             });
-            
+
             const data = await res.json();
             if (data.success) {
                 this.loadMemoriesList(container);
@@ -1280,4 +1441,4 @@ if (document.readyState === 'loading') {
     });
 } else {
     window.sunnyChat = new SunnyChat();
-} 
+}
