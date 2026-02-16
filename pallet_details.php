@@ -35,9 +35,10 @@ $originBatchId = isset($_GET['origin_batch_id']) ? (int)$_GET['origin_batch_id']
 
 try {
     // 1. Fetch Pallet Master Data
-    $sql_pallet = "SELECT
+                    $sql_pallet = "SELECT
                         ip.id AS pallet_id,
                         ip.pallet_identifier,
+                        ip.manufacturer_pallet_id,
                         ip.wattage,
                         ip.quantity,
                         ip.current_warehouse_id AS current_warehouse_id,
@@ -493,9 +494,7 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
         main {
-            max-width: 1320px;
-            margin: 0 auto;
-            padding: 0 12px 24px;
+            padding: 0 0 24px;
         }
         .page-header {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
@@ -865,6 +864,9 @@ $conn->close();
                     
                     <dt>Identifier:</dt>
                     <dd><?php echo htmlspecialchars($pallet_data['pallet_identifier'] ?? 'N/A'); ?></dd>
+
+                    <dt>Manufacturer Pallet ID:</dt>
+                    <dd><?php echo htmlspecialchars($pallet_data['manufacturer_pallet_id'] ?? 'Unlinked'); ?></dd>
 
                     <dt>Manufacturer:</dt>
                     <dd><?php echo htmlspecialchars($pallet_data['origin_vendor'] ?? 'N/A'); ?></dd>

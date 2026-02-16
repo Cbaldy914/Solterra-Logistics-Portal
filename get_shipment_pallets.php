@@ -77,6 +77,7 @@ try {
     $baseSelect = "SELECT
         ip.id AS pallet_id,
         ip.pallet_identifier,
+        ip.manufacturer_pallet_id,
         ip.wattage,
         ip.quantity,
         ip.status,
@@ -180,11 +181,12 @@ try {
 
     if ($search !== '') {
         $searchParam = "%{$search}%";
-        $whereConditions[] = "(ip.pallet_identifier LIKE ? OR ip.status LIKE ? OR COALESCE(p_current.project_name, p_assigned.project_name, '') LIKE ?)";
+        $whereConditions[] = "(ip.pallet_identifier LIKE ? OR ip.manufacturer_pallet_id LIKE ? OR ip.status LIKE ? OR COALESCE(p_current.project_name, p_assigned.project_name, '') LIKE ?)";
         $params[] = $searchParam;
         $params[] = $searchParam;
         $params[] = $searchParam;
-        $types .= 'sss';
+        $params[] = $searchParam;
+        $types .= 'ssss';
     }
 
     $whereClause = ' WHERE ' . implode(' AND ', $whereConditions);
@@ -192,6 +194,7 @@ try {
     $groupBy = " GROUP BY
         ip.id,
         ip.pallet_identifier,
+        ip.manufacturer_pallet_id,
         ip.wattage,
         ip.quantity,
         ip.status,

@@ -718,6 +718,11 @@ $conn->close();
                         <span style="font-weight: 600; color: #293E4C; font-size: 0.9rem;">Manual Entry</span>
                     </label>
                     <label class="method-option" style="padding: 10px 20px; border-radius: 8px; cursor: pointer; background: transparent; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                        <input type="radio" name="entry_method" value="assign" style="display: none;">
+                        <i class="fas fa-link" style="color: #6c757d;"></i>
+                        <span style="font-weight: 500; color: #6c757d; font-size: 0.9rem;">Assign Unassigned</span>
+                    </label>
+                    <label class="method-option" style="padding: 10px 20px; border-radius: 8px; cursor: pointer; background: transparent; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
                         <input type="radio" name="entry_method" value="import" style="display: none;">
                         <i class="fas fa-file-import" style="color: #6c757d;"></i>
                         <span style="font-weight: 500; color: #6c757d; font-size: 0.9rem;">Import Pallets</span>
@@ -994,6 +999,22 @@ $conn->close();
             </div>
         </div>
 
+        <!-- Assign Unassigned Container (hidden by default) -->
+        <div id="assignContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 40px; margin-bottom: 20px;">
+            <div style="text-align: center; padding: 40px 20px;">
+                <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">&#128279;</div>
+                <h2 style="color: #293E4C; margin-bottom: 12px;">Assign Existing Unassigned Batch</h2>
+                <p style="color: #6c757d; margin-bottom: 24px; max-width: 560px; margin-left: auto; margin-right: auto;">
+                    Move existing unassigned stock batches onto a project without re-entering module data.
+                    Use the "Assign to Project" action from the Unassigned table in Manage Modules.
+                </p>
+                <a href="modules.php"
+                   class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
+                    Go to Manage Modules &rarr;
+                </a>
+            </div>
+        </div>
+
         <!-- Loading Modal -->
         <div id="loadingModal" class="loading-modal">
             <div class="loading-content">
@@ -1151,6 +1172,7 @@ $conn->close();
         var methodRadios = document.querySelectorAll('input[name="entry_method"]');
         var manualContainer = document.getElementById('manualEntryContainer');
         var importContainer = document.getElementById('importContainer');
+        var assignContainer = document.getElementById('assignContainer');
         var methodOptions = document.querySelectorAll('.method-option');
 
         methodRadios.forEach(function(radio) {
@@ -1167,9 +1189,15 @@ $conn->close();
                 if (this.value === 'manual') {
                     manualContainer.style.display = 'block';
                     importContainer.style.display = 'none';
-                } else {
+                    if (assignContainer) assignContainer.style.display = 'none';
+                } else if (this.value === 'import') {
                     manualContainer.style.display = 'none';
                     importContainer.style.display = 'block';
+                    if (assignContainer) assignContainer.style.display = 'none';
+                } else {
+                    manualContainer.style.display = 'none';
+                    importContainer.style.display = 'none';
+                    if (assignContainer) assignContainer.style.display = 'block';
                 }
             });
         });

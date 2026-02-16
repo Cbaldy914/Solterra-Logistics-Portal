@@ -69,6 +69,205 @@ if (!$is_global_admin) {
     }
 }
 
+// --- Handle Bulk Manufacturer Pallet ID Linking ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'bulk_link_manufacturer_ids') {
+    header('Content-Type: application/json');
+    if (!$can_manage_shipments) {
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        exit();
+    }
+
+    try {
+        $linksRaw = $_POST['links_json'] ?? '[]';
+        $linksPayload = json_decode($linksRaw, true);
+        if (!is_array($linksPayload)) {
+            throw new Exception('Invalid link payload.');
+        }
+
+        $linksByPallet = [];
+        foreach ($linksPayload as $row) {
+            $palletId = (int)($row['pallet_id'] ?? 0);
+            if ($palletId <= 0) {
+                continue;
+            }
+            $manufacturerIdRaw = trim((string)($row['manufacturer_pallet_id'] ?? ''));
+            if ($manufacturerIdRaw !== '' && strlen($manufacturerIdRaw) > 100) {
+                throw new Exception("Manufacturer pallet ID must be 100 characters or fewer (pallet {$palletId}).");
+            }
+            $linksByPallet[$palletId] = ($manufacturerIdRaw === '') ? null : $manufacturerIdRaw;
+        }
+
+        if (empty($linksByPallet)) {
+            throw new Exception('No pallets were provided for linking.');
+        }
+
+        $palletIds = array_values(array_keys($linksByPallet));
+        $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
+        $types = str_repeat('i', count($palletIds));
+
+        $sqlScope = "
+            SELECT
+                ip.id,
+                ip.assigned_project_id,
+                ip.manufacturer_pallet_id
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            WHERE ip.id IN ($placeholders)
+        ";
+        if (!$is_global_admin) {
+            $sqlScope .= " AND (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)";
+            $types .= 'iii';
+        }
+
+        $stmtScope = $conn->prepare($sqlScope);
+        if (!$stmtScope) {
+            throw new Exception('Failed to validate selected pallets.');
+        }
+
+        $params = $palletIds;
+        if (!$is_global_admin) {
+            $params[] = (int)$account_id_for_admin;
+            $params[] = (int)$account_id_for_admin;
+            $params[] = (int)$account_id_for_admin;
+        }
+        $stmtScope->bind_param($types, ...$params);
+        $stmtScope->execute();
+        $scopeResult = $stmtScope->get_result();
+
+        $scopedRows = [];
+        while ($row = $scopeResult->fetch_assoc()) {
+            $scopedRows[(int)$row['id']] = $row;
+        }
+        $stmtScope->close();
+
+        $missing = [];
+        foreach ($palletIds as $pid) {
+            if (!isset($scopedRows[$pid])) {
+                $missing[] = $pid;
+            }
+        }
+        if (!empty($missing)) {
+            throw new Exception('Some selected pallets are unavailable or out of scope: ' . implode(', ', $missing));
+        }
+
+        $seenInPayload = [];
+        foreach ($palletIds as $pid) {
+            $newManufacturerId = $linksByPallet[$pid];
+            if ($newManufacturerId === null) {
+                continue;
+            }
+            $assignedProjectId = isset($scopedRows[$pid]['assigned_project_id']) && $scopedRows[$pid]['assigned_project_id'] !== null
+                ? (int)$scopedRows[$pid]['assigned_project_id']
+                : 0;
+            $key = $assignedProjectId . '|' . strtolower($newManufacturerId);
+            if (isset($seenInPayload[$key])) {
+                throw new Exception('Duplicate manufacturer pallet ID "' . $newManufacturerId . '" in the same project scope.');
+            }
+            $seenInPayload[$key] = $pid;
+        }
+
+        $stmtDupWithProject = $conn->prepare("
+            SELECT id
+            FROM inventory_pallets
+            WHERE manufacturer_pallet_id = ? AND assigned_project_id = ? AND id <> ?
+            LIMIT 1
+        ");
+        if (!$stmtDupWithProject) {
+            throw new Exception('Failed preparing duplicate check (project scope).');
+        }
+
+        $stmtDupWithoutProject = $conn->prepare("
+            SELECT id
+            FROM inventory_pallets
+            WHERE manufacturer_pallet_id = ? AND assigned_project_id IS NULL AND id <> ?
+            LIMIT 1
+        ");
+        if (!$stmtDupWithoutProject) {
+            $stmtDupWithProject->close();
+            throw new Exception('Failed preparing duplicate check (unassigned scope).');
+        }
+
+        foreach ($palletIds as $pid) {
+            $newManufacturerId = $linksByPallet[$pid];
+            if ($newManufacturerId === null) {
+                continue;
+            }
+
+            $assignedProjectId = isset($scopedRows[$pid]['assigned_project_id']) && $scopedRows[$pid]['assigned_project_id'] !== null
+                ? (int)$scopedRows[$pid]['assigned_project_id']
+                : 0;
+
+            if ($assignedProjectId > 0) {
+                $stmtDupWithProject->bind_param('sii', $newManufacturerId, $assignedProjectId, $pid);
+                $stmtDupWithProject->execute();
+                $dupRow = $stmtDupWithProject->get_result()->fetch_assoc();
+                if ($dupRow) {
+                    throw new Exception('Manufacturer pallet ID "' . $newManufacturerId . '" already exists in this project scope.');
+                }
+            } else {
+                $stmtDupWithoutProject->bind_param('si', $newManufacturerId, $pid);
+                $stmtDupWithoutProject->execute();
+                $dupRow = $stmtDupWithoutProject->get_result()->fetch_assoc();
+                if ($dupRow) {
+                    throw new Exception('Manufacturer pallet ID "' . $newManufacturerId . '" already exists in unassigned scope.');
+                }
+            }
+        }
+
+        $stmtDupWithProject->close();
+        $stmtDupWithoutProject->close();
+
+        $conn->begin_transaction();
+        $stmtUpdate = $conn->prepare("UPDATE inventory_pallets SET manufacturer_pallet_id = ? WHERE id = ?");
+        if (!$stmtUpdate) {
+            throw new Exception('Failed preparing pallet update statement.');
+        }
+
+        $updatedCount = 0;
+        $linkedCount = 0;
+        $clearedCount = 0;
+        foreach ($palletIds as $pid) {
+            $newManufacturerId = $linksByPallet[$pid];
+            $currentRaw = $scopedRows[$pid]['manufacturer_pallet_id'] ?? null;
+            $currentValue = ($currentRaw === null || trim((string)$currentRaw) === '') ? null : trim((string)$currentRaw);
+
+            if ($currentValue === $newManufacturerId) {
+                continue;
+            }
+
+            $stmtUpdate->bind_param('si', $newManufacturerId, $pid);
+            if (!$stmtUpdate->execute()) {
+                throw new Exception('Failed to update pallet #' . $pid . ': ' . $stmtUpdate->error);
+            }
+
+            $updatedCount++;
+            if ($newManufacturerId === null) {
+                $clearedCount++;
+            } else {
+                $linkedCount++;
+            }
+        }
+        $stmtUpdate->close();
+        $conn->commit();
+
+        echo json_encode([
+            'success' => true,
+            'updated_count' => $updatedCount,
+            'linked_count' => $linkedCount,
+            'cleared_count' => $clearedCount
+        ]);
+    } catch (Exception $e) {
+        if ($conn) {
+            $conn->rollback();
+        }
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit();
+}
+
 // --- Handle BOL Check Request ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check_bol') {
     header('Content-Type: application/json');
@@ -1800,6 +1999,8 @@ if (!empty($bolCompletionMessage)) {
         .action-btn-import:hover:not([disabled]) { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37,99,235,.35); }
         .action-btn-danger { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color:white; box-shadow: 0 2px 8px rgba(239,68,68,.25); }
         .action-btn-danger:hover:not([disabled]) { background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(239,68,68,.35); }
+        .action-btn-warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color:white; box-shadow: 0 2px 8px rgba(245,158,11,.3); }
+        .action-btn-warning:hover:not([disabled]) { background: linear-gradient(135deg, #d97706 0%, #b45309 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(245,158,11,.4); }
         .btn-export-header { background: rgba(255,255,255,.95); color:#16a34a; border:none; box-shadow: 0 2px 8px rgba(0,0,0,.15); cursor: pointer; padding:8px 14px; border-radius:10px; font-size:.85em; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition: all .2s ease; }
         .action-btn:hover:not([disabled]) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .btn-export-header:hover { background:white; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
@@ -1890,6 +2091,19 @@ if (!empty($bolCompletionMessage)) {
         }
         .shipment-details-modal-content {
             padding: 0;
+        }
+        .link-mfr-modal-body {
+            padding: 22px 26px 24px;
+        }
+        .link-mfr-modal-body .link-mfr-intro {
+            margin: 0 0 16px;
+            color: #64748b;
+            text-align: center;
+        }
+        @media (max-width: 768px) {
+            .link-mfr-modal-body {
+                padding: 16px;
+            }
         }
         .shipment-details-modal-content h2 {
             margin: 0 0 0 0;
@@ -2434,6 +2648,7 @@ if (!empty($bolCompletionMessage)) {
                             <div class="admin-tools-buttons">
                                 <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id=' . $project_id_from_url : ''; ?>" class="action-btn action-btn-import"><i class="fas fa-file-import"></i> Import Shipments</a>
                                 <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
+                                <button type="button" id="openLinkManufacturerModalBtn" class="action-btn action-btn-warning" disabled><i class="fas fa-link"></i> Link Mfr IDs</button>
                                 <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
                             </div>
                         </div>
@@ -2449,6 +2664,7 @@ if (!empty($bolCompletionMessage)) {
                                     <?php if ($can_manage_shipments): ?><th><input type="checkbox" id="selectAllPallets" disabled></th><?php endif; ?>
                                     <th>Project</th>
                                     <th>Identifier</th>
+                                    <th>Mfr Pallet ID</th>
                                     <th>Manufacturer</th>
                                     <th>Wattage</th>
                                     <th>Quantity</th>
@@ -2459,7 +2675,7 @@ if (!empty($bolCompletionMessage)) {
                             </thead>
                             <tbody id="palletsTableBody">
                                 <tr>
-                                    <td colspan="<?php echo $can_manage_shipments ? 9 : 8; ?>" style="text-align: center; padding: 40px;">
+                                    <td colspan="<?php echo $can_manage_shipments ? 10 : 9; ?>" style="text-align: center; padding: 40px;">
                                         <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
                                         <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
                                     </td>
@@ -2754,6 +2970,42 @@ if (!empty($bolCompletionMessage)) {
     </div>
 </div>
 
+<?php if ($can_manage_shipments): ?>
+<div id="linkManufacturerModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 900px;">
+        <span class="close-modal-btn" id="closeLinkManufacturerModalBtn">&times;</span>
+        <div class="shipment-details-modal-content">
+            <h2 style="margin-top: 0; text-align: center;">Link Manufacturer Pallet IDs</h2>
+            <div class="link-mfr-modal-body">
+                <p class="link-mfr-intro">
+                    Map manufacturer pallet IDs to selected Solterra pallet identifiers.
+                </p>
+                <div style="max-height: 430px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+                    <table style="margin: 0; width: 100%;">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left;">Pallet ID</th>
+                                <th style="text-align: left;">Solterra Identifier</th>
+                                <th style="text-align: left;">Manufacturer Pallet ID</th>
+                            </tr>
+                        </thead>
+                        <tbody id="linkManufacturerTableBody">
+                            <tr>
+                                <td colspan="3" style="text-align: center; color: #64748b; padding: 20px;">Select pallets to start linking.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px;">
+                    <button type="button" class="action-button" id="cancelLinkManufacturerBtn" style="background: #475569;">Cancel</button>
+                    <button type="button" class="action-button" id="saveLinkManufacturerBtn">Save Links</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <!-- Status Breakdown Modal -->
 <div id="statusBreakdownModal" class="modal" style="display: none;">
     <div class="modal-content status-breakdown-modal-content">
@@ -2793,7 +3045,7 @@ if (!empty($bolCompletionMessage)) {
     const projectIdFromUrl = <?php echo (int)$project_id_from_url; ?>;
     const canManageShipments = <?php echo $can_manage_shipments ? 'true' : 'false'; ?>;
     const isStandardUser = <?php echo $is_standard_user ? 'true' : 'false'; ?>;
-    const tableColumnCount = canManageShipments ? 9 : 8;
+    const tableColumnCount = canManageShipments ? 10 : 9;
     // Pallets are now loaded via AJAX
     let palletsData = [];
     let currentStatusCounts = {};
@@ -2848,6 +3100,10 @@ function updateSelectedCount() {
     const delBtn = document.getElementById('deletePalletsBtn');
     if (delBtn) {
         delBtn.disabled = (count === 0);
+    }
+    const linkBtn = document.getElementById('openLinkManufacturerModalBtn');
+    if (linkBtn) {
+        linkBtn.disabled = (count === 0);
     }
 }
 
@@ -3062,6 +3318,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Wire up Export and Delete controls
     initializeExportCsv();
     initializeDeletePallets();
+    initializeManufacturerLinking();
     
     // Initialize header stats
     updateHeaderStats();
@@ -3076,14 +3333,23 @@ function initializeExportCsv() {
         if (!table) return;
         const rows = Array.from(table.querySelectorAll('tbody tr'));
         const csvData = [];
-        const headers = ["id", "pallet_identifier", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
+        const headers = ["id", "pallet_identifier", "manufacturer_pallet_id", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
         csvData.push(headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(','));
         rows.forEach(row => {
             if (row.style.display === 'none') return;
             const cells = row.querySelectorAll('td');
             const rowData = [];
             const id = row.getAttribute('data-id') || '';
-            const mapping = { pallet_identifier:1, wattage:2, quantity:3, status:4, Project:5, deliveries:6 };
+            const colOffset = canManageShipments ? 1 : 0;
+            const mapping = {
+                pallet_identifier: colOffset + 1,
+                manufacturer_pallet_id: colOffset + 2,
+                wattage: colOffset + 4,
+                quantity: colOffset + 5,
+                status: colOffset + 6,
+                Project: colOffset + 0,
+                deliveries: colOffset + 7
+            };
             headers.forEach(h => {
                 let val = '';
                 if (h === 'id') { val = id; }
@@ -3121,6 +3387,119 @@ function initializeDeletePallets() {
         if (!actionInput) { actionInput = document.createElement('input'); actionInput.type='hidden'; actionInput.name='action'; form.appendChild(actionInput); }
         actionInput.value = 'delete_pallets';
         form.submit();
+    });
+}
+
+function initializeManufacturerLinking() {
+    const openBtn = document.getElementById('openLinkManufacturerModalBtn');
+    const modal = document.getElementById('linkManufacturerModal');
+    const closeBtn = document.getElementById('closeLinkManufacturerModalBtn');
+    const cancelBtn = document.getElementById('cancelLinkManufacturerBtn');
+    const saveBtn = document.getElementById('saveLinkManufacturerBtn');
+    const tableBody = document.getElementById('linkManufacturerTableBody');
+
+    if (!openBtn || !modal || !saveBtn || !tableBody) return;
+
+    function closeModal() {
+        modal.style.display = 'none';
+    }
+
+    function buildRows() {
+        const selected = getSelectedPallets().slice().sort((a, b) => Number(a.pallet_id) - Number(b.pallet_id));
+        if (selected.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#64748b; padding:20px;">Select pallets to start linking.</td></tr>';
+            return false;
+        }
+
+        tableBody.innerHTML = selected.map(pallet => {
+            const palletId = Number(pallet.pallet_id || 0);
+            const solterraIdentifier = escapeHtml(String(pallet.pallet_identifier || ('Pallet #' + palletId)));
+            const manufacturerPalletId = escapeHtml(String(pallet.manufacturer_pallet_id || ''));
+            return `
+                <tr data-link-row="${palletId}">
+                    <td style="font-weight:600;">${palletId}</td>
+                    <td>${solterraIdentifier}</td>
+                    <td>
+                        <input
+                            type="text"
+                            class="link-manufacturer-input"
+                            data-pallet-id="${palletId}"
+                            value="${manufacturerPalletId}"
+                            maxlength="100"
+                            placeholder="Enter manufacturer pallet ID"
+                            style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px;"
+                        >
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        return true;
+    }
+
+    async function saveLinks() {
+        const inputs = Array.from(tableBody.querySelectorAll('.link-manufacturer-input'));
+        if (inputs.length === 0) {
+            alert('No selected pallets to update.');
+            return;
+        }
+
+        const payload = inputs.map(input => ({
+            pallet_id: Number(input.getAttribute('data-pallet-id') || 0),
+            manufacturer_pallet_id: (input.value || '').trim()
+        }));
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+        try {
+            const endpoint = 'create_shipment.php' + (projectIdFromUrl > 0 ? ('?project_id=' + projectIdFromUrl) : '');
+            const body = new URLSearchParams();
+            body.append('action', 'bulk_link_manufacturer_ids');
+            body.append('links_json', JSON.stringify(payload));
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                body: body.toString()
+            });
+            const result = await response.json();
+
+            if (!result.success) {
+                throw new Error(result.message || 'Failed to link manufacturer pallet IDs.');
+            }
+
+            closeModal();
+            await loadPallets();
+            updateSelectedCount();
+
+            const updatedCount = Number(result.updated_count || 0);
+            const linkedCount = Number(result.linked_count || 0);
+            const clearedCount = Number(result.cleared_count || 0);
+            alert(`Updated ${updatedCount} pallet(s). Linked: ${linkedCount}. Cleared: ${clearedCount}.`);
+        } catch (error) {
+            alert(error.message || 'Failed to save manufacturer pallet IDs.');
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Links';
+        }
+    }
+
+    openBtn.addEventListener('click', function() {
+        if (!buildRows()) {
+            alert('Select at least one pallet to link manufacturer IDs.');
+            return;
+        }
+        modal.style.display = 'block';
+    });
+
+    saveBtn.addEventListener('click', saveLinks);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+
+    modal.addEventListener('click', function(event) {
+        if (event.target === modal) {
+            closeModal();
+        }
     });
 }
 
@@ -3249,6 +3628,15 @@ function renderPalletsTable(pallets) {
                 </td>
             </tr>
         `;
+        if (canManageShipments) {
+            const selectAll = document.getElementById('selectAllPallets');
+            if (selectAll) {
+                selectAll.checked = false;
+                selectAll.disabled = true;
+            }
+            updateOpenShipModalButtonState();
+            updateSelectedCount();
+        }
         return;
     }
 
@@ -3338,6 +3726,7 @@ function renderPalletsTable(pallets) {
                 ${checkboxHtml}
                 <td>${escapeHtml(pallet.display_project_name || 'Unassigned')}</td>
                 <td>${escapeHtml(pallet.pallet_identifier || 'N/A')}</td>
+                <td>${escapeHtml(pallet.manufacturer_pallet_id || '') || '<span style="color:#999;">Unlinked</span>'}</td>
                 <td>${escapeHtml(manufacturerName || 'N/A')}</td>
                 <td>${escapeHtml(pallet.wattage || '')}</td>
                 <td>${Number(pallet.quantity || 0).toLocaleString()}</td>
@@ -3365,6 +3754,8 @@ function renderPalletsTable(pallets) {
             selectAll.disabled = false;
             selectAll.checked = false;
         }
+        updateOpenShipModalButtonState();
+        updateSelectedCount();
     }
 }
 function escapeHtml(text) {
@@ -3517,14 +3908,9 @@ const closeShipModalBtn = shipModal ? shipModal.querySelector('.close-modal-btn'
 function selectionHasInvalidPallets() {
     const invalidMatch = /in transit|on water/i;
     const selected = document.querySelectorAll('.pallet-checkbox:checked');
-    const statusIndex = canManageShipments ? 6 : 5;
 
     for (const cb of selected) {
-        const row = cb.closest('tr');
-        if (!row) continue;
-
-        const statusCell = row.cells && row.cells[statusIndex];
-        const statusText = (statusCell ? (statusCell.textContent || statusCell.innerText || '') : '').trim();
+        const statusText = String(cb.getAttribute('data-status') || '').trim();
         if (invalidMatch.test(statusText)) {
             return true;
         }
