@@ -19,6 +19,7 @@ if (!$conn) {
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'];
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
+$errors = [];
 
 // Project capacity tracking variables
 $project_size_mw = 0;
@@ -78,15 +79,17 @@ if ($project_id) {
 $accounts = [];
 $projects_for_account = [];
 $account_id_for_admin = null;
-if (!$project && in_array($role, ['admin', 'customer_admin'], true)) {
+if (in_array($role, ['admin', 'customer_admin'], true)) {
     $stmtAdmin = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1");
     $stmtAdmin->bind_param("i", $user_id);
     $stmtAdmin->execute();
     $stmtAdmin->bind_result($account_id_for_admin);
     $stmtAdmin->fetch();
     $stmtAdmin->close();
+}
+if (!$project && in_array($role, ['admin', 'customer_admin'], true)) {
     if ($account_id_for_admin) {
-        $stmtProj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC");
+        $stmtProj = $conn->prepare("SELECT id, project_name, account_id, project_size FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         $stmtProj->bind_param("i", $account_id_for_admin);
         $stmtProj->execute();
         $resProj = $stmtProj->get_result();
@@ -97,7 +100,7 @@ if (!$project && in_array($role, ['admin', 'customer_admin'], true)) {
 if (!$project && $role === 'global_admin') {
     $resAcc = $conn->query("SELECT id, name FROM customer_accounts ORDER BY name ASC");
     if ($resAcc) { while ($r = $resAcc->fetch_assoc()) { $accounts[] = $r; } }
-    $resProj = $conn->query("SELECT id, project_name, account_id FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY account_id, project_name ASC");
+    $resProj = $conn->query("SELECT id, project_name, account_id, project_size FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY account_id, project_name ASC");
     if ($resProj) { while ($r = $resProj->fetch_assoc()) { $projects_for_account[] = $r; } }
 }
 
@@ -113,8 +116,360 @@ if ($stmtManufacturers) {
     $stmtManufacturers->close();
 }
 
+function syncProjectWattageOrdersForAssignment($conn, $project_id) {
+    $project_id = (int)$project_id;
+    if ($project_id <= 0) return;
+
+    $conn->begin_transaction();
+    try {
+        $stmtDelete = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?");
+        if (!$stmtDelete) throw new Exception("Failed preparing project order cleanup: " . $conn->error);
+        $stmtDelete->bind_param("i", $project_id);
+        $stmtDelete->execute();
+        $stmtDelete->close();
+
+        $stmtActual = $conn->prepare("
+            SELECT umi.wattage, SUM(umi.quantity) AS total_quantity
+            FROM modules m
+            JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id
+            WHERE m.project_id = ?
+            GROUP BY umi.wattage
+        ");
+        if (!$stmtActual) throw new Exception("Failed preparing project totals query: " . $conn->error);
+        $stmtActual->bind_param("i", $project_id);
+        $stmtActual->execute();
+        $resultActual = $stmtActual->get_result();
+
+        $stmtInsert = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)");
+        if (!$stmtInsert) throw new Exception("Failed preparing project order insert: " . $conn->error);
+
+        while ($row = $resultActual->fetch_assoc()) {
+            $wattage = (int)$row['wattage'];
+            $totalQuantity = (int)$row['total_quantity'];
+            $stmtInsert->bind_param("iii", $project_id, $wattage, $totalQuantity);
+            $stmtInsert->execute();
+        }
+
+        $stmtInsert->close();
+        $stmtActual->close();
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        throw $e;
+    }
+}
+
+function assignUnassignedBatchToProjectFromAddPage($conn, $batch_id, $target_project_id, $role, $account_id_for_admin) {
+    $batch_id = (int)$batch_id;
+    $target_project_id = (int)$target_project_id;
+    if ($batch_id <= 0 || $target_project_id <= 0) {
+        throw new Exception('Please select a valid batch and project.');
+    }
+
+    if ($role === 'global_admin') {
+        $stmtBatch = $conn->prepare("SELECT id, account_id, project_id, batch_name FROM modules WHERE id = ? LIMIT 1");
+        if (!$stmtBatch) throw new Exception("Failed preparing batch lookup: " . $conn->error);
+        $stmtBatch->bind_param("i", $batch_id);
+    } else {
+        if (!$account_id_for_admin) {
+            throw new Exception('No valid account found for this admin user.');
+        }
+        $stmtBatch = $conn->prepare("SELECT id, account_id, project_id, batch_name FROM modules WHERE id = ? AND account_id = ? LIMIT 1");
+        if (!$stmtBatch) throw new Exception("Failed preparing batch lookup: " . $conn->error);
+        $stmtBatch->bind_param("ii", $batch_id, $account_id_for_admin);
+    }
+    $stmtBatch->execute();
+    $batchRow = $stmtBatch->get_result()->fetch_assoc();
+    $stmtBatch->close();
+
+    if (!$batchRow) {
+        throw new Exception("Module batch #{$batch_id} not found or access denied.");
+    }
+    if (!empty($batchRow['project_id'])) {
+        throw new Exception("Batch #{$batch_id} is already assigned to a project.");
+    }
+
+    $stmtProject = $conn->prepare("SELECT id, account_id, project_name, status FROM projects WHERE id = ? LIMIT 1");
+    if (!$stmtProject) throw new Exception("Failed preparing project lookup: " . $conn->error);
+    $stmtProject->bind_param("i", $target_project_id);
+    $stmtProject->execute();
+    $projectRow = $stmtProject->get_result()->fetch_assoc();
+    $stmtProject->close();
+
+    if (!$projectRow) {
+        throw new Exception('Target project not found.');
+    }
+    if ((int)$projectRow['account_id'] !== (int)$batchRow['account_id']) {
+        throw new Exception("Batch #{$batch_id} does not belong to the selected project's account.");
+    }
+    if (isset($projectRow['status']) && strtolower((string)$projectRow['status']) === 'closed') {
+        throw new Exception('Cannot assign modules to a closed project.');
+    }
+
+    $stmtConflicts = $conn->prepare("
+        SELECT COUNT(*) AS conflict_count
+        FROM inventory_pallets ip
+        JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+        LEFT JOIN deliveries d ON d.id = dp.delivery_id
+        WHERE umi.unassigned_module_id = ?
+          AND (
+              (ip.current_project_id IS NOT NULL AND ip.current_project_id <> ?)
+              OR (ip.assigned_project_id IS NOT NULL AND ip.assigned_project_id <> ?)
+              OR (d.project_id IS NOT NULL AND d.project_id <> ?)
+          )
+    ");
+    if (!$stmtConflicts) throw new Exception("Failed preparing conflict check: " . $conn->error);
+    $stmtConflicts->bind_param("iiii", $batch_id, $target_project_id, $target_project_id, $target_project_id);
+    $stmtConflicts->execute();
+    $conflictRow = $stmtConflicts->get_result()->fetch_assoc();
+    $stmtConflicts->close();
+    if ((int)($conflictRow['conflict_count'] ?? 0) > 0) {
+        throw new Exception("Batch #{$batch_id} has pallets tied to a different project context.");
+    }
+
+    $conn->begin_transaction();
+    try {
+        $stmtAssignBatch = $conn->prepare("UPDATE modules SET project_id = ?, last_updated_at = NOW() WHERE id = ?");
+        if (!$stmtAssignBatch) throw new Exception("Failed preparing module update: " . $conn->error);
+        $stmtAssignBatch->bind_param("ii", $target_project_id, $batch_id);
+        if (!$stmtAssignBatch->execute()) {
+            throw new Exception("Failed assigning module batch #{$batch_id}: " . $stmtAssignBatch->error);
+        }
+        $stmtAssignBatch->close();
+
+        $stmtAssignPallets = $conn->prepare("
+            UPDATE inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            SET ip.assigned_project_id = ?
+            WHERE umi.unassigned_module_id = ?
+        ");
+        if (!$stmtAssignPallets) throw new Exception("Failed preparing pallet update: " . $conn->error);
+        $stmtAssignPallets->bind_param("ii", $target_project_id, $batch_id);
+        if (!$stmtAssignPallets->execute()) {
+            throw new Exception("Failed updating pallet assignments for batch #{$batch_id}: " . $stmtAssignPallets->error);
+        }
+        $updatedPalletRows = (int)$stmtAssignPallets->affected_rows;
+        $stmtAssignPallets->close();
+
+        $conn->commit();
+        syncProjectWattageOrdersForAssignment($conn, $target_project_id);
+    } catch (Exception $e) {
+        $conn->rollback();
+        throw $e;
+    }
+
+    return [
+        'batch_id' => $batch_id,
+        'batch_name' => (string)($batchRow['batch_name'] ?? ('Batch #' . $batch_id)),
+        'updated_pallet_rows' => $updatedPalletRows
+    ];
+}
+
+$assign_project_options = [];
+if ($project) {
+    $assign_project_options[] = [
+        'id' => (int)$project['id'],
+        'project_name' => (string)$project['project_name'],
+        'account_id' => (int)$project['account_id'],
+        'project_size' => (float)($project['project_size'] ?? 0)
+    ];
+} else {
+    foreach ($projects_for_account as $proj) {
+        $assign_project_options[] = [
+            'id' => (int)($proj['id'] ?? 0),
+            'project_name' => (string)($proj['project_name'] ?? ''),
+            'account_id' => (int)($proj['account_id'] ?? 0),
+            'project_size' => (float)($proj['project_size'] ?? 0)
+        ];
+    }
+}
+
+$assign_project_impact_data = [];
+foreach ($assign_project_options as $proj) {
+    $pid = (int)($proj['id'] ?? 0);
+    if ($pid <= 0) continue;
+    $projectSizeMw = (float)($proj['project_size'] ?? 0);
+    $assign_project_impact_data[$pid] = [
+        'project_name' => (string)($proj['project_name'] ?? ('Project #' . $pid)),
+        'target_watts' => $projectSizeMw > 0 ? ($projectSizeMw * 1000000) : 0.0,
+        'current_modules' => 0,
+        'current_watts' => 0.0
+    ];
+}
+if (!empty($assign_project_impact_data)) {
+    $impactProjectIds = array_keys($assign_project_impact_data);
+    $placeholdersImpact = implode(',', array_fill(0, count($impactProjectIds), '?'));
+    $typesImpact = str_repeat('i', count($impactProjectIds));
+    $stmtCurrentImpact = $conn->prepare("
+        SELECT
+            m.project_id,
+            COALESCE(SUM(umi.quantity), 0) AS current_modules,
+            COALESCE(SUM(umi.wattage * umi.quantity), 0) AS current_watts
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id IN ($placeholdersImpact)
+        GROUP BY m.project_id
+    ");
+    if ($stmtCurrentImpact) {
+        $stmtCurrentImpact->bind_param($typesImpact, ...$impactProjectIds);
+        $stmtCurrentImpact->execute();
+        $resCurrentImpact = $stmtCurrentImpact->get_result();
+        while ($row = $resCurrentImpact->fetch_assoc()) {
+            $pid = (int)($row['project_id'] ?? 0);
+            if (!isset($assign_project_impact_data[$pid])) continue;
+            $assign_project_impact_data[$pid]['current_modules'] = (int)($row['current_modules'] ?? 0);
+            $assign_project_impact_data[$pid]['current_watts'] = (float)($row['current_watts'] ?? 0);
+        }
+        $stmtCurrentImpact->close();
+    }
+}
+
+$assignable_unassigned_batches = [];
+$assignAccountFilterId = 0;
+if ($project) {
+    $assignAccountFilterId = (int)($project['account_id'] ?? 0);
+} elseif (in_array($role, ['admin', 'customer_admin'], true)) {
+    $assignAccountFilterId = (int)($account_id_for_admin ?? 0);
+}
+
+$sqlAssignable = "
+    SELECT
+        m.id,
+        m.account_id,
+        m.batch_name,
+        m.vendor_name,
+        m.initial_location,
+        ca.name AS account_name,
+        COALESCE(SUM(umi.quantity), 0) AS total_quantity,
+        COALESCE(SUM(umi.wattage * umi.quantity), 0) AS total_watts
+    FROM modules m
+    JOIN customer_accounts ca ON ca.id = m.account_id
+    LEFT JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+    WHERE m.project_id IS NULL
+";
+if ($assignAccountFilterId > 0) {
+    $sqlAssignable .= " AND m.account_id = ?";
+}
+$sqlAssignable .= " GROUP BY m.id ORDER BY ca.name ASC, m.vendor_name ASC, m.id DESC";
+
+$stmtAssignable = $conn->prepare($sqlAssignable);
+if ($stmtAssignable) {
+    if ($assignAccountFilterId > 0) {
+        $stmtAssignable->bind_param("i", $assignAccountFilterId);
+    }
+    $stmtAssignable->execute();
+    $resAssignable = $stmtAssignable->get_result();
+    while ($row = $resAssignable->fetch_assoc()) {
+        $assignable_unassigned_batches[] = $row;
+    }
+    $stmtAssignable->close();
+}
+
+if (!empty($assignable_unassigned_batches)) {
+    $assignBatchIds = array_map(function($b) { return (int)$b['id']; }, $assignable_unassigned_batches);
+    $assignBatchIds = array_values(array_filter($assignBatchIds, function($id) { return $id > 0; }));
+    if (!empty($assignBatchIds)) {
+        $itemsByBatchId = [];
+        $placeholders = implode(',', array_fill(0, count($assignBatchIds), '?'));
+        $types = str_repeat('i', count($assignBatchIds));
+        $stmtAssignItems = $conn->prepare("
+            SELECT
+                unassigned_module_id,
+                wattage,
+                quantity,
+                domestic_content_pct
+            FROM unassigned_module_items
+            WHERE unassigned_module_id IN ($placeholders)
+            ORDER BY unassigned_module_id ASC, wattage ASC
+        ");
+        if ($stmtAssignItems) {
+            $stmtAssignItems->bind_param($types, ...$assignBatchIds);
+            $stmtAssignItems->execute();
+            $resAssignItems = $stmtAssignItems->get_result();
+            while ($itemRow = $resAssignItems->fetch_assoc()) {
+                $bid = (int)($itemRow['unassigned_module_id'] ?? 0);
+                if ($bid <= 0) continue;
+                if (!isset($itemsByBatchId[$bid])) $itemsByBatchId[$bid] = [];
+                $itemsByBatchId[$bid][] = $itemRow;
+            }
+            $stmtAssignItems->close();
+        }
+
+        foreach ($assignable_unassigned_batches as $idx => $batch) {
+            $bid = (int)($batch['id'] ?? 0);
+            $assignable_unassigned_batches[$idx]['items'] = $itemsByBatchId[$bid] ?? [];
+        }
+    }
+}
+
+// Handle in-page assignment of existing unassigned batches
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'assign_unassigned_batches')) {
+    $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+    $target_project_id = isset($_POST['assign_project_id']) ? (int)$_POST['assign_project_id'] : 0;
+    if ($target_project_id <= 0 && $project_id > 0) {
+        $target_project_id = (int)$project_id;
+    }
+
+    $rawBatchIds = trim((string)($_POST['assign_batch_ids'] ?? ''));
+    $batchIds = [];
+    if ($rawBatchIds !== '') {
+        foreach (explode(',', $rawBatchIds) as $token) {
+            $bid = (int)trim($token);
+            if ($bid > 0) $batchIds[] = $bid;
+        }
+    }
+    $batchIds = array_values(array_unique($batchIds));
+
+    try {
+        if ($target_project_id <= 0) {
+            throw new Exception('Please select a project for assignment.');
+        }
+        if (empty($batchIds)) {
+            throw new Exception('Select at least one unassigned batch.');
+        }
+
+        $assignedCount = 0;
+        $updatedPalletRows = 0;
+        $assignedBatchNames = [];
+
+        foreach ($batchIds as $bid) {
+            $result = assignUnassignedBatchToProjectFromAddPage($conn, $bid, $target_project_id, $role, $account_id_for_admin);
+            $assignedCount++;
+            $updatedPalletRows += (int)($result['updated_pallet_rows'] ?? 0);
+            $assignedBatchNames[] = (string)($result['batch_name'] ?? ('Batch #' . $bid));
+        }
+
+        $response = [
+            'success' => true,
+            'message' => 'Assigned ' . $assignedCount . ' unassigned batch(es) to the selected project.',
+            'assigned_count' => $assignedCount,
+            'updated_pallet_rows' => $updatedPalletRows,
+            'assigned_batches' => $assignedBatchNames
+        ];
+
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode($response);
+            $conn->close();
+            exit();
+        }
+    } catch (Exception $e) {
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage()
+            ]);
+            $conn->close();
+            exit();
+        }
+        $errors = [$e->getMessage()];
+    }
+}
+
 // Handle form submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') !== 'assign_unassigned_batches')) {
     // Detect AJAX request
     $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
 
@@ -665,6 +1020,96 @@ $conn->close();
             .header-info h1 { font-size: 2em; }
             .header-subtitle { font-size: 1em; }
         }
+        .assign-batch-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 14px;
+        }
+        .assign-batch-card {
+            display: block;
+            border: 1px solid #dbe6ec;
+            border-radius: 12px;
+            padding: 13px;
+            background: #fff;
+            cursor: pointer;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+        }
+        .assign-batch-card:hover {
+            border-color: #a9c8d2;
+            box-shadow: 0 4px 14px rgba(58,112,134,0.12);
+            transform: translateY(-1px);
+        }
+        .assign-batch-card.is-selected {
+            border-color: #488C9A;
+            box-shadow: 0 0 0 2px rgba(72,140,154,0.2), 0 6px 18px rgba(72,140,154,0.18);
+            background: #f8fcfe;
+        }
+        .assign-batch-card-inner {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+        .assign-batch-content {
+            flex: 1;
+            min-width: 0;
+        }
+        .assign-batch-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+        .assign-batch-name {
+            font-weight: 700;
+            color: #1f2937;
+        }
+        .assign-batch-meta {
+            font-size: 0.82rem;
+            color: #64748b;
+        }
+        .assign-batch-totals {
+            text-align: right;
+        }
+        .assign-batch-modules {
+            font-size: 0.86rem;
+            color: #334155;
+            font-weight: 600;
+        }
+        .assign-batch-mw {
+            font-size: 0.82rem;
+            color: #64748b;
+        }
+        .assign-batch-mix-title {
+            font-size: 0.78rem;
+            color: #64748b;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .assign-batch-mix {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .assign-batch-chip {
+            display: inline-block;
+            background: #f8fbfd;
+            border: 1px solid #d6e5ea;
+            border-radius: 999px;
+            padding: 3px 8px;
+            font-size: 0.78rem;
+            color: #334155;
+        }
+        .assign-batch-chip-empty {
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+        .assign-footer-row {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 14px;
+        }
         .loading-modal {
             display: none; position: fixed; z-index: 2000;
             left: 0; top: 0; width: 100%; height: 100%;
@@ -1000,19 +1445,142 @@ $conn->close();
         </div>
 
         <!-- Assign Unassigned Container (hidden by default) -->
-        <div id="assignContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 40px; margin-bottom: 20px;">
-            <div style="text-align: center; padding: 40px 20px;">
-                <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">&#128279;</div>
-                <h2 style="color: #293E4C; margin-bottom: 12px;">Assign Existing Unassigned Batch</h2>
-                <p style="color: #6c757d; margin-bottom: 24px; max-width: 560px; margin-left: auto; margin-right: auto;">
-                    Move existing unassigned stock batches onto a project without re-entering module data.
-                    Use the "Assign to Project" action from the Unassigned table in Manage Modules.
-                </p>
-                <a href="modules.php"
-                   class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
-                    Go to Manage Modules &rarr;
-                </a>
+        <div id="assignContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 28px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 14px;">
+                <div>
+                    <h2 style="color: #293E4C; margin: 0 0 8px 0;">Assign Existing Unassigned Batches</h2>
+                    <p style="color: #6c757d; margin: 0; max-width: 760px;">
+                        Select one or more unassigned stock batches, choose the destination project, and use the Project Capacity Status below to preview the updated capacity before assigning.
+                    </p>
+                </div>
+                <a href="modules.php" style="text-decoration: none; color: #488C9A; font-weight: 600;">Open Manage Modules</a>
             </div>
+
+            <?php if ($project): ?>
+                <div style="background: #f8fbfd; border: 1px solid #d6e5ea; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;">
+                    <div style="font-size: 0.92rem; color: #475569;">
+                        Assigning into fixed project:
+                        <strong style="color: #293E4C;"><?php echo htmlspecialchars($project['project_name']); ?></strong>
+                    </div>
+                    <input type="hidden" id="assign_project_id_fixed" value="<?php echo (int)$project['id']; ?>">
+                </div>
+            <?php else: ?>
+                <div style="margin-bottom: 14px;">
+                    <label for="assign_project_id" style="display: block; margin-bottom: 8px; font-weight: 600; color: #293E4C;">Assign to Project</label>
+                    <select id="assign_project_id" style="width: 100%; max-width: 520px; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px;">
+                        <option value="">Select project</option>
+                        <?php foreach ($assign_project_options as $assignProj): ?>
+                            <option
+                                value="<?php echo (int)$assignProj['id']; ?>"
+                                data-account-id="<?php echo (int)$assignProj['account_id']; ?>"
+                                data-target-watts="<?php echo (float)$assignProj['project_size'] * 1000000; ?>"
+                            >
+                                <?php echo htmlspecialchars($assignProj['project_name']); ?>
+                                <?php if ($role === 'global_admin'): ?> (Acct <?php echo (int)$assignProj['account_id']; ?>)<?php endif; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            <?php endif; ?>
+
+            <div id="assignCapacityBanner" style="display:none; background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 16px; padding: 18px; margin-bottom: 16px;">
+                <h3 style="margin: 0 0 12px 0; color: #0056b3; font-size: 1.02em; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.1em;">&#9889;</span> Project Capacity Status
+                </h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                    <div style="background: #fff; border-radius: 10px; padding: 12px; text-align: center;">
+                        <div id="assign_cap_current" style="font-size: 1.35rem; font-weight: 700; color: #488C9A;">0.000 MW</div>
+                        <div style="font-size: 0.8rem; color: #6c757d;">Currently Ordered</div>
+                    </div>
+                    <div style="background: #fff; border-radius: 10px; padding: 12px; text-align: center;">
+                        <div id="assign_cap_target" style="font-size: 1.35rem; font-weight: 700; color: #293E4C;">0.000 MW</div>
+                        <div style="font-size: 0.8rem; color: #6c757d;">Project Target</div>
+                    </div>
+                    <div style="background: #fff; border-radius: 10px; padding: 12px; text-align: center;">
+                        <div id="assign_cap_remaining" style="font-size: 1.35rem; font-weight: 700; color: #28a745;">0.000 MW</div>
+                        <div style="font-size: 0.8rem; color: #6c757d;">Remaining Capacity</div>
+                    </div>
+                </div>
+                <div style="background: #e9ecef; border-radius: 8px; height: 18px; overflow: hidden;">
+                    <div id="assign_cap_progress" style="background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%); height: 100%; width: 0%; color: #fff; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;">0.0%</div>
+                </div>
+                <div id="assign_cap_preview" style="display:none; margin-top: 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid #ffc107; background: #fff3cd; color: #856404; font-size: 0.9rem;"></div>
+            </div>
+
+            <div id="assignFeedback" style="display:none; margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; font-size: 0.92rem;"></div>
+
+            <?php if (empty($assignable_unassigned_batches)): ?>
+                <div style="padding: 26px; text-align: center; color: #6c757d; background: #f8f9fa; border-radius: 10px;">
+                    No unassigned module batches are available in this scope.
+                </div>
+            <?php else: ?>
+                <form id="assignBatchesForm">
+                    <input type="hidden" name="action" value="assign_unassigned_batches">
+                    <input type="hidden" name="assign_batch_ids" id="assign_batch_ids">
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                        <label style="display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #475569;">
+                            <input type="checkbox" id="assign_select_all">
+                            Select all
+                        </label>
+                    </div>
+                    <div class="assign-batch-grid">
+                        <?php foreach ($assignable_unassigned_batches as $ab): ?>
+                            <label class="assign-batch-card" onclick="if(event.target.tagName !== 'INPUT'){event.preventDefault(); const cb=this.querySelector('.assign-batch-checkbox'); cb.checked=!cb.checked; cb.dispatchEvent(new Event('change'));}">
+                                <div class="assign-batch-card-inner">
+                                    <input
+                                        type="checkbox"
+                                        class="assign-batch-checkbox"
+                                        value="<?php echo (int)$ab['id']; ?>"
+                                        data-account-id="<?php echo (int)$ab['account_id']; ?>"
+                                        data-total-modules="<?php echo (int)$ab['total_quantity']; ?>"
+                                        data-total-watts="<?php echo (float)$ab['total_watts']; ?>"
+                                        style="margin-top:4px;"
+                                    >
+                                    <div class="assign-batch-content">
+                                        <div class="assign-batch-top">
+                                            <div>
+                                                <div class="assign-batch-name">
+                                                    <?php echo htmlspecialchars(!empty($ab['batch_name']) ? $ab['batch_name'] : ('Batch #' . (int)$ab['id'])); ?>
+                                                </div>
+                                                <div class="assign-batch-meta">
+                                                    <?php echo htmlspecialchars($ab['vendor_name'] ?? 'Unknown Vendor'); ?>
+                                                    <?php if ($role === 'global_admin'): ?> | <?php echo htmlspecialchars($ab['account_name'] ?? ''); ?><?php endif; ?>
+                                                </div>
+                                            </div>
+                                            <div class="assign-batch-totals">
+                                                <div class="assign-batch-modules"><?php echo number_format((int)$ab['total_quantity']); ?> modules</div>
+                                                <div class="assign-batch-mw"><?php echo number_format(((float)$ab['total_watts']) / 1000000, 3); ?> MW</div>
+                                            </div>
+                                        </div>
+                                        <div style="margin-top:8px;">
+                                            <div class="assign-batch-mix-title">Module Mix (Wattage, Qty, Domestic %)</div>
+                                            <div class="assign-batch-mix">
+                                                <?php if (!empty($ab['items'])): ?>
+                                                    <?php foreach ($ab['items'] as $mixItem): ?>
+                                                        <span class="assign-batch-chip">
+                                                            <?php echo (int)$mixItem['wattage']; ?>W x <?php echo number_format((int)$mixItem['quantity']); ?>
+                                                            <?php if ($mixItem['domestic_content_pct'] !== null && $mixItem['domestic_content_pct'] !== ''): ?>
+                                                                | <?php echo number_format((float)$mixItem['domestic_content_pct'], 2); ?>% domestic
+                                                            <?php endif; ?>
+                                                        </span>
+                                                    <?php endforeach; ?>
+                                                <?php else: ?>
+                                                    <span class="assign-batch-chip-empty">No module item details.</span>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="assign-footer-row">
+                        <button type="submit" id="assignSubmitBtn" class="btn-submit" style="padding: 12px 24px;" disabled>
+                            Assign Selected Batches
+                        </button>
+                    </div>
+                </form>
+            <?php endif; ?>
         </div>
 
         <!-- Loading Modal -->
@@ -1201,6 +1769,290 @@ $conn->close();
                 }
             });
         });
+
+        var requestedMethod = new URLSearchParams(window.location.search).get('entry_method');
+        if (requestedMethod && ['manual', 'assign', 'import'].indexOf(requestedMethod) !== -1) {
+            var requestedRadio = document.querySelector('input[name="entry_method"][value="' + requestedMethod + '"]');
+            if (requestedRadio) {
+                requestedRadio.checked = true;
+                requestedRadio.dispatchEvent(new Event('change'));
+            }
+        }
+    });
+
+    // ========== Assign Existing Unassigned Batches ==========
+    document.addEventListener('DOMContentLoaded', function() {
+        var assignForm = document.getElementById('assignBatchesForm');
+        if (!assignForm) return;
+
+        var assignImpactByProject = <?php echo json_encode($assign_project_impact_data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+        var isGlobalAdmin = <?php echo $role === 'global_admin' ? 'true' : 'false'; ?>;
+        var fixedProjectId = parseInt(document.getElementById('assign_project_id_fixed')?.value || '0', 10);
+        var projectSelect = document.getElementById('assign_project_id');
+        var projectOptions = projectSelect ? Array.from(projectSelect.options).slice(1).map(function(opt) { return opt.cloneNode(true); }) : [];
+
+        var selectAll = document.getElementById('assign_select_all');
+        var batchCheckboxes = Array.from(document.querySelectorAll('.assign-batch-checkbox'));
+        var assignBatchIdsInput = document.getElementById('assign_batch_ids');
+        var assignSubmitBtn = document.getElementById('assignSubmitBtn');
+        var feedback = document.getElementById('assignFeedback');
+
+        var capBanner = document.getElementById('assignCapacityBanner');
+        var capCurrentEl = document.getElementById('assign_cap_current');
+        var capTargetEl = document.getElementById('assign_cap_target');
+        var capRemainingEl = document.getElementById('assign_cap_remaining');
+        var capProgressEl = document.getElementById('assign_cap_progress');
+        var capPreviewEl = document.getElementById('assign_cap_preview');
+
+        function formatModulesAndMw(modules, watts) {
+            var safeModules = Number(modules || 0);
+            var safeWatts = Number(watts || 0);
+            return safeModules.toLocaleString() + ' modules (' + (safeWatts / 1000000).toFixed(3) + ' MW)';
+        }
+
+        function getSelectedBatches() {
+            return batchCheckboxes.filter(function(cb) { return cb.checked; });
+        }
+
+        function getSelectedAccountIds() {
+            return Array.from(new Set(getSelectedBatches().map(function(cb) {
+                return parseInt(cb.getAttribute('data-account-id') || '0', 10);
+            }).filter(function(id) { return id > 0; })));
+        }
+
+        function getActiveProjectId() {
+            if (fixedProjectId > 0) return fixedProjectId;
+            return parseInt(projectSelect?.value || '0', 10);
+        }
+
+        function refreshProjectOptionsByAccount(accountIdForFilter) {
+            if (!projectSelect || !isGlobalAdmin) return;
+            while (projectSelect.options.length > 1) projectSelect.remove(1);
+            projectOptions.forEach(function(optTemplate) {
+                var cloned = optTemplate.cloneNode(true);
+                var optionAccountId = parseInt(cloned.getAttribute('data-account-id') || '0', 10);
+                if (accountIdForFilter > 0 && optionAccountId !== accountIdForFilter) return;
+                projectSelect.add(cloned);
+            });
+        }
+
+        function renderImpact() {
+            if (!capBanner) return;
+            var selectedBatches = getSelectedBatches();
+            var selectedModules = selectedBatches.reduce(function(sum, cb) { return sum + Number(cb.getAttribute('data-total-modules') || 0); }, 0);
+            var selectedWatts = selectedBatches.reduce(function(sum, cb) { return sum + Number(cb.getAttribute('data-total-watts') || 0); }, 0);
+            var activeProjectId = getActiveProjectId();
+
+            if (!activeProjectId || !assignImpactByProject[activeProjectId]) {
+                capBanner.style.display = selectedModules > 0 ? 'block' : 'none';
+                if (capCurrentEl) capCurrentEl.textContent = '-';
+                if (capTargetEl) capTargetEl.textContent = '-';
+                if (capRemainingEl) capRemainingEl.textContent = '-';
+                if (capProgressEl) {
+                    capProgressEl.style.width = '0%';
+                    capProgressEl.textContent = '0.0%';
+                }
+                if (capPreviewEl) {
+                    capPreviewEl.style.display = selectedModules > 0 ? 'block' : 'none';
+                    capPreviewEl.style.background = '#fff3cd';
+                    capPreviewEl.style.borderColor = '#ffc107';
+                    capPreviewEl.style.color = '#856404';
+                    if (selectedModules > 0) {
+                        capPreviewEl.textContent = 'Select a project to preview capacity after assigning ' + formatModulesAndMw(selectedModules, selectedWatts) + '.';
+                    } else {
+                        capPreviewEl.textContent = '';
+                    }
+                }
+                return;
+            }
+
+            var stats = assignImpactByProject[activeProjectId];
+            var targetWatts = Number(stats.target_watts || 0);
+            var currentModules = Number(stats.current_modules || 0);
+            var currentWatts = Number(stats.current_watts || 0);
+
+            var projectedModules = currentModules + selectedModules;
+            var projectedWatts = currentWatts + selectedWatts;
+            var remainingNowWatts = targetWatts - currentWatts;
+            var remainingProjectedWatts = targetWatts - projectedWatts;
+            var currentPct = (targetWatts > 0) ? Math.min(100, (currentWatts / targetWatts) * 100) : 0;
+            var projectedPct = (targetWatts > 0) ? Math.min(100, (projectedWatts / targetWatts) * 100) : 0;
+
+            if (capCurrentEl) capCurrentEl.textContent = (currentWatts / 1000000).toFixed(3) + ' MW';
+            if (capTargetEl) capTargetEl.textContent = targetWatts > 0 ? ((targetWatts / 1000000).toFixed(3) + ' MW') : '-';
+            if (capRemainingEl) {
+                if (targetWatts > 0) {
+                    capRemainingEl.textContent = (Math.max(0, remainingNowWatts) / 1000000).toFixed(3) + ' MW';
+                    capRemainingEl.style.color = remainingNowWatts >= 0 ? '#28a745' : '#dc3545';
+                } else {
+                    capRemainingEl.textContent = '-';
+                    capRemainingEl.style.color = '#6c757d';
+                }
+            }
+
+            if (capProgressEl) {
+                if (targetWatts > 0) {
+                    capProgressEl.style.width = projectedPct.toFixed(1) + '%';
+                    capProgressEl.textContent = projectedPct.toFixed(1) + '%';
+                    capProgressEl.style.background = projectedWatts > targetWatts
+                        ? 'linear-gradient(90deg, #dc3545 0%, #b91c1c 100%)'
+                        : 'linear-gradient(90deg, #488C9A 0%, #3a7086 100%)';
+                } else {
+                    capProgressEl.style.width = '0%';
+                    capProgressEl.textContent = '0.0%';
+                    capProgressEl.style.background = 'linear-gradient(90deg, #488C9A 0%, #3a7086 100%)';
+                }
+            }
+
+            if (capPreviewEl) {
+                if (selectedModules <= 0) {
+                    capPreviewEl.style.display = 'none';
+                } else if (targetWatts <= 0) {
+                    capPreviewEl.style.display = 'block';
+                    capPreviewEl.style.background = '#fff3cd';
+                    capPreviewEl.style.borderColor = '#ffc107';
+                    capPreviewEl.style.color = '#856404';
+                    capPreviewEl.textContent = 'No project size target is defined. Selected batches add ' + formatModulesAndMw(selectedModules, selectedWatts) + '.';
+                } else if (remainingProjectedWatts < 0) {
+                    capPreviewEl.style.display = 'block';
+                    capPreviewEl.style.background = '#f8d7da';
+                    capPreviewEl.style.borderColor = '#f5c6cb';
+                    capPreviewEl.style.color = '#721c24';
+                    capPreviewEl.textContent = 'After assigning selected batches (' + formatModulesAndMw(selectedModules, selectedWatts) + '), projected total is ' +
+                        (projectedWatts / 1000000).toFixed(3) + ' MW, which is over target by ' + (Math.abs(remainingProjectedWatts) / 1000000).toFixed(3) + ' MW.';
+                } else {
+                    capPreviewEl.style.display = 'block';
+                    capPreviewEl.style.background = '#d4edda';
+                    capPreviewEl.style.borderColor = '#c3e6cb';
+                    capPreviewEl.style.color = '#155724';
+                    capPreviewEl.textContent = 'After assigning selected batches (' + formatModulesAndMw(selectedModules, selectedWatts) + '), projected total is ' +
+                        (projectedWatts / 1000000).toFixed(3) + ' MW with ' + (remainingProjectedWatts / 1000000).toFixed(3) + ' MW remaining.';
+                }
+            }
+
+            capBanner.style.display = 'block';
+        }
+
+        function updateAssignState() {
+            var selected = getSelectedBatches();
+            assignBatchIdsInput.value = selected.map(function(cb) { return cb.value; }).join(',');
+            batchCheckboxes.forEach(function(cb) {
+                var card = cb.closest('.assign-batch-card');
+                if (card) {
+                    card.classList.toggle('is-selected', cb.checked);
+                }
+            });
+
+            if (selectAll) {
+                selectAll.checked = (batchCheckboxes.length > 0 && selected.length === batchCheckboxes.length);
+            }
+
+            if (feedback) {
+                feedback.style.display = 'none';
+                feedback.textContent = '';
+            }
+
+            if (isGlobalAdmin && fixedProjectId <= 0) {
+                var accountIds = getSelectedAccountIds();
+                var singleAccountId = accountIds.length === 1 ? accountIds[0] : 0;
+                refreshProjectOptionsByAccount(singleAccountId);
+                if (projectSelect && projectSelect.value && singleAccountId > 0) {
+                    var selectedOption = projectSelect.options[projectSelect.selectedIndex];
+                    var selectedOptionAccountId = parseInt(selectedOption?.getAttribute('data-account-id') || '0', 10);
+                    if (selectedOptionAccountId !== singleAccountId) {
+                        projectSelect.value = '';
+                    }
+                }
+                if (accountIds.length > 1) {
+                    if (feedback) {
+                        feedback.style.display = 'block';
+                        feedback.style.background = '#fff3cd';
+                        feedback.style.border = '1px solid #ffc107';
+                        feedback.style.color = '#856404';
+                        feedback.textContent = 'For global admin: select batches from only one account at a time.';
+                    }
+                }
+            }
+
+            var hasSelection = selected.length > 0;
+            var hasProject = getActiveProjectId() > 0;
+            var mixedAccounts = isGlobalAdmin && getSelectedAccountIds().length > 1;
+            if (assignSubmitBtn) assignSubmitBtn.disabled = !(hasSelection && hasProject && !mixedAccounts);
+
+            renderImpact();
+        }
+
+        if (selectAll) {
+            selectAll.addEventListener('change', function() {
+                var checked = !!selectAll.checked;
+                batchCheckboxes.forEach(function(cb) { cb.checked = checked; });
+                updateAssignState();
+            });
+        }
+
+        batchCheckboxes.forEach(function(cb) {
+            cb.addEventListener('change', updateAssignState);
+        });
+
+        if (projectSelect) {
+            projectSelect.addEventListener('change', updateAssignState);
+        }
+
+        assignForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var batchIds = assignBatchIdsInput.value;
+            var activeProjectId = getActiveProjectId();
+            if (!batchIds) {
+                alert('Select at least one unassigned batch.');
+                return;
+            }
+            if (!activeProjectId) {
+                alert('Select a target project.');
+                return;
+            }
+
+            var formData = new FormData(assignForm);
+            formData.set('assign_project_id', String(activeProjectId));
+            formData.set('assign_batch_ids', batchIds);
+
+            fetch(window.location.href, {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                if (!feedback) return;
+                if (data.success) {
+                    feedback.style.display = 'block';
+                    feedback.style.background = '#d4edda';
+                    feedback.style.border = '1px solid #c3e6cb';
+                    feedback.style.color = '#155724';
+                    feedback.textContent = data.message || 'Assignment completed.';
+                    setTimeout(function() {
+                        var nextUrl = new URL(window.location.href);
+                        nextUrl.searchParams.set('entry_method', 'assign');
+                        window.location.href = nextUrl.toString();
+                    }, 900);
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.style.background = '#f8d7da';
+                    feedback.style.border = '1px solid #f5c6cb';
+                    feedback.style.color = '#721c24';
+                    feedback.textContent = data.message || 'Assignment failed.';
+                }
+            })
+            .catch(function() {
+                if (!feedback) return;
+                feedback.style.display = 'block';
+                feedback.style.background = '#f8d7da';
+                feedback.style.border = '1px solid #f5c6cb';
+                feedback.style.color = '#721c24';
+                feedback.textContent = 'Assignment failed due to a network or server error.';
+            });
+        });
+
+        updateAssignState();
     });
 
     // ========== MW Capacity Tracking ==========
