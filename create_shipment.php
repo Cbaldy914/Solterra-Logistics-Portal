@@ -709,6 +709,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $types        = str_repeat('i', count($palletIds));
         $stmtFetchPallets = $conn->prepare("
             SELECT ip.id, ip.wattage, ip.quantity, ip.manufacturer_location_id, ip.assigned_project_id,
+                   ip.status, ip.arrival_date,
                    COALESCE(ip.manufacturer, 
                        CASE 
                            WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
@@ -732,6 +733,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             $allPallets[] = $pallet;
         }
         $stmtFetchPallets->close();
+
+        $statusesRequiringPriorArrival = ['In Warehouse', 'Delivered to Project'];
+        $latestPriorArrivalDate = null;
+        $missingPriorArrivalPalletIds = [];
+        foreach ($allPallets as $pallet) {
+            $palletStatus = trim((string)($pallet['status'] ?? ''));
+            if (!in_array($palletStatus, $statusesRequiringPriorArrival, true)) {
+                continue;
+            }
+
+            $arrivalDateRaw = trim((string)($pallet['arrival_date'] ?? ''));
+            if ($arrivalDateRaw === '' || $arrivalDateRaw === '0000-00-00' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $arrivalDateRaw)) {
+                $missingPriorArrivalPalletIds[] = (int)($pallet['id'] ?? 0);
+                continue;
+            }
+
+            if ($latestPriorArrivalDate === null || $arrivalDateRaw > $latestPriorArrivalDate) {
+                $latestPriorArrivalDate = $arrivalDateRaw;
+            }
+        }
+
+        if (!empty($missingPriorArrivalPalletIds)) {
+            $missingPriorArrivalPalletIds = array_values(array_filter(array_unique($missingPriorArrivalPalletIds)));
+            throw new Exception('Selected pallets are missing prior arrival dates: ' . implode(', ', $missingPriorArrivalPalletIds));
+        }
+
+        if ($latestPriorArrivalDate !== null && $departureDate < $latestPriorArrivalDate) {
+            throw new Exception('Departure date cannot be earlier than the latest prior arrival date (' . $latestPriorArrivalDate . ') for selected pallets.');
+        }
 
         // Split into groups if multi-shipment
         $palletGroups = [];
@@ -2020,6 +2050,32 @@ if (!empty($bolCompletionMessage)) {
             padding: 10px 12px;
             border-bottom: 1px solid #ddd;
         }
+        .warehouse-cell {
+            min-width: 170px;
+            white-space: nowrap;
+        }
+        .warehouse-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(72,140,154,0.35);
+            background: linear-gradient(135deg, #eef8fb 0%, #d9edf2 100%);
+            color: #2f5f6b;
+            font-size: 0.82em;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .warehouse-pill:hover {
+            background: linear-gradient(135deg, #dff1f6 0%, #c9e5ec 100%);
+            color: #274f59;
+        }
+        .warehouse-pill.empty {
+            border-color: rgba(148,163,184,0.35);
+            background: #f8fafc;
+            color: #64748b;
+        }
         tr:nth-child(even) {
             background-color: #f8f9fa;
         }
@@ -2104,6 +2160,42 @@ if (!empty($bolCompletionMessage)) {
         }
         .shipment-details-modal-content form {
             padding: 36px;
+        }
+        .previous-arrival-card {
+            margin: -6px 0 18px 0;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(72,140,154,0.25);
+            background: linear-gradient(135deg, #ecf8fb 0%, #f5fbfd 100%);
+            color: #2f4c57;
+        }
+        .previous-arrival-label {
+            margin: 0 0 4px 0;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: #3a6e7f;
+        }
+        .previous-arrival-value {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 700;
+            color: #1f3f49;
+        }
+        .previous-arrival-meta {
+            margin-top: 5px;
+            font-size: 0.82rem;
+            color: #4e6b76;
+        }
+        .previous-arrival-card.warning {
+            border-color: rgba(234,179,8,0.45);
+            background: linear-gradient(135deg, #fff8dd 0%, #fffbee 100%);
+            color: #7c5e10;
+        }
+        .previous-arrival-card.warning .previous-arrival-label,
+        .previous-arrival-card.warning .previous-arrival-value {
+            color: #7c5e10;
         }
         .form-row {
             display: flex;
@@ -2652,6 +2744,7 @@ if (!empty($bolCompletionMessage)) {
                                     <th>Project</th>
                                     <th>Pallet ID</th>
                                     <th>Manufacturer</th>
+                                    <th>Warehouse</th>
                                     <th>Wattage</th>
                                     <th>Quantity</th>
                                     <th>Status</th>
@@ -2661,7 +2754,7 @@ if (!empty($bolCompletionMessage)) {
                             </thead>
                             <tbody id="palletsTableBody">
                                 <tr>
-                                    <td colspan="<?php echo $can_manage_shipments ? 9 : 8; ?>" style="text-align: center; padding: 40px;">
+                                    <td colspan="<?php echo $can_manage_shipments ? 10 : 9; ?>" style="text-align: center; padding: 40px;">
                                         <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
                                         <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
                                     </td>
@@ -2719,6 +2812,11 @@ if (!empty($bolCompletionMessage)) {
                             <label for="est_arrival_date">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                         </div>
+                    </div>
+                    <div id="previousArrivalCardSingle" class="previous-arrival-card" role="status" aria-live="polite">
+                        <p class="previous-arrival-label">Previous Arrival Checkpoint</p>
+                        <p class="previous-arrival-value" id="previousArrivalValueSingle">Select pallets to load arrival guard</p>
+                        <div class="previous-arrival-meta" id="previousArrivalMetaSingle"></div>
                     </div>
                     <div class="form-row" id="domestic-cost-fields">
                         <div>
@@ -2832,6 +2930,11 @@ if (!empty($bolCompletionMessage)) {
                             <label for="est_arrival_date_multi">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date_multi" name="est_arrival_date_multi" required>
                         </div>
+                    </div>
+                    <div id="previousArrivalCardMulti" class="previous-arrival-card" role="status" aria-live="polite">
+                        <p class="previous-arrival-label">Previous Arrival Checkpoint</p>
+                        <p class="previous-arrival-value" id="previousArrivalValueMulti">Select pallets to load arrival guard</p>
+                        <div class="previous-arrival-meta" id="previousArrivalMetaMulti"></div>
                     </div>
                     <div class="form-row">
                         <div>
@@ -2995,7 +3098,7 @@ if (!empty($bolCompletionMessage)) {
     const projectIdFromUrl = <?php echo (int)$project_id_from_url; ?>;
     const canManageShipments = <?php echo $can_manage_shipments ? 'true' : 'false'; ?>;
     const isStandardUser = <?php echo $is_standard_user ? 'true' : 'false'; ?>;
-    const tableColumnCount = canManageShipments ? 9 : 8;
+    const tableColumnCount = canManageShipments ? 10 : 9;
     // Pallets are now loaded via AJAX
     let palletsData = [];
     let currentStatusCounts = {};
@@ -3230,6 +3333,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial state
     updateOpenShipModalButtonState();
     updateSelectedCount();
+    updatePreviousArrivalDisplay();
     
     // Initialize pagination
     initializePagination();
@@ -3278,7 +3382,7 @@ function initializeExportCsv() {
         if (!table) return;
         const rows = Array.from(table.querySelectorAll('tbody tr'));
         const csvData = [];
-        const headers = ["id", "identifier", "identifier_source", "solterra_identifier", "manufacturer_pallet_id", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
+        const headers = ["id", "identifier", "identifier_source", "solterra_identifier", "manufacturer_pallet_id", "wattage", "quantity", "status", "Project", "Warehouse", "Associated Deliveries"];
         csvData.push(headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(','));
         rows.forEach(row => {
             if (row.style.display === 'none') return;
@@ -3288,7 +3392,7 @@ function initializeExportCsv() {
             if (!id) return;
             const pallet = palletsMap.get(Number(id)) || {};
             const colOffset = canManageShipments ? 1 : 0;
-            const deliveryCellIdx = colOffset + 6;
+            const deliveryCellIdx = colOffset + 7;
             headers.forEach(h => {
                 let val = '';
                 if (h === 'id') {
@@ -3310,6 +3414,8 @@ function initializeExportCsv() {
                     val = String(pallet.status || '');
                 } else if (h === 'Project') {
                     val = String(pallet.display_project_name || 'Unassigned');
+                } else if (h === 'Warehouse') {
+                    val = String(pallet.current_warehouse_name || '');
                 } else if (h === 'Associated Deliveries') {
                     val = (cells[deliveryCellIdx]?.textContent || '').trim();
                 }
@@ -3505,6 +3611,16 @@ function renderPalletsTable(pallets) {
             manufacturerName = 'Meyer Burger';
         }
 
+        let warehouseHtml = '<span class="warehouse-pill empty">Not in warehouse</span>';
+        if (pallet.current_warehouse_id && pallet.current_warehouse_name) {
+            const warehouseUrl = isStandardUser
+                ? `warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}&from=create_shipment`
+                : `manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}`;
+            warehouseHtml = `<a class="warehouse-pill" href="${warehouseUrl}"><i class="fas fa-warehouse"></i>${escapeHtml(pallet.current_warehouse_name)}</a>`;
+        } else if (status === 'In Warehouse' || status === 'In Transit to Warehouse') {
+            warehouseHtml = '<span class="warehouse-pill empty">Unknown warehouse</span>';
+        }
+
         let deliveriesHtml = 'No deliveries';
         const deliveryInfo = pallet.delivery_info || '';
         if (deliveryInfo) {
@@ -3573,6 +3689,7 @@ function renderPalletsTable(pallets) {
                     <div>${identifierBadge}</div>
                 </td>
                 <td>${escapeHtml(manufacturerName || 'N/A')}</td>
+                <td class="warehouse-cell">${warehouseHtml}</td>
                 <td>${escapeHtml(pallet.wattage || '')}</td>
                 <td>${Number(pallet.quantity || 0).toLocaleString()}</td>
                 <td>${statusHtml}</td>
@@ -3769,6 +3886,7 @@ function openShipModal() {
     // Initialize multi-shipment defaults and BOL fields when modal opens
     try { setDefaultPalletsPerTruckFromSelection(); } catch(e) {}
     updateMultiShipSummary();
+    updatePreviousArrivalDisplay();
 }
 function closeShipModal() {
     if (!shipModal) return;
@@ -3939,6 +4057,165 @@ function getStateAbbreviation(stateName) {
     
     // Return abbreviation if found, otherwise return original (in case it's already abbreviated)
     return stateMap[stateName] || stateName;
+}
+
+function normalizeIsoDate(dateValue) {
+    const raw = String(dateValue || '').trim();
+    if (!raw || raw === '0000-00-00') {
+        return '';
+    }
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
+}
+
+function formatIsoDateForDisplay(dateValue) {
+    const normalized = normalizeIsoDate(dateValue);
+    if (!normalized) {
+        return 'N/A';
+    }
+    const [year, month, day] = normalized.split('-').map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (Number.isNaN(parsed.getTime())) {
+        return normalized;
+    }
+    return parsed.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC'
+    });
+}
+
+function computePreviousArrivalConstraint() {
+    const selectedPallets = getSelectedPallets();
+    const statusesNeedingArrival = new Set(['In Warehouse', 'Delivered to Project']);
+    const arrivalDates = [];
+    let missingArrivalCount = 0;
+
+    selectedPallets.forEach((pallet) => {
+        const status = String(pallet.status || '');
+        if (!statusesNeedingArrival.has(status)) {
+            return;
+        }
+        const arrivalDate = normalizeIsoDate(pallet.arrival_date);
+        if (arrivalDate) {
+            arrivalDates.push(arrivalDate);
+        } else {
+            missingArrivalCount++;
+        }
+    });
+
+    if (arrivalDates.length === 0) {
+        return {
+            hasConstraint: false,
+            selectedCount: selectedPallets.length,
+            constrainedCount: 0,
+            missingArrivalCount: missingArrivalCount,
+            earliestDate: '',
+            latestDate: ''
+        };
+    }
+
+    arrivalDates.sort();
+    return {
+        hasConstraint: true,
+        selectedCount: selectedPallets.length,
+        constrainedCount: arrivalDates.length,
+        missingArrivalCount: missingArrivalCount,
+        earliestDate: arrivalDates[0],
+        latestDate: arrivalDates[arrivalDates.length - 1]
+    };
+}
+
+function applyPreviousArrivalCard(cardEl, valueEl, metaEl, valueText, metaText, isWarning) {
+    if (!cardEl || !valueEl || !metaEl) {
+        return;
+    }
+    valueEl.textContent = valueText;
+    metaEl.textContent = metaText;
+    cardEl.classList.toggle('warning', Boolean(isWarning));
+}
+
+function updatePreviousArrivalDisplay() {
+    const constraint = computePreviousArrivalConstraint();
+
+    const singleCard = document.getElementById('previousArrivalCardSingle');
+    const singleValue = document.getElementById('previousArrivalValueSingle');
+    const singleMeta = document.getElementById('previousArrivalMetaSingle');
+    const multiCard = document.getElementById('previousArrivalCardMulti');
+    const multiValue = document.getElementById('previousArrivalValueMulti');
+    const multiMeta = document.getElementById('previousArrivalMetaMulti');
+
+    const departureSingle = document.getElementById('departure_date');
+    const departureMulti = document.getElementById('departure_date_multi');
+    const departureInputs = [departureSingle, departureMulti].filter(Boolean);
+
+    if (constraint.hasConstraint) {
+        departureInputs.forEach((input) => {
+            input.min = constraint.latestDate;
+        });
+
+        const valueText = `Latest prior arrival: ${formatIsoDateForDisplay(constraint.latestDate)}`;
+        let metaText = `Departure must be on/after ${formatIsoDateForDisplay(constraint.latestDate)} (${constraint.constrainedCount} pallet${constraint.constrainedCount === 1 ? '' : 's'}).`;
+        let warning = false;
+        if (constraint.missingArrivalCount > 0) {
+            warning = true;
+            metaText += ` ${constraint.missingArrivalCount} selected pallet${constraint.missingArrivalCount === 1 ? '' : 's'} missing arrival date.`;
+        }
+
+        applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, warning);
+        applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, warning);
+        return constraint;
+    }
+
+    departureInputs.forEach((input) => {
+        input.removeAttribute('min');
+    });
+
+    if (constraint.selectedCount === 0) {
+        const valueText = 'Select pallets to load arrival guard';
+        const metaText = 'Choose pallets first to validate departure against prior arrival.';
+        applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, false);
+        applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, false);
+        return constraint;
+    }
+
+    if (constraint.missingArrivalCount > 0) {
+        const valueText = 'Prior arrival date missing';
+        const metaText = `Some selected pallets are missing arrival dates. Please verify pallet history before shipping.`;
+        applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, true);
+        applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, true);
+        return constraint;
+    }
+
+    const valueText = 'No prior-arrival constraint';
+    const metaText = 'Current selection originates at manufacturer or has no recorded prior arrival requirement.';
+    applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, false);
+    applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, false);
+    return constraint;
+}
+
+function validateDepartureDateAgainstPreviousArrival(departureDate) {
+    const normalizedDeparture = normalizeIsoDate(departureDate);
+    if (!normalizedDeparture) {
+        return true;
+    }
+
+    const constraint = updatePreviousArrivalDisplay();
+    if (constraint.missingArrivalCount > 0) {
+        alert('Some selected pallets are missing prior arrival dates. Please update pallet arrival history before creating this shipment.');
+        return false;
+    }
+    if (!constraint.hasConstraint) {
+        return true;
+    }
+
+    if (normalizedDeparture < constraint.latestDate) {
+        const requiredDate = formatIsoDateForDisplay(constraint.latestDate);
+        alert(`Departure Date cannot be earlier than ${requiredDate}, the latest prior arrival date for selected pallets.`);
+        return false;
+    }
+
+    return true;
 }
 
 // ----------------- ORIGIN DETERMINATION FUNCTIONS -----------------
@@ -4131,6 +4408,8 @@ function updateOriginDisplay() {
         // Hide overseas fields when origin is invalid
         hideOverseasFields();
     }
+
+    updatePreviousArrivalDisplay();
 }
 
 // ----------------- OVERSEAS SHIPMENT DETECTION -----------------
@@ -4890,6 +5169,13 @@ if (confirmShipmentBtn) {
             alert('Est. Arrival Date is required.');
             return;
         }
+        if (arrival < departure) {
+            alert('Est. Arrival Date cannot be before Departure Date.');
+            return;
+        }
+        if (!validateDepartureDateAgainstPreviousArrival(departure)) {
+            return;
+        }
 
         // Check if origin and destination are the same
         if (originType === destinationType && originId === destinationId) {
@@ -5004,6 +5290,13 @@ if (confirmMultiShipmentBtn) {
         }
         if (!arrival || arrival.trim() === '') {
             alert('Est. Arrival Date is required.');
+            return;
+        }
+        if (arrival < departure) {
+            alert('Est. Arrival Date cannot be before Departure Date.');
+            return;
+        }
+        if (!validateDepartureDateAgainstPreviousArrival(departure)) {
             return;
         }
 
