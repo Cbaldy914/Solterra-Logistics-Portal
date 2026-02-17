@@ -35,6 +35,7 @@ $search = isset($_GET['search']) ? trim((string)$_GET['search']) : '';
 $projectFilter = isset($_GET['project']) ? trim((string)$_GET['project']) : '';
 $wattageFilter = isset($_GET['wattage']) ? trim((string)$_GET['wattage']) : '';
 $statusFilter = isset($_GET['status']) ? trim((string)$_GET['status']) : '';
+$warehouseIdFilter = isset($_GET['warehouse_id']) ? max(0, (int)$_GET['warehouse_id']) : 0;
 $projectIdFromUrl = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 
 $account_id_for_user = null;
@@ -83,6 +84,16 @@ try {
         ip.quantity,
         ip.status,
         ip.arrival_date,
+        COALESCE(
+            CASE
+                WHEN ip.status = 'In Warehouse' THEN MAX(d.warehouse_arrival_date)
+                WHEN ip.status = 'Delivered to Project' THEN MAX(d.actual_delivery_date)
+                ELSE NULL
+            END,
+            ip.arrival_date,
+            MAX(d.warehouse_arrival_date),
+            MAX(d.actual_delivery_date)
+        ) AS prior_arrival_date,
         ip.unassigned_module_item_id,
         ip.current_warehouse_id,
         ip.current_project_id,
@@ -178,6 +189,11 @@ try {
         $whereConditions[] = 'ip.status = ?';
         $params[] = $statusFilter;
         $types .= 's';
+    }
+    if ($warehouseIdFilter > 0) {
+        $whereConditions[] = 'ip.current_warehouse_id = ?';
+        $params[] = $warehouseIdFilter;
+        $types .= 'i';
     }
 
     if ($search !== '') {
@@ -351,6 +367,74 @@ try {
         }
 
         $filterOptions['statuses'] = $allowed_statuses;
+
+        $warehouseSql = "SELECT DISTINCT w.id, w.name
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+            WHERE ip.status = 'In Warehouse' AND ip.current_warehouse_id IS NOT NULL";
+
+        $warehouseParams = [];
+        $warehouseTypes = '';
+        if (!$is_global_admin && $account_id_for_user) {
+            $warehouseSql .= ' AND (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)';
+            $warehouseParams[] = $account_id_for_user;
+            $warehouseParams[] = $account_id_for_user;
+            $warehouseParams[] = $account_id_for_user;
+            $warehouseTypes .= 'iii';
+        }
+        if ($projectIdFromUrl > 0) {
+            $warehouseSql .= ' AND (p_current.id = ? OR p_assigned.id = ?)';
+            $warehouseParams[] = $projectIdFromUrl;
+            $warehouseParams[] = $projectIdFromUrl;
+            $warehouseTypes .= 'ii';
+        }
+        if ($projectFilter !== '') {
+            if ($projectFilter === 'Unassigned') {
+                $warehouseSql .= " AND COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') = 'Unassigned'";
+            } else {
+                $warehouseSql .= " AND COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') = ?";
+                $warehouseParams[] = $projectFilter;
+                $warehouseTypes .= 's';
+            }
+        }
+        if ($wattageFilter !== '') {
+            $warehouseSql .= ' AND ip.wattage = ?';
+            $warehouseParams[] = $wattageFilter;
+            $warehouseTypes .= 's';
+        }
+        if ($search !== '') {
+            $searchParamWh = "%{$search}%";
+            $warehouseSql .= " AND (ip.pallet_identifier LIKE ? OR ip.manufacturer_pallet_id LIKE ? OR COALESCE(p_current.project_name, p_assigned.project_name, '') LIKE ? OR COALESCE(w.name, '') LIKE ?)";
+            $warehouseParams[] = $searchParamWh;
+            $warehouseParams[] = $searchParamWh;
+            $warehouseParams[] = $searchParamWh;
+            $warehouseParams[] = $searchParamWh;
+            $warehouseTypes .= 'ssss';
+        }
+        $warehouseSql .= ' ORDER BY w.name';
+
+        $warehouseStmt = $conn->prepare($warehouseSql);
+        if ($warehouseStmt) {
+            if ($warehouseTypes !== '') {
+                $warehouseStmt->bind_param($warehouseTypes, ...$warehouseParams);
+            }
+            $warehouseStmt->execute();
+            $warehouseResult = $warehouseStmt->get_result();
+            $filterOptions['warehouses'] = [];
+            while ($warehouseRow = $warehouseResult->fetch_assoc()) {
+                $filterOptions['warehouses'][] = [
+                    'id' => (int)$warehouseRow['id'],
+                    'name' => $warehouseRow['name']
+                ];
+            }
+            $warehouseStmt->close();
+        } else {
+            $filterOptions['warehouses'] = [];
+        }
     }
 
     echo json_encode([

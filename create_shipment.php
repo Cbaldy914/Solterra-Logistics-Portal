@@ -710,6 +710,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
         $stmtFetchPallets = $conn->prepare("
             SELECT ip.id, ip.wattage, ip.quantity, ip.manufacturer_location_id, ip.assigned_project_id,
                    ip.status, ip.arrival_date,
+                   COALESCE(
+                       CASE
+                           WHEN ip.status = 'In Warehouse' THEN MAX(d.warehouse_arrival_date)
+                           WHEN ip.status = 'Delivered to Project' THEN MAX(d.actual_delivery_date)
+                           ELSE NULL
+                       END,
+                       ip.arrival_date,
+                       MAX(d.warehouse_arrival_date),
+                       MAX(d.actual_delivery_date)
+                   ) AS prior_arrival_date,
                    COALESCE(ip.manufacturer, 
                        CASE 
                            WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
@@ -722,7 +732,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
+            LEFT JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+            LEFT JOIN deliveries d ON d.id = dp.delivery_id
             WHERE ip.id IN ($placeholders)
+            GROUP BY
+                ip.id, ip.wattage, ip.quantity, ip.manufacturer_location_id, ip.assigned_project_id,
+                ip.status, ip.arrival_date, ip.manufacturer, m.vendor_name, ml.country
         ");
         if (!$stmtFetchPallets) throw new Exception("Failed to prepare pallet fetch: " . $conn->error);
         $stmtFetchPallets->bind_param($types, ...$palletIds);
@@ -743,7 +758,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 continue;
             }
 
-            $arrivalDateRaw = trim((string)($pallet['arrival_date'] ?? ''));
+            $arrivalDateRawFull = trim((string)($pallet['prior_arrival_date'] ?? $pallet['arrival_date'] ?? ''));
+            $arrivalDateRaw = substr($arrivalDateRawFull, 0, 10);
             if ($arrivalDateRaw === '' || $arrivalDateRaw === '0000-00-00' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $arrivalDateRaw)) {
                 $missingPriorArrivalPalletIds[] = (int)($pallet['id'] ?? 0);
                 continue;
@@ -2050,10 +2066,6 @@ if (!empty($bolCompletionMessage)) {
             padding: 10px 12px;
             border-bottom: 1px solid #ddd;
         }
-        .warehouse-cell {
-            min-width: 170px;
-            white-space: nowrap;
-        }
         .warehouse-pill {
             display: inline-flex;
             align-items: center;
@@ -2629,6 +2641,12 @@ if (!empty($bolCompletionMessage)) {
                                 <?php $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); foreach ($available_statuses as $s) { if ($s === 'Allocated to Project') { continue; } echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>'; } ?>
                             </select>
                         </div>
+                        <div class="filter-group" id="warehouseSubFilterGroup" style="display:none;">
+                            <label class="filter-label" for="cs_warehouse">Warehouse</label>
+                            <select id="cs_warehouse" class="filter-select">
+                                <option value="">All Warehouses</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
@@ -2744,7 +2762,6 @@ if (!empty($bolCompletionMessage)) {
                                     <th>Project</th>
                                     <th>Pallet ID</th>
                                     <th>Manufacturer</th>
-                                    <th>Warehouse</th>
                                     <th>Wattage</th>
                                     <th>Quantity</th>
                                     <th>Status</th>
@@ -2754,7 +2771,7 @@ if (!empty($bolCompletionMessage)) {
                             </thead>
                             <tbody id="palletsTableBody">
                                 <tr>
-                                    <td colspan="<?php echo $can_manage_shipments ? 10 : 9; ?>" style="text-align: center; padding: 40px;">
+                                    <td colspan="<?php echo $can_manage_shipments ? 9 : 8; ?>" style="text-align: center; padding: 40px;">
                                         <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
                                         <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
                                     </td>
@@ -3098,7 +3115,7 @@ if (!empty($bolCompletionMessage)) {
     const projectIdFromUrl = <?php echo (int)$project_id_from_url; ?>;
     const canManageShipments = <?php echo $can_manage_shipments ? 'true' : 'false'; ?>;
     const isStandardUser = <?php echo $is_standard_user ? 'true' : 'false'; ?>;
-    const tableColumnCount = canManageShipments ? 10 : 9;
+    const tableColumnCount = canManageShipments ? 9 : 8;
     // Pallets are now loaded via AJAX
     let palletsData = [];
     let currentStatusCounts = {};
@@ -3334,6 +3351,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateOpenShipModalButtonState();
     updateSelectedCount();
     updatePreviousArrivalDisplay();
+    toggleWarehouseSubFilter();
     
     // Initialize pagination
     initializePagination();
@@ -3350,7 +3368,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('cs_search')?.addEventListener('keyup', function() { filterPallets(); saveFilters(); });
     document.getElementById('cs_project')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
     document.getElementById('cs_wattage')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
-    document.getElementById('cs_status')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
+    document.getElementById('cs_status')?.addEventListener('change', function() { toggleWarehouseSubFilter(); filterPallets(); saveFilters(); });
+    document.getElementById('cs_warehouse')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
     document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
 
     if (statusMixTrigger) {
@@ -3392,7 +3411,7 @@ function initializeExportCsv() {
             if (!id) return;
             const pallet = palletsMap.get(Number(id)) || {};
             const colOffset = canManageShipments ? 1 : 0;
-            const deliveryCellIdx = colOffset + 7;
+            const deliveryCellIdx = colOffset + 6;
             headers.forEach(h => {
                 let val = '';
                 if (h === 'id') {
@@ -3475,6 +3494,7 @@ async function loadPallets() {
     const projectFilter = document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || '';
     const wattageFilter = document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || '';
     const statusFilter = document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value || '';
+    const warehouseFilter = document.getElementById('cs_warehouse')?.value || '';
 
     const params = new URLSearchParams({
         page: currentPage,
@@ -3487,6 +3507,9 @@ async function loadPallets() {
 
     if (projectIdFromUrl > 0) {
         params.append('project_id', projectIdFromUrl);
+    }
+    if (statusFilter === 'In Warehouse' && warehouseFilter) {
+        params.append('warehouse_id', warehouseFilter);
     }
 
     try {
@@ -3611,7 +3634,7 @@ function renderPalletsTable(pallets) {
             manufacturerName = 'Meyer Burger';
         }
 
-        let warehouseHtml = '<span class="warehouse-pill empty">Not in warehouse</span>';
+        let warehouseHtml = '';
         if (pallet.current_warehouse_id && pallet.current_warehouse_name) {
             const warehouseUrl = isStandardUser
                 ? `warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}&from=create_shipment`
@@ -3620,6 +3643,9 @@ function renderPalletsTable(pallets) {
         } else if (status === 'In Warehouse' || status === 'In Transit to Warehouse') {
             warehouseHtml = '<span class="warehouse-pill empty">Unknown warehouse</span>';
         }
+        const statusCellHtml = warehouseHtml
+            ? `${statusHtml}<div style="margin-top:6px;">${warehouseHtml}</div>`
+            : statusHtml;
 
         let deliveriesHtml = 'No deliveries';
         const deliveryInfo = pallet.delivery_info || '';
@@ -3689,10 +3715,9 @@ function renderPalletsTable(pallets) {
                     <div>${identifierBadge}</div>
                 </td>
                 <td>${escapeHtml(manufacturerName || 'N/A')}</td>
-                <td class="warehouse-cell">${warehouseHtml}</td>
                 <td>${escapeHtml(pallet.wattage || '')}</td>
                 <td>${Number(pallet.quantity || 0).toLocaleString()}</td>
-                <td>${statusHtml}</td>
+                <td>${statusCellHtml}</td>
                 <td>${deliveriesHtml}</td>
                 <td>${actionsHtml}</td>
             </tr>
@@ -3725,6 +3750,19 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function toggleWarehouseSubFilter() {
+    const statusSelect = document.getElementById('cs_status') || document.getElementById('statusFilter');
+    const warehouseGroup = document.getElementById('warehouseSubFilterGroup');
+    const warehouseSelect = document.getElementById('cs_warehouse');
+    if (!statusSelect || !warehouseGroup) return;
+
+    const shouldShow = statusSelect.value === 'In Warehouse';
+    warehouseGroup.style.display = shouldShow ? '' : 'none';
+    if (!shouldShow && warehouseSelect) {
+        warehouseSelect.value = '';
+    }
 }
 
 function populateFilterDropdowns(options) {
@@ -3762,6 +3800,25 @@ function populateFilterDropdowns(options) {
         });
         statusSelect.value = currentVal;
     }
+
+    // Populate warehouse sub-filter (shown when status=In Warehouse)
+    const warehouseSelect = document.getElementById('cs_warehouse');
+    if (warehouseSelect && options.warehouses) {
+        const currentVal = warehouseSelect.value || warehouseSelect.dataset.persistedValue || '';
+        warehouseSelect.innerHTML = '<option value="">All Warehouses</option>';
+        options.warehouses.forEach((wh) => {
+            const whId = Number(wh.id || 0);
+            const whName = String(wh.name || '').trim();
+            if (whId <= 0 || !whName) return;
+            warehouseSelect.innerHTML += `<option value="${whId}">${escapeHtml(whName)}</option>`;
+        });
+        if (currentVal) {
+            warehouseSelect.value = currentVal;
+        }
+        delete warehouseSelect.dataset.persistedValue;
+    }
+
+    toggleWarehouseSubFilter();
 }
 
 function updatePaginationInfo() {
@@ -3854,10 +3911,11 @@ function applyFilterBar() {
 }
 function clearFilterBar() {
     // Clear both new and legacy filter inputs
-    const newIds = ['cs_search','cs_project','cs_wattage','cs_status'];
+    const newIds = ['cs_search','cs_project','cs_wattage','cs_status','cs_warehouse'];
     const legacyIds = ['palletSearch','projectFilter','wattageFilter','statusFilter'];
     newIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     legacyIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    toggleWarehouseSubFilter();
     filterPallets();
     saveFilters();
 }
@@ -4064,7 +4122,8 @@ function normalizeIsoDate(dateValue) {
     if (!raw || raw === '0000-00-00') {
         return '';
     }
-    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : '';
 }
 
 function formatIsoDateForDisplay(dateValue) {
@@ -4096,7 +4155,7 @@ function computePreviousArrivalConstraint() {
         if (!statusesNeedingArrival.has(status)) {
             return;
         }
-        const arrivalDate = normalizeIsoDate(pallet.arrival_date);
+        const arrivalDate = normalizeIsoDate(pallet.prior_arrival_date || pallet.arrival_date);
         if (arrivalDate) {
             arrivalDates.push(arrivalDate);
         } else {
@@ -5644,6 +5703,7 @@ function saveFilters() {
     localStorage.setItem('createShipment_projectFilter', document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || '');
     localStorage.setItem('createShipment_wattageFilter', document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || '');
     localStorage.setItem('createShipment_statusFilter', document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value || '');
+    localStorage.setItem('createShipment_warehouseFilter', document.getElementById('cs_warehouse')?.value || '');
     localStorage.setItem('createShipment_itemsPerPage', document.getElementById('itemsPerPage')?.value || '100');
     localStorage.setItem('createShipment_currentPage', currentPage);
 }
@@ -5664,6 +5724,9 @@ function loadPersistedFilters() {
         document.getElementById('cs_search').value = '';
         document.getElementById('wattageFilter').value = '';
         document.getElementById('cs_wattage').value = '';
+        if (document.getElementById('cs_warehouse')) {
+            document.getElementById('cs_warehouse').value = '';
+        }
         document.getElementById('itemsPerPage').value = '100'; // Default to 100
         itemsPerPage = 100;
         currentPage = 1;
@@ -5678,6 +5741,7 @@ function loadPersistedFilters() {
             document.getElementById('statusFilter').value = '';
             document.getElementById('cs_status').value = '';
         }
+        toggleWarehouseSubFilter();
         
         // Project filter should already be correctly set by PHP via the selected attribute
         // No need to manipulate it further
@@ -5687,6 +5751,7 @@ function loadPersistedFilters() {
         const project = localStorage.getItem('createShipment_projectFilter');
         const wattage = localStorage.getItem('createShipment_wattageFilter');
         const status = localStorage.getItem('createShipment_statusFilter');
+        const warehouse = localStorage.getItem('createShipment_warehouseFilter');
         const perPage = localStorage.getItem('createShipment_itemsPerPage');
         const page = localStorage.getItem('createShipment_currentPage');
         
@@ -5705,6 +5770,11 @@ function loadPersistedFilters() {
         if (status) {
             document.getElementById('statusFilter').value = status;
             document.getElementById('cs_status').value = status;
+        }
+        toggleWarehouseSubFilter();
+        if (warehouse && document.getElementById('cs_warehouse')) {
+            document.getElementById('cs_warehouse').dataset.persistedValue = warehouse;
+            document.getElementById('cs_warehouse').value = warehouse;
         }
         
         if (perPage) {

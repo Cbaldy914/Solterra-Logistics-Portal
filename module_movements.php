@@ -76,6 +76,7 @@ $available_projects = [];
 $project_data = null;
 $movement_data = [];
 $detailed_breakdown = [];
+$on_water_containers = [];
 $errorMessage = '';
 
 // If batch_id is provided but project_id is not, try to get project_id from the batch
@@ -503,6 +504,95 @@ try {
                 $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $total_quantity;
             }
         }
+
+        // Fetch active on-water containers for this project (read-only tracking)
+        $stmtOnWater = $conn->prepare("
+            SELECT
+                d.container_number,
+                MAX(d.anticipated_delivery_date) AS eta_date,
+                MIN(COALESCE(d.left_warehouse_date, DATE(d.created_at))) AS departed_date,
+                MAX(d.status_of_delivery) AS status_of_delivery,
+                MAX(COALESCE(w.name, 'Unknown Port')) AS destination_port_name,
+                MAX(COALESCE(w.street_address, '')) AS destination_port_street,
+                MAX(COALESCE(w.city, '')) AS destination_port_city,
+                MAX(COALESCE(w.state, '')) AS destination_port_state,
+                MAX(COALESCE(w.zip_code, '')) AS destination_port_zip,
+                MAX(COALESCE(
+                    ml.location_name,
+                    mfg.name,
+                    CASE
+                        WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                        ELSE m.vendor_name
+                    END,
+                    'Unknown Origin'
+                )) AS origin_name,
+                MAX(COALESCE(ml.street_address, mfg.street_address, '')) AS origin_street,
+                MAX(COALESCE(ml.city, mfg.city, '')) AS origin_city,
+                MAX(COALESCE(ml.state, mfg.state, '')) AS origin_state,
+                MAX(COALESCE(ml.zip_code, mfg.zip_code, '')) AS origin_zip,
+                COUNT(DISTINCT dp.inventory_pallet_id) AS pallet_count,
+                COALESCE(SUM(COALESCE(ip.quantity, 0)), 0) AS module_count
+            FROM deliveries d
+            LEFT JOIN delivery_pallets dp ON dp.delivery_id = d.id
+            LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
+            LEFT JOIN manufacturers mfg ON ml.manufacturer_id = mfg.id
+            LEFT JOIN warehouses w ON d.warehouse_id = w.id
+            WHERE d.project_id = ?
+              AND d.status_of_delivery = 'On Water'
+              AND d.container_number IS NOT NULL
+              AND TRIM(d.container_number) <> ''
+            GROUP BY d.container_number
+            ORDER BY eta_date ASC, d.container_number ASC
+        ");
+        if ($stmtOnWater) {
+            $stmtOnWater->bind_param("i", $selected_project_id);
+            $stmtOnWater->execute();
+            $resultOnWater = $stmtOnWater->get_result();
+            while ($container = $resultOnWater->fetch_assoc()) {
+                $origin_address_parts = array_filter([
+                    $container['origin_street'] ?? '',
+                    $container['origin_city'] ?? '',
+                    $container['origin_state'] ?? '',
+                    $container['origin_zip'] ?? ''
+                ]);
+                $destination_address_parts = array_filter([
+                    $container['destination_port_street'] ?? '',
+                    $container['destination_port_city'] ?? '',
+                    $container['destination_port_state'] ?? '',
+                    $container['destination_port_zip'] ?? ''
+                ]);
+
+                $days_to_eta = null;
+                $eta_raw = trim((string)($container['eta_date'] ?? ''));
+                if ($eta_raw !== '' && $eta_raw !== '0000-00-00') {
+                    try {
+                        $today = new DateTime('today');
+                        $eta_obj = new DateTime($eta_raw);
+                        $days_to_eta = (int)$today->diff($eta_obj)->format('%r%a');
+                    } catch (Exception $ignored) {
+                        $days_to_eta = null;
+                    }
+                }
+
+                $on_water_containers[] = [
+                    'container_number' => $container['container_number'],
+                    'status_of_delivery' => $container['status_of_delivery'],
+                    'eta_date' => $container['eta_date'],
+                    'departed_date' => $container['departed_date'],
+                    'days_to_eta' => $days_to_eta,
+                    'destination_port_name' => $container['destination_port_name'],
+                    'destination_port_full_address' => implode(', ', $destination_address_parts),
+                    'origin_name' => $container['origin_name'],
+                    'origin_full_address' => implode(', ', $origin_address_parts),
+                    'pallet_count' => (int)($container['pallet_count'] ?? 0),
+                    'module_count' => (int)($container['module_count'] ?? 0)
+                ];
+            }
+            $stmtOnWater->close();
+        }
     }
 
 } catch (Exception $e) {
@@ -673,6 +763,15 @@ $conn->close();
         .manufacturer-marker { background-color: #3498db; }
         .warehouse-marker { background-color: #f39c12; }
         .project-marker { background-color: #27ae60; }
+        .container-marker {
+            background: linear-gradient(135deg, #1d4ed8 0%, #0ea5e9 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+        }
         
         .movement-summary {
             background-color: #f9f9f9;
@@ -861,6 +960,13 @@ $conn->close();
                         <div class="legend-marker project-marker"></div>
                         <span>Project Site (Final Destination)</span>
                     </div>
+                    <div class="legend-item">
+                        <div class="legend-marker container-marker">⛴</div>
+                        <span>On Water Container (ETA-projected)</span>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 12px;">
+                        <a href="container_tracking.php<?php echo $selected_project_id ? '?project_id=' . (int)$selected_project_id : ''; ?>" style="color:#2563eb; text-decoration:none; font-weight:600;">View Container ETA Tracker</a>
+                    </div>
                     <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #eee; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2"><path d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5"/></svg>
                         <span>Click locations or routes for details</span>
@@ -1003,6 +1109,7 @@ $conn->close();
 const movementData = <?php echo json_encode($movement_data ?? []); ?>;
 const projectData = <?php echo json_encode($project_data ?? null); ?>;
 const detailedBreakdown = <?php echo json_encode($detailed_breakdown ?? []); ?>;
+const onWaterContainers = <?php echo json_encode($on_water_containers ?? []); ?>;
 const selectedProjectId = <?php echo json_encode($selected_project_id); ?>;
 
 let map;
@@ -1185,7 +1292,9 @@ function processMovementData() {
     });
 
     // After all geocoding is complete, fit map to bounds
-    Promise.all(geocodePromises).then(() => {
+    Promise.all(geocodePromises).then(async () => {
+        await createOnWaterContainerMarkers(geocoder, bounds);
+
         if (!bounds.isEmpty()) {
             map.fitBounds(bounds);
             
@@ -1220,6 +1329,142 @@ function geocodeAddress(geocoder, address) {
             }
         });
     });
+}
+
+function parseIsoDate(dateValue) {
+    const normalized = String(dateValue || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+    const date = new Date(`${normalized}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function daysUntil(dateValue) {
+    const target = parseIsoDate(dateValue);
+    if (!target) return null;
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const targetUtc = Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate());
+    return Math.ceil((targetUtc - todayUtc) / (1000 * 60 * 60 * 24));
+}
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function estimateContainerProgress(container) {
+    const eta = parseIsoDate(container.eta_date);
+    const departed = parseIsoDate(container.departed_date);
+    if (!eta) {
+        return 0.5;
+    }
+
+    if (departed && eta.getTime() > departed.getTime()) {
+        const now = Date.now();
+        const totalMs = eta.getTime() - departed.getTime();
+        const elapsedMs = now - departed.getTime();
+        return clamp(elapsedMs / totalMs, 0.08, 0.96);
+    }
+
+    const daysToEta = daysUntil(container.eta_date);
+    if (daysToEta === null) {
+        return 0.5;
+    }
+    if (daysToEta <= 0) {
+        return 0.96;
+    }
+    const assumedTransitDays = 45;
+    return clamp(1 - (Math.min(daysToEta, assumedTransitDays) / assumedTransitDays), 0.1, 0.9);
+}
+
+function interpolatePosition(origin, destination, progress) {
+    const lat = origin.lat() + (destination.lat() - origin.lat()) * progress;
+    const lng = origin.lng() + (destination.lng() - origin.lng()) * progress;
+    return new google.maps.LatLng(lat, lng);
+}
+
+function buildBoatMarkerIcon(iconSize = 36) {
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+            '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg">' +
+            '<defs><filter id="shadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/></filter></defs>' +
+            '<circle cx="22" cy="22" r="19" fill="url(#grad)" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
+            '<defs><linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1d4ed8"/><stop offset="100%" stop-color="#0ea5e9"/></linearGradient></defs>' +
+            '<text x="22" y="28" text-anchor="middle" fill="#FFFFFF" font-size="16" font-family="Arial">⛴</text>' +
+            '</svg>'
+        ),
+        scaledSize: new google.maps.Size(iconSize, iconSize),
+        anchor: new google.maps.Point(iconSize / 2, iconSize / 2)
+    };
+}
+
+async function createOnWaterContainerMarkers(geocoder, bounds) {
+    if (!Array.isArray(onWaterContainers) || onWaterContainers.length === 0) {
+        return;
+    }
+
+    const geocodeCache = new Map();
+    const resolveAddress = async (address) => {
+        const normalized = String(address || '').trim();
+        if (!normalized) return null;
+        if (geocodeCache.has(normalized)) {
+            return geocodeCache.get(normalized);
+        }
+        try {
+            const position = await geocodeAddress(geocoder, normalized);
+            geocodeCache.set(normalized, position);
+            return position;
+        } catch (error) {
+            console.warn('Failed to geocode container address:', normalized, error);
+            geocodeCache.set(normalized, null);
+            return null;
+        }
+    };
+
+    await Promise.all(onWaterContainers.map(async (container) => {
+        const originPosition = await resolveAddress(container.origin_full_address);
+        const destinationPosition = await resolveAddress(container.destination_port_full_address);
+        if (!originPosition || !destinationPosition) return;
+
+        const progress = estimateContainerProgress(container);
+        const markerPosition = interpolatePosition(originPosition, destinationPosition, progress);
+        bounds.extend(markerPosition);
+
+        const daysToEta = daysUntil(container.eta_date);
+        const etaText = container.eta_date || 'N/A';
+        const daysText = daysToEta === null
+            ? 'ETA unavailable'
+            : (daysToEta >= 0
+                ? `${daysToEta} day${daysToEta === 1 ? '' : 's'} to ETA`
+                : `${Math.abs(daysToEta)} day${Math.abs(daysToEta) === 1 ? '' : 's'} past ETA`);
+
+        const marker = new google.maps.Marker({
+            position: markerPosition,
+            map: map,
+            title: `Container ${container.container_number}`,
+            icon: buildBoatMarkerIcon(),
+            zIndex: 35
+        });
+
+        const infoContent = `
+            <div style="font-family:'Poppins',Arial,sans-serif; min-width:250px;">
+                <div style="background:linear-gradient(135deg,#1d4ed8 0%,#0ea5e9 100%); color:#fff; padding:10px 12px; border-radius:8px 8px 0 0; font-weight:600;">
+                    ⛴ Container ${container.container_number}
+                </div>
+                <div style="padding:10px 12px; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 8px 8px; background:#fff;">
+                    <div style="margin-bottom:6px;"><strong>Status:</strong> ${container.status_of_delivery || 'On Water'}</div>
+                    <div style="margin-bottom:6px;"><strong>ETA:</strong> ${etaText}</div>
+                    <div style="margin-bottom:6px;"><strong>Timing:</strong> ${daysText}</div>
+                    <div style="margin-bottom:6px;"><strong>Destination Port:</strong> ${container.destination_port_name || 'Unknown Port'}</div>
+                    <div style="margin-bottom:6px;"><strong>Origin:</strong> ${container.origin_name || 'Unknown Origin'}</div>
+                    <div style="margin-bottom:6px;"><strong>Pallets:</strong> ${(Number(container.pallet_count) || 0).toLocaleString()}</div>
+                    <div><strong>Modules:</strong> ${(Number(container.module_count) || 0).toLocaleString()}</div>
+                </div>
+            </div>
+        `;
+
+        const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+        marker.addListener('click', () => infoWindow.open(map, marker));
+    }));
 }
 
 function createMarker(location) {
