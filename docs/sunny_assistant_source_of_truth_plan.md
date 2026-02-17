@@ -366,3 +366,10 @@ Priority: Critical
 16. Session-bound conversation continuity:
     - conversation restore is now tied to a per-session nonce so logout/login starts a fresh chat
     - removed backend "reuse most recent conversation" fallback in `get-active` and stream initialization
+17. Cost-summary alignment hardening:
+    - `getProjectCostAnalysis` now includes batch-level PO execution milestone payments (delivery_id NULL) in `modules_paid_so_far`
+    - added per-event milestone paid fields (`modules_paid_po_execution`, `modules_paid_shipping`, `modules_paid_project_delivery`) for follow-up questions
+    - warehousing totals are now recalculated with portal helper logic (`calculate_project_warehousing_cost`) and used in total logistics
+    - tightened heuristic routing so generic "module cost" prompts are not misrouted to inventory valuation unless storage context is present
+18. customer_admin permissions hotfix:
+    - added `module_batch_milestones` to Sunny query-executor allowed tables to unblock cost-summary queries that join milestone metadata
