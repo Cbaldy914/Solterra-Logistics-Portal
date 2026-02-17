@@ -182,12 +182,13 @@ try {
 
     if ($search !== '') {
         $searchParam = "%{$search}%";
-        $whereConditions[] = "(ip.pallet_identifier LIKE ? OR ip.manufacturer_pallet_id LIKE ? OR ip.status LIKE ? OR COALESCE(p_current.project_name, p_assigned.project_name, '') LIKE ?)";
+        $whereConditions[] = "(ip.pallet_identifier LIKE ? OR ip.manufacturer_pallet_id LIKE ? OR ip.status LIKE ? OR COALESCE(p_current.project_name, p_assigned.project_name, '') LIKE ? OR COALESCE(w.name, '') LIKE ?)";
         $params[] = $searchParam;
         $params[] = $searchParam;
         $params[] = $searchParam;
         $params[] = $searchParam;
-        $types .= 'ssss';
+        $params[] = $searchParam;
+        $types .= 'sssss';
     }
 
     $whereClause = ' WHERE ' . implode(' AND ', $whereConditions);
