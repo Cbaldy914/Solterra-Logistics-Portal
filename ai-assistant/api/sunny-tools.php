@@ -7,6 +7,7 @@
  */
 
 require_once __DIR__ . '/query-executor.php';
+require_once __DIR__ . '/../../cost_helpers.php';
 
 class SunnyTools {
     private $queryExecutor;
@@ -1013,11 +1014,48 @@ class SunnyTools {
                     (SELECT COALESCE(SUM(ap.amount), 0) FROM accounts_payable ap WHERE ap.project_id = p.id) AS total_payables,
                     (SELECT COALESCE(SUM(d.wattage * d.quantity), 0) / 1000000 FROM deliveries d WHERE d.project_id = p.id) AS total_delivered_mw,
                     (
+                        SELECT COALESCE(SUM(
+                            CASE
+                                WHEN mbm.trigger_event = 'shipping' AND COALESCE(d.origin_type, '') = 'warehouse' THEN 0
+                                ELSE dmi.payment_amount
+                            END
+                        ), 0)
+                        FROM delivery_milestone_instances dmi
+                        JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+                        JOIN modules m_milestone ON mbm.module_id = m_milestone.id
+                        LEFT JOIN deliveries d ON dmi.delivery_id = d.id
+                        WHERE m_milestone.project_id = p.id
+                    ) AS modules_paid_so_far,
+                    (
                         SELECT COALESCE(SUM(dmi.payment_amount), 0)
                         FROM delivery_milestone_instances dmi
-                        JOIN deliveries d ON dmi.delivery_id = d.id
-                        WHERE d.project_id = p.id
-                    ) AS modules_paid_so_far";
+                        JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+                        JOIN modules m_milestone ON mbm.module_id = m_milestone.id
+                        WHERE m_milestone.project_id = p.id
+                          AND mbm.trigger_event = 'po_execution'
+                    ) AS modules_paid_po_execution,
+                    (
+                        SELECT COALESCE(SUM(
+                            CASE
+                                WHEN COALESCE(d.origin_type, '') = 'warehouse' THEN 0
+                                ELSE dmi.payment_amount
+                            END
+                        ), 0)
+                        FROM delivery_milestone_instances dmi
+                        JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+                        JOIN modules m_milestone ON mbm.module_id = m_milestone.id
+                        LEFT JOIN deliveries d ON dmi.delivery_id = d.id
+                        WHERE m_milestone.project_id = p.id
+                          AND mbm.trigger_event = 'shipping'
+                    ) AS modules_paid_shipping,
+                    (
+                        SELECT COALESCE(SUM(dmi.payment_amount), 0)
+                        FROM delivery_milestone_instances dmi
+                        JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+                        JOIN modules m_milestone ON mbm.module_id = m_milestone.id
+                        WHERE m_milestone.project_id = p.id
+                          AND mbm.trigger_event = 'project_delivery'
+                    ) AS modules_paid_project_delivery";
 
             if (!$isCustomerFacingRole) {
                 $sql .= ",
@@ -1040,8 +1078,32 @@ class SunnyTools {
             }
 
             $sql .= " ORDER BY total_logistics_cost DESC LIMIT 20";
-            
-            return $this->queryExecutor->executeQuery($sql, $params);
+
+            $result = $this->queryExecutor->executeQuery($sql, $params);
+            if (!$result['success'] || empty($result['data'])) {
+                return $result;
+            }
+
+            // Align warehousing cost with portal helper logic instead of relying only on recorded pallet values.
+            $conn = $this->queryExecutor->getConnection();
+            if ($conn && function_exists('calculate_project_warehousing_cost')) {
+                foreach ($result['data'] as &$row) {
+                    $pid = intval($row['id'] ?? 0);
+                    if ($pid <= 0) {
+                        continue;
+                    }
+
+                    $computedWarehousing = round(floatval(calculate_project_warehousing_cost($pid, $conn)), 2);
+                    $freight = round(floatval($row['total_freight_cost'] ?? 0), 2);
+                    $accessorial = round(floatval($row['total_accessorial_costs'] ?? 0), 2);
+
+                    $row['total_warehousing_cost'] = $computedWarehousing;
+                    $row['total_logistics_cost'] = round($freight + $accessorial + $computedWarehousing, 2);
+                }
+                unset($row);
+            }
+
+            return $result;
             
         } catch (Exception $e) {
             return [

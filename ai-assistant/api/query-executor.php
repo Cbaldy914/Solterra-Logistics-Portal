@@ -33,7 +33,7 @@ class SunnyQueryExecutor {
             'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
             'manufacturers', 'inventory_pallets', 'freight_estimates', 'warehouse_estimates',
             'project_invoices', 'project_wattage_orders', 'project_documents', 'sunny_memory',
-            'unassigned_module_items', 'delivery_milestone_instances',
+            'unassigned_module_items', 'delivery_milestone_instances', 'module_batch_milestones',
             'flash_test_data', 'site_scheduling', 'warehouse_cost_items', 'accounts_payable'
         ];
 
@@ -287,5 +287,12 @@ class SunnyQueryExecutor {
     
     public function __destruct() {
         $this->close();
+    }
+
+    /**
+     * Expose the live DB connection for trusted in-process helper calculations.
+     */
+    public function getConnection() {
+        return $this->conn;
     }
 } 

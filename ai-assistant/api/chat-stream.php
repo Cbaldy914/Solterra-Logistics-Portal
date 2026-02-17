@@ -1395,7 +1395,9 @@ function detectToolsFromMessage($message) {
 
     // Cost / value related
     $hasValueIntent = preg_match('/\b(cost|costs|value|valuation|price|pricing|spend|spent|financial|\$)\b/i', $message);
-    $hasInventoryValueContext = preg_match('/\b(module|modules|inventory|warehouse|storage|stored|stock|pallet|pallets)\b/i', $message);
+    $hasInventoryValueContext =
+        preg_match('/\b(inventory|warehouse|storage|stored|stock|pallet|pallets)\b/i', $message)
+        || (preg_match('/\b(module|modules)\b/i', $message) && preg_match('/\b(in storage|stored|warehouse|inventory)\b/i', $message));
     $hasLogisticsCostContext = preg_match('/\b(freight|accessorial|payable|accounts payable|invoice|invoices|delivery cost|shipping cost|transport cost)\b/i', $message);
 
     if ($hasValueIntent && $hasInventoryValueContext) {
