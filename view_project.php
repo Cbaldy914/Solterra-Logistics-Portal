@@ -2457,7 +2457,11 @@ sort($unique_suppliers);
                                     <?php if ($delivery['is_grouped']): ?>
                                     <button type="button" class="action-btn action-btn-outline" onclick="toggleDeliveryDetails(<?php echo $groupIndex; ?>, event)">Toggle Details</button>
                                     <?php else: ?>
-                                    <a href="edit_delivery.php?delivery_id=<?php echo (int)$delivery['id']; ?>&project_id=<?php echo (int)$delivery['project_id']; ?>" class="action-btn action-btn-primary">Edit</a>
+                                        <?php if ((string)($delivery['status_of_delivery'] ?? '') === 'On Water' && !empty($delivery['project_id'])): ?>
+                                        <a href="container_tracking.php?project_id=<?php echo (int)$delivery['project_id']; ?>" class="action-btn action-btn-primary">Track Container</a>
+                                        <?php else: ?>
+                                        <a href="edit_delivery.php?delivery_id=<?php echo (int)$delivery['id']; ?>&project_id=<?php echo (int)$delivery['project_id']; ?>" class="action-btn action-btn-primary">Edit</a>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </td>
                                 <?php endif; ?>
@@ -2502,7 +2506,11 @@ sort($unique_suppliers);
                                     </td>
                                     <?php if ($can_manage_deliveries): ?>
                                     <td class="actions-column">
+                                        <?php if ((string)($detailRow['status_of_delivery'] ?? '') === 'On Water' && !empty($detailRow['project_id'])): ?>
+                                        <a href="container_tracking.php?project_id=<?php echo (int)$detailRow['project_id']; ?>" class="action-btn action-btn-primary">Track Container</a>
+                                        <?php else: ?>
                                         <a href="edit_delivery.php?delivery_id=<?php echo (int)$detailRow['id']; ?>&project_id=<?php echo (int)($detailRow['project_id'] ?? 0); ?>" class="action-btn action-btn-primary">Edit</a>
+                                        <?php endif; ?>
                                     </td>
                                     <?php endif; ?>
                                 </tr>
