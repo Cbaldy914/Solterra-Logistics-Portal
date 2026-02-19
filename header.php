@@ -244,6 +244,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="module_movements" role="menuitem">Module Movements</a>
 
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
+              <a href="container_tracking" role="menuitem">Container ETA Tracker</a>
             </div>
           </li>
 
@@ -356,6 +357,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="create_shipment" role="menuitem">Create Shipment</a>
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
+              <a href="container_tracking" role="menuitem">Container ETA Tracker</a>
               <a href="admin_freight_estimates" role="menuitem">Freight Estimates</a>
             </div>
           </li>
@@ -435,6 +437,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="create_shipment" role="menuitem">Create Shipment</a>
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
+              <a href="container_tracking" role="menuitem">Container ETA Tracker</a>
             </div>
           </li>
 
@@ -533,6 +536,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="modules" role="menuitem">Module Batches</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
               <a href="manage_pallets" role="menuitem">View Pallets</a>
+              <a href="container_tracking" role="menuitem">Container ETA Tracker</a>
             </div>
           </li>
           <li class="slp-item" role="none">

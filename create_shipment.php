@@ -2078,15 +2078,31 @@ if (!empty($bolCompletionMessage)) {
             font-size: 0.82em;
             font-weight: 600;
             text-decoration: none;
+            line-height: 1.1;
+            transition: background 0.2s ease, color 0.2s ease;
         }
         .warehouse-pill:hover {
             background: linear-gradient(135deg, #dff1f6 0%, #c9e5ec 100%);
             color: #274f59;
+            text-decoration: none;
         }
         .warehouse-pill.empty {
             border-color: rgba(148,163,184,0.35);
             background: #f8fafc;
             color: #64748b;
+        }
+        .status-link-inline {
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .status-link-inline:hover {
+            color: #3a6e7f;
+            text-decoration: none;
+        }
+        .status-text-warehouse {
+            color: #1f4f5d;
+            font-weight: 700;
         }
         tr:nth-child(even) {
             background-color: #f8f9fa;
@@ -2134,7 +2150,7 @@ if (!empty($bolCompletionMessage)) {
             to { transform: translateY(0); opacity: 1; }
         }
         .close-modal-btn {
-            color: #fff;
+            color: #0f172a;
             position: absolute;
             top: 18px;
             right: 24px;
@@ -2148,14 +2164,16 @@ if (!empty($bolCompletionMessage)) {
             align-items: center;
             justify-content: center;
             border-radius: 50%;
-            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(148,163,184,0.45);
+            background: rgba(255,255,255,0.92);
+            box-shadow: 0 4px 12px rgba(15,23,42,0.18);
             transition: all 0.3s ease;
         }
         .close-modal-btn:hover,
         .close-modal-btn:focus {
-            background: rgba(255,255,255,0.3);
+            background: #fff;
             transform: rotate(90deg);
-            color: #fff;
+            color: #0f172a;
         }
         .shipment-details-modal-content {
             padding: 0;
@@ -2173,41 +2191,75 @@ if (!empty($bolCompletionMessage)) {
         .shipment-details-modal-content form {
             padding: 36px;
         }
-        .previous-arrival-card {
-            margin: -6px 0 18px 0;
-            padding: 12px 14px;
-            border-radius: 12px;
-            border: 1px solid rgba(72,140,154,0.25);
-            background: linear-gradient(135deg, #ecf8fb 0%, #f5fbfd 100%);
-            color: #2f4c57;
+        .label-with-arrival-check {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
         }
-        .previous-arrival-label {
-            margin: 0 0 4px 0;
+        .label-with-arrival-check label {
+            margin-bottom: 0;
+        }
+        .prior-arrival-chip-wrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+        .prior-arrival-chip {
+            border: 1px solid rgba(72,140,154,0.35);
+            border-radius: 999px;
+            background: linear-gradient(135deg, #ecf8fb 0%, #f5fbfd 100%);
+            color: #1f4f5d;
             font-size: 0.78rem;
             font-weight: 700;
-            letter-spacing: 0.02em;
-            text-transform: uppercase;
-            color: #3a6e7f;
+            padding: 4px 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            line-height: 1.15;
         }
-        .previous-arrival-value {
-            margin: 0;
-            font-size: 1rem;
-            font-weight: 700;
-            color: #1f3f49;
-        }
-        .previous-arrival-meta {
-            margin-top: 5px;
-            font-size: 0.82rem;
-            color: #4e6b76;
-        }
-        .previous-arrival-card.warning {
-            border-color: rgba(234,179,8,0.45);
+        .prior-arrival-chip.warning {
+            border-color: rgba(234,179,8,0.5);
             background: linear-gradient(135deg, #fff8dd 0%, #fffbee 100%);
             color: #7c5e10;
         }
-        .previous-arrival-card.warning .previous-arrival-label,
-        .previous-arrival-card.warning .previous-arrival-value {
-            color: #7c5e10;
+        .prior-arrival-chip:focus-visible {
+            outline: 2px solid #488C9A;
+            outline-offset: 2px;
+        }
+        .prior-arrival-popover {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            z-index: 30;
+            min-width: 260px;
+            max-width: min(360px, 80vw);
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(72,140,154,0.25);
+            background: #fff;
+            box-shadow: 0 14px 28px rgba(15,23,42,0.18);
+            color: #2f4c57;
+        }
+        .prior-arrival-chip-wrap:hover .prior-arrival-popover,
+        .prior-arrival-chip-wrap:focus-within .prior-arrival-popover,
+        .prior-arrival-chip-wrap.is-open .prior-arrival-popover {
+            display: block;
+        }
+        .prior-arrival-popover-title {
+            margin: 0 0 5px 0;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #1f3f49;
+        }
+        .prior-arrival-popover-meta {
+            margin: 0;
+            font-size: 0.8rem;
+            color: #4e6b76;
+            line-height: 1.35;
         }
         .form-row {
             display: flex;
@@ -2822,18 +2874,25 @@ if (!empty($bolCompletionMessage)) {
                     </div>
                     <div class="form-row">
                         <div>
-                            <label for="departure_date">Departure Date:</label>
+                            <div class="label-with-arrival-check">
+                                <label for="departure_date">Departure Date:</label>
+                                <div class="prior-arrival-chip-wrap" id="previousArrivalHintSingle">
+                                    <button type="button" class="prior-arrival-chip" id="previousArrivalChipSingle" aria-haspopup="true" aria-expanded="false" aria-controls="previousArrivalPopoverSingle">
+                                        <i class="fas fa-check-circle"></i>
+                                        <span id="previousArrivalSummarySingle">Select pallets</span>
+                                    </button>
+                                    <div id="previousArrivalPopoverSingle" class="prior-arrival-popover" role="status" aria-live="polite">
+                                        <p class="prior-arrival-popover-title" id="previousArrivalValueSingle">Select pallets to load arrival guard</p>
+                                        <div class="prior-arrival-popover-meta" id="previousArrivalMetaSingle">Choose pallets first to validate departure against prior arrival.</div>
+                                    </div>
+                                </div>
+                            </div>
                             <input type="date" id="departure_date" name="departure_date" required>
                         </div>
                         <div>
                             <label for="est_arrival_date">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                         </div>
-                    </div>
-                    <div id="previousArrivalCardSingle" class="previous-arrival-card" role="status" aria-live="polite">
-                        <p class="previous-arrival-label">Previous Arrival Checkpoint</p>
-                        <p class="previous-arrival-value" id="previousArrivalValueSingle">Select pallets to load arrival guard</p>
-                        <div class="previous-arrival-meta" id="previousArrivalMetaSingle"></div>
                     </div>
                     <div class="form-row" id="domestic-cost-fields">
                         <div>
@@ -2940,18 +2999,25 @@ if (!empty($bolCompletionMessage)) {
                     </div>
                     <div class="form-row">
                         <div>
-                            <label for="departure_date_multi">Departure Date:</label>
+                            <div class="label-with-arrival-check">
+                                <label for="departure_date_multi">Departure Date:</label>
+                                <div class="prior-arrival-chip-wrap" id="previousArrivalHintMulti">
+                                    <button type="button" class="prior-arrival-chip" id="previousArrivalChipMulti" aria-haspopup="true" aria-expanded="false" aria-controls="previousArrivalPopoverMulti">
+                                        <i class="fas fa-check-circle"></i>
+                                        <span id="previousArrivalSummaryMulti">Select pallets</span>
+                                    </button>
+                                    <div id="previousArrivalPopoverMulti" class="prior-arrival-popover" role="status" aria-live="polite">
+                                        <p class="prior-arrival-popover-title" id="previousArrivalValueMulti">Select pallets to load arrival guard</p>
+                                        <div class="prior-arrival-popover-meta" id="previousArrivalMetaMulti">Choose pallets first to validate departure against prior arrival.</div>
+                                    </div>
+                                </div>
+                            </div>
                             <input type="date" id="departure_date_multi" name="departure_date_multi" required>
                         </div>
                         <div>
                             <label for="est_arrival_date_multi">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date_multi" name="est_arrival_date_multi" required>
                         </div>
-                    </div>
-                    <div id="previousArrivalCardMulti" class="previous-arrival-card" role="status" aria-live="polite">
-                        <p class="previous-arrival-label">Previous Arrival Checkpoint</p>
-                        <p class="previous-arrival-value" id="previousArrivalValueMulti">Select pallets to load arrival guard</p>
-                        <div class="previous-arrival-meta" id="previousArrivalMetaMulti"></div>
                     </div>
                     <div class="form-row">
                         <div>
@@ -3116,6 +3182,7 @@ if (!empty($bolCompletionMessage)) {
     const canManageShipments = <?php echo $can_manage_shipments ? 'true' : 'false'; ?>;
     const isStandardUser = <?php echo $is_standard_user ? 'true' : 'false'; ?>;
     const tableColumnCount = canManageShipments ? 9 : 8;
+    let projectScopePinned = projectIdFromUrl > 0;
     // Pallets are now loaded via AJAX
     let palletsData = [];
     let currentStatusCounts = {};
@@ -3351,6 +3418,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateOpenShipModalButtonState();
     updateSelectedCount();
     updatePreviousArrivalDisplay();
+    initializePreviousArrivalHintInteractions();
     toggleWarehouseSubFilter();
     
     // Initialize pagination
@@ -3361,12 +3429,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add event listeners to save filters on change
     document.getElementById('palletSearch')?.addEventListener('input', saveFilters);
-    document.getElementById('projectFilter')?.addEventListener('change', saveFilters);
+    document.getElementById('projectFilter')?.addEventListener('change', function() { projectScopePinned = false; saveFilters(); });
     document.getElementById('wattageFilter')?.addEventListener('change', saveFilters);
     document.getElementById('statusFilter')?.addEventListener('change', saveFilters);
     // New filter bar listeners - also need to save filters
     document.getElementById('cs_search')?.addEventListener('keyup', function() { filterPallets(); saveFilters(); });
-    document.getElementById('cs_project')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
+    document.getElementById('cs_project')?.addEventListener('change', function() { projectScopePinned = false; filterPallets(); saveFilters(); });
     document.getElementById('cs_wattage')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
     document.getElementById('cs_status')?.addEventListener('change', function() { toggleWarehouseSubFilter(); filterPallets(); saveFilters(); });
     document.getElementById('cs_warehouse')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
@@ -3505,7 +3573,7 @@ async function loadPallets() {
         status: statusFilter
     });
 
-    if (projectIdFromUrl > 0) {
+    if (projectScopePinned && projectIdFromUrl > 0) {
         params.append('project_id', projectIdFromUrl);
     }
     if (statusFilter === 'In Warehouse' && warehouseFilter) {
@@ -3613,16 +3681,18 @@ function renderPalletsTable(pallets) {
     pallets.forEach(pallet => {
         const status = pallet.status || '';
         let statusHtml = escapeHtml(status);
+        let warehouseUrl = '';
 
         if (pallet.current_warehouse_id && status === 'In Transit to Warehouse') {
-            statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">${escapeHtml(status)}</a>`;
+            statusHtml = `<a class="status-link-inline" href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=inbound_transit">${escapeHtml(status)}</a>`;
         } else if (pallet.current_warehouse_id && status === 'In Warehouse') {
             if (isStandardUser) {
                 const backProjectParam = projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : '';
-                statusHtml = `<a href="warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}&from=manage_pallets${backProjectParam}" style="color: #488C9A; text-decoration: underline;">${escapeHtml(status)}</a>`;
+                warehouseUrl = `warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}&from=manage_pallets${backProjectParam}`;
             } else {
-                statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">${escapeHtml(status)}</a>`;
+                warehouseUrl = `manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=stored_inventory`;
             }
+            statusHtml = `<span class="status-text-warehouse">${escapeHtml(status)}</span>`;
         }
 
         let manufacturerName = pallet.origin_vendor_name || pallet.origin_vendor || 'N/A';
@@ -3636,9 +3706,11 @@ function renderPalletsTable(pallets) {
 
         let warehouseHtml = '';
         if (pallet.current_warehouse_id && pallet.current_warehouse_name) {
-            const warehouseUrl = isStandardUser
-                ? `warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}&from=create_shipment`
-                : `manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}`;
+            if (!warehouseUrl) {
+                warehouseUrl = isStandardUser
+                    ? `warehouse_info.php?warehouse_id=${pallet.current_warehouse_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}&from=create_shipment`
+                    : `manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}`;
+            }
             warehouseHtml = `<a class="warehouse-pill" href="${warehouseUrl}"><i class="fas fa-warehouse"></i>${escapeHtml(pallet.current_warehouse_name)}</a>`;
         } else if (status === 'In Warehouse' || status === 'In Transit to Warehouse') {
             warehouseHtml = '<span class="warehouse-pill empty">Unknown warehouse</span>';
@@ -3915,6 +3987,7 @@ function clearFilterBar() {
     const legacyIds = ['palletSearch','projectFilter','wattageFilter','statusFilter'];
     newIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     legacyIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    projectScopePinned = false;
     toggleWarehouseSubFilter();
     filterPallets();
     saveFilters();
@@ -3949,6 +4022,40 @@ function openShipModal() {
 function closeShipModal() {
     if (!shipModal) return;
     shipModal.style.display = 'none';
+}
+
+function initializePreviousArrivalHintInteractions() {
+    const hintIds = ['previousArrivalHintSingle', 'previousArrivalHintMulti'];
+    const hintWrappers = hintIds
+        .map((id) => document.getElementById(id))
+        .filter(Boolean);
+
+    hintWrappers.forEach((wrapper) => {
+        const chip = wrapper.querySelector('.prior-arrival-chip');
+        if (!chip || chip.dataset.arrivalHintBound === '1') {
+            return;
+        }
+
+        chip.dataset.arrivalHintBound = '1';
+        chip.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const willOpen = !wrapper.classList.contains('is-open');
+            hintWrappers.forEach((item) => item.classList.remove('is-open'));
+            wrapper.classList.toggle('is-open', willOpen);
+            chip.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        });
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('.prior-arrival-chip-wrap')) {
+            hintWrappers.forEach((wrapper) => {
+                wrapper.classList.remove('is-open');
+                const chip = wrapper.querySelector('.prior-arrival-chip');
+                if (chip) chip.setAttribute('aria-expanded', 'false');
+            });
+        }
+    });
 }
 
 function handleOpenShipModalClick(e) {
@@ -4185,22 +4292,44 @@ function computePreviousArrivalConstraint() {
     };
 }
 
-function applyPreviousArrivalCard(cardEl, valueEl, metaEl, valueText, metaText, isWarning) {
-    if (!cardEl || !valueEl || !metaEl) {
+function formatIsoDateShort(dateValue) {
+    const normalized = normalizeIsoDate(dateValue);
+    if (!normalized) {
+        return 'N/A';
+    }
+    const [year, month, day] = normalized.split('-').map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (Number.isNaN(parsed.getTime())) {
+        return normalized;
+    }
+    return parsed.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC'
+    });
+}
+
+function applyPreviousArrivalHint(wrapperEl, chipEl, summaryEl, valueEl, metaEl, summaryText, valueText, metaText, isWarning) {
+    if (!wrapperEl || !chipEl || !summaryEl || !valueEl || !metaEl) {
         return;
     }
+    summaryEl.textContent = summaryText;
     valueEl.textContent = valueText;
     metaEl.textContent = metaText;
-    cardEl.classList.toggle('warning', Boolean(isWarning));
+    chipEl.classList.toggle('warning', Boolean(isWarning));
 }
 
 function updatePreviousArrivalDisplay() {
     const constraint = computePreviousArrivalConstraint();
 
-    const singleCard = document.getElementById('previousArrivalCardSingle');
+    const singleHint = document.getElementById('previousArrivalHintSingle');
+    const singleChip = document.getElementById('previousArrivalChipSingle');
+    const singleSummary = document.getElementById('previousArrivalSummarySingle');
     const singleValue = document.getElementById('previousArrivalValueSingle');
     const singleMeta = document.getElementById('previousArrivalMetaSingle');
-    const multiCard = document.getElementById('previousArrivalCardMulti');
+    const multiHint = document.getElementById('previousArrivalHintMulti');
+    const multiChip = document.getElementById('previousArrivalChipMulti');
+    const multiSummary = document.getElementById('previousArrivalSummaryMulti');
     const multiValue = document.getElementById('previousArrivalValueMulti');
     const multiMeta = document.getElementById('previousArrivalMetaMulti');
 
@@ -4213,6 +4342,7 @@ function updatePreviousArrivalDisplay() {
             input.min = constraint.latestDate;
         });
 
+        const summaryText = `On/after ${formatIsoDateShort(constraint.latestDate)}`;
         const valueText = `Latest prior arrival: ${formatIsoDateForDisplay(constraint.latestDate)}`;
         let metaText = `Departure must be on/after ${formatIsoDateForDisplay(constraint.latestDate)} (${constraint.constrainedCount} pallet${constraint.constrainedCount === 1 ? '' : 's'}).`;
         let warning = false;
@@ -4221,8 +4351,8 @@ function updatePreviousArrivalDisplay() {
             metaText += ` ${constraint.missingArrivalCount} selected pallet${constraint.missingArrivalCount === 1 ? '' : 's'} missing arrival date.`;
         }
 
-        applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, warning);
-        applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, warning);
+        applyPreviousArrivalHint(singleHint, singleChip, singleSummary, singleValue, singleMeta, summaryText, valueText, metaText, warning);
+        applyPreviousArrivalHint(multiHint, multiChip, multiSummary, multiValue, multiMeta, summaryText, valueText, metaText, warning);
         return constraint;
     }
 
@@ -4231,25 +4361,28 @@ function updatePreviousArrivalDisplay() {
     });
 
     if (constraint.selectedCount === 0) {
+        const summaryText = 'Select pallets';
         const valueText = 'Select pallets to load arrival guard';
         const metaText = 'Choose pallets first to validate departure against prior arrival.';
-        applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, false);
-        applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, false);
+        applyPreviousArrivalHint(singleHint, singleChip, singleSummary, singleValue, singleMeta, summaryText, valueText, metaText, false);
+        applyPreviousArrivalHint(multiHint, multiChip, multiSummary, multiValue, multiMeta, summaryText, valueText, metaText, false);
         return constraint;
     }
 
     if (constraint.missingArrivalCount > 0) {
+        const summaryText = 'Missing arrival data';
         const valueText = 'Prior arrival date missing';
         const metaText = `Some selected pallets are missing arrival dates. Please verify pallet history before shipping.`;
-        applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, true);
-        applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, true);
+        applyPreviousArrivalHint(singleHint, singleChip, singleSummary, singleValue, singleMeta, summaryText, valueText, metaText, true);
+        applyPreviousArrivalHint(multiHint, multiChip, multiSummary, multiValue, multiMeta, summaryText, valueText, metaText, true);
         return constraint;
     }
 
+    const summaryText = 'No prior gate';
     const valueText = 'No prior-arrival constraint';
     const metaText = 'Current selection originates at manufacturer or has no recorded prior arrival requirement.';
-    applyPreviousArrivalCard(singleCard, singleValue, singleMeta, valueText, metaText, false);
-    applyPreviousArrivalCard(multiCard, multiValue, multiMeta, valueText, metaText, false);
+    applyPreviousArrivalHint(singleHint, singleChip, singleSummary, singleValue, singleMeta, summaryText, valueText, metaText, false);
+    applyPreviousArrivalHint(multiHint, multiChip, multiSummary, multiValue, multiMeta, summaryText, valueText, metaText, false);
     return constraint;
 }
 
