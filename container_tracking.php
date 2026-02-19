@@ -12,10 +12,12 @@ $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
 }
+$google_maps_api_key = function_exists('getGoogleMapsApiKey') ? (string)getGoogleMapsApiKey() : '';
 
 $role = $_SESSION['role'];
 $user_id = (int)$_SESSION['user_id'];
 $can_edit_eta = in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
+$map_picker_enabled = $can_edit_eta && $google_maps_api_key !== '';
 $selected_project_id = isset($_GET['project_id'])
     ? (int)$_GET['project_id']
     : (isset($_POST['scope_project_id']) ? (int)$_POST['scope_project_id'] : 0);
@@ -484,7 +486,7 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
         body { font-family: "Poppins", sans-serif; background: #f4f8fb; }
-        main { max-width: 1440px; margin: 0 auto; padding: 16px 14px 38px; }
+        main { padding: 16px 14px 38px; }
         .tracker-hero {
             background: linear-gradient(135deg, #ffffff 0%, #eef8fb 100%);
             border: 1px solid rgba(72, 140, 154, 0.14);
@@ -588,6 +590,16 @@ $conn->close();
         .eta-save-btn:hover {
             background: #1d4ed8;
         }
+        .use-map-btn {
+            background: #0ea5e9;
+        }
+        .use-map-btn:hover {
+            background: #0284c7;
+        }
+        .use-map-btn[disabled] {
+            background: #94a3b8;
+            cursor: not-allowed;
+        }
         .position-edit-form {
             display: grid;
             grid-template-columns: repeat(2, minmax(100px, 1fr)) auto;
@@ -641,6 +653,72 @@ $conn->close();
             font-weight: 600;
         }
         .tracker-link:hover { text-decoration: underline; }
+        .position-picker-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.55);
+            z-index: 4000;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+        }
+        .position-picker-content {
+            width: min(920px, 100%);
+            max-height: min(92vh, 820px);
+            background: #fff;
+            border-radius: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            box-shadow: 0 26px 60px rgba(2, 8, 23, 0.35);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .position-picker-header {
+            padding: 16px 18px;
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .position-picker-header h3 {
+            margin: 0;
+            font-size: 1.1rem;
+        }
+        .position-picker-close {
+            border: none;
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+            font-size: 20px;
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .position-picker-map {
+            height: min(62vh, 520px);
+            width: 100%;
+        }
+        .position-picker-footer {
+            padding: 12px 16px;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .position-picker-coords {
+            font-size: 0.9rem;
+            color: #334155;
+            font-weight: 600;
+        }
+        .position-picker-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
         @media (max-width: 900px) {
             .position-edit-form {
                 grid-template-columns: 1fr;
@@ -777,6 +855,7 @@ $conn->close();
                                                 <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
                                                 <input type="number" step="0.000001" min="-90" max="90" name="vessel_latitude" placeholder="Lat" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLat, 6, '.', '')) : ''; ?>">
                                                 <input type="number" step="0.000001" min="-180" max="180" name="vessel_longitude" placeholder="Lng" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLng, 6, '.', '')) : ''; ?>">
+                                                <button type="button" class="eta-save-btn use-map-btn" <?php echo $map_picker_enabled ? '' : 'disabled title="Map picker unavailable"'; ?>>Use Map</button>
                                                 <button type="submit" class="eta-save-btn">Save Pos</button>
                                             </form>
                                             <?php if ($hasPosition): ?>
@@ -809,6 +888,147 @@ $conn->close();
             <?php endif; ?>
         </div>
     <?php endif; ?>
+
+    <?php if ($can_edit_eta && $positions_table_exists): ?>
+        <div id="positionPickerModal" class="position-picker-modal" aria-hidden="true">
+            <div class="position-picker-content">
+                <div class="position-picker-header">
+                    <h3>Pick Vessel Position</h3>
+                    <button type="button" class="position-picker-close" id="closePositionPickerBtn" aria-label="Close">&times;</button>
+                </div>
+                <div id="positionPickerMap" class="position-picker-map"></div>
+                <div class="position-picker-footer">
+                    <div class="position-picker-coords" id="positionPickerCoords">Click the map to select latitude/longitude.</div>
+                    <div class="position-picker-actions">
+                        <button type="button" class="eta-save-btn" id="cancelPositionPickerBtn">Cancel</button>
+                        <button type="button" class="eta-save-btn" id="applyPositionPickerBtn" disabled>Use This Point</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
 </main>
+<?php if ($map_picker_enabled): ?>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
+<?php endif; ?>
+<?php if ($can_edit_eta && $positions_table_exists): ?>
+<script>
+let positionPickerMap = null;
+let positionPickerMarker = null;
+let positionPickerSelected = null;
+let activeLatInput = null;
+let activeLngInput = null;
+
+function setPickerSelected(latLng) {
+    if (!latLng) return;
+    positionPickerSelected = latLng;
+    if (!positionPickerMarker) {
+        positionPickerMarker = new google.maps.Marker({
+            position: latLng,
+            map: positionPickerMap,
+            draggable: true,
+            title: 'Selected vessel position'
+        });
+        positionPickerMarker.addListener('dragend', (event) => {
+            setPickerSelected(event.latLng);
+        });
+    } else {
+        positionPickerMarker.setPosition(latLng);
+    }
+    const coordsEl = document.getElementById('positionPickerCoords');
+    if (coordsEl) {
+        coordsEl.textContent = `Selected: ${latLng.lat().toFixed(6)}, ${latLng.lng().toFixed(6)}`;
+    }
+    const applyBtn = document.getElementById('applyPositionPickerBtn');
+    if (applyBtn) applyBtn.disabled = false;
+}
+
+function openPositionPicker(formEl) {
+    if (!window.google || !window.google.maps) {
+        alert('Map picker is not available right now.');
+        return;
+    }
+
+    activeLatInput = formEl.querySelector('input[name="vessel_latitude"]');
+    activeLngInput = formEl.querySelector('input[name="vessel_longitude"]');
+    if (!activeLatInput || !activeLngInput) {
+        return;
+    }
+
+    const modal = document.getElementById('positionPickerModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+
+    const latVal = parseFloat(activeLatInput.value);
+    const lngVal = parseFloat(activeLngInput.value);
+    const hasExisting = Number.isFinite(latVal) && Number.isFinite(lngVal);
+    const initialCenter = hasExisting ? { lat: latVal, lng: lngVal } : { lat: 20, lng: 0 };
+    const initialZoom = hasExisting ? 6 : 2;
+
+    if (!positionPickerMap) {
+        positionPickerMap = new google.maps.Map(document.getElementById('positionPickerMap'), {
+            center: initialCenter,
+            zoom: initialZoom,
+            mapTypeId: 'roadmap',
+            streetViewControl: false,
+            fullscreenControl: true
+        });
+        positionPickerMap.addListener('click', (event) => {
+            setPickerSelected(event.latLng);
+        });
+    } else {
+        positionPickerMap.setCenter(initialCenter);
+        positionPickerMap.setZoom(initialZoom);
+    }
+
+    const applyBtn = document.getElementById('applyPositionPickerBtn');
+    if (applyBtn) applyBtn.disabled = true;
+    positionPickerSelected = null;
+
+    if (hasExisting) {
+        const existingLatLng = new google.maps.LatLng(latVal, lngVal);
+        setPickerSelected(existingLatLng);
+    } else if (positionPickerMarker) {
+        positionPickerMarker.setMap(null);
+        positionPickerMarker = null;
+        const coordsEl = document.getElementById('positionPickerCoords');
+        if (coordsEl) coordsEl.textContent = 'Click the map to select latitude/longitude.';
+    }
+}
+
+function closePositionPicker() {
+    const modal = document.getElementById('positionPickerModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.use-map-btn:not([disabled])').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const formEl = btn.closest('form');
+            if (formEl) openPositionPicker(formEl);
+        });
+    });
+
+    document.getElementById('closePositionPickerBtn')?.addEventListener('click', closePositionPicker);
+    document.getElementById('cancelPositionPickerBtn')?.addEventListener('click', closePositionPicker);
+    document.getElementById('positionPickerModal')?.addEventListener('click', (event) => {
+        if (event.target.id === 'positionPickerModal') {
+            closePositionPicker();
+        }
+    });
+    document.getElementById('applyPositionPickerBtn')?.addEventListener('click', () => {
+        if (!positionPickerSelected || !activeLatInput || !activeLngInput) {
+            return;
+        }
+        activeLatInput.value = positionPickerSelected.lat().toFixed(6);
+        activeLngInput.value = positionPickerSelected.lng().toFixed(6);
+        closePositionPicker();
+    });
+});
+</script>
+<?php endif; ?>
 </body>
 </html>
