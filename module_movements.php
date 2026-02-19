@@ -875,6 +875,7 @@ $conn->close();
         .status-flow-row {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 12px;
             overflow-x: auto;
             padding-bottom: 4px;
@@ -922,8 +923,8 @@ $conn->close();
             font-size: 0.78em;
             color: #475569;
             margin-bottom: 8px;
-            min-height: 18px;
             line-height: 1.35;
+            display: none;
         }
         .status-flow-pallets {
             font-size: 1.02em;
@@ -986,6 +987,18 @@ $conn->close();
             letter-spacing: 0.01em;
             text-align: center;
             line-height: 1.1;
+        }
+        .status-flow-arrow.connector {
+            min-width: 32px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            color: #94a3b8;
+            cursor: default;
+        }
+        .status-flow-arrow.connector .arrow-icon,
+        .status-flow-arrow.connector .arrow-stage {
+            display: none;
         }
         
         .pallet-count {
@@ -1307,8 +1320,8 @@ $conn->close();
                             'class' => 'port',
                             'title' => '⚓ Port / Customs',
                             'destination' => $formatDestinationSummary($port_destination_labels, 'Destination: ', 'Stops: '),
-                            'pallets' => (int)($transit_totals['On Water']['pallets'] + $transit_totals['Cleared Customs']['pallets']),
-                            'modules' => (int)($transit_totals['On Water']['modules'] + $transit_totals['Cleared Customs']['modules']),
+                            'pallets' => (int)$transit_totals['Cleared Customs']['pallets'],
+                            'modules' => (int)$transit_totals['Cleared Customs']['modules'],
                             'click' => 'port'
                         ];
                     }
@@ -1395,12 +1408,6 @@ $conn->close();
                                 'To Warehouse',
                                 'Port to Warehouse Transit',
                                 [
-                                    [
-                                        'label' => 'Cleared Customs',
-                                        'pallets' => (int)$transit_totals['Cleared Customs']['pallets'],
-                                        'modules' => (int)$transit_totals['Cleared Customs']['modules'],
-                                        'destinations' => $transit_destinations['Cleared Customs']
-                                    ],
                                     [
                                         'label' => 'In Transit to Warehouse',
                                         'pallets' => (int)$transit_totals['In Transit to Warehouse']['pallets'],
@@ -1489,7 +1496,6 @@ $conn->close();
                                 <?php endif; ?>
                             >
                                 <div class="status-flow-title"><?php echo htmlspecialchars((string)$node['title']); ?></div>
-                                <div class="status-flow-destination"><?php echo htmlspecialchars((string)($node['destination'] ?? '')); ?></div>
                                 <div class="status-flow-pallets"><?php echo number_format((int)$node['pallets']); ?> pallets</div>
                                 <div class="status-flow-modules"><?php echo number_format((int)$node['modules']); ?> modules</div>
                             </div>
@@ -1506,7 +1512,7 @@ $conn->close();
                                     $arrowClickable = !empty($arrow['is_clickable']);
                                 ?>
                                 <div
-                                    class="status-flow-arrow <?php echo htmlspecialchars((string)$arrow['mode']); ?> <?php echo $arrowClickable ? 'is-clickable' : ''; ?>"
+                                    class="status-flow-arrow <?php echo $arrowClickable ? htmlspecialchars((string)$arrow['mode']) : 'connector'; ?> <?php echo $arrowClickable ? 'is-clickable' : ''; ?>"
                                     <?php if ($arrowClickable): ?>
                                         onclick="showDetailedBreakdown('<?php echo htmlspecialchars((string)$arrow['key']); ?>')"
                                     <?php endif; ?>
@@ -1848,6 +1854,18 @@ function buildBoatMarkerIcon(iconSize = 36) {
     };
 }
 
+function buildWaypointDotIcon(size = 11) {
+    return {
+        path: google.maps.SymbolPath.CIRCLE,
+        fillColor: '#0ea5e9',
+        fillOpacity: 1,
+        strokeColor: '#ffffff',
+        strokeOpacity: 0.95,
+        strokeWeight: 2,
+        scale: size / 2
+    };
+}
+
 function appendPointIfDistinct(points, point) {
     if (!point) return;
     const last = points.length > 0 ? points[points.length - 1] : null;
@@ -1894,7 +1912,7 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             manualLng >= -180 && manualLng <= 180;
         const manualPosition = hasManualPosition ? new google.maps.LatLng(manualLat, manualLng) : null;
 
-        const waypointPositions = [];
+        const waypointPoints = [];
         if (Array.isArray(container.waypoints)) {
             container.waypoints.forEach((wp) => {
                 const wpLat = Number(wp.latitude);
@@ -1905,7 +1923,12 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                 if (wpLat < -90 || wpLat > 90 || wpLng < -180 || wpLng > 180) {
                     return;
                 }
-                waypointPositions.push(new google.maps.LatLng(wpLat, wpLng));
+                waypointPoints.push({
+                    position: new google.maps.LatLng(wpLat, wpLng),
+                    recordedAt: wp.recorded_at ? String(wp.recorded_at) : 'N/A',
+                    latitude: wpLat,
+                    longitude: wpLng
+                });
             });
         }
 
@@ -1934,24 +1957,43 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
         const positionUpdatedText = hasManualPosition && container.vessel_position_updated_at
             ? String(container.vessel_position_updated_at)
             : 'N/A';
-        const waypointCount = Array.isArray(container.waypoints) ? container.waypoints.length : 0;
-        const lastWaypointAt = waypointCount > 0 && container.waypoints[waypointCount - 1]?.recorded_at
-            ? String(container.waypoints[waypointCount - 1].recorded_at)
+        const waypointCount = waypointPoints.length;
+        const lastWaypointAt = waypointCount > 0 && waypointPoints[waypointCount - 1]?.recordedAt
+            ? String(waypointPoints[waypointCount - 1].recordedAt)
             : 'N/A';
 
         // Draw a transit line that follows saved waypoint updates.
         const transitPathPoints = [];
-        waypointPositions.forEach((wpPosition) => appendPointIfDistinct(transitPathPoints, wpPosition));
-        if (manualPosition) {
-            appendPointIfDistinct(transitPathPoints, manualPosition);
-        }
-        if (transitPathPoints.length < 2 && originPosition && waypointPositions.length > 0) {
+        if (originPosition) {
             appendPointIfDistinct(transitPathPoints, originPosition);
-            waypointPositions.forEach((wpPosition) => appendPointIfDistinct(transitPathPoints, wpPosition));
-            if (manualPosition) {
-                appendPointIfDistinct(transitPathPoints, manualPosition);
-            }
         }
+        waypointPoints.forEach((wp) => appendPointIfDistinct(transitPathPoints, wp.position));
+        appendPointIfDistinct(transitPathPoints, markerPosition);
+
+        waypointPoints.forEach((wp, index) => {
+            bounds.extend(wp.position);
+            const dot = new google.maps.Marker({
+                position: wp.position,
+                map: map,
+                title: `Waypoint ${index + 1} • ${container.container_number}`,
+                icon: buildWaypointDotIcon(),
+                zIndex: 30
+            });
+            dot.addListener('click', () => {
+                const infoWindow = new google.maps.InfoWindow({
+                    content: `
+                        <div style="font-family:'Poppins',Arial,sans-serif; min-width:200px;">
+                            <div style="font-weight:700; color:#0c4a6e; margin-bottom:6px;">Waypoint ${index + 1}</div>
+                            <div style="font-size:13px; color:#334155;">Container: ${container.container_number}</div>
+                            <div style="font-size:13px; color:#334155;">Recorded: ${wp.recordedAt}</div>
+                            <div style="font-size:13px; color:#334155;">${wp.latitude.toFixed(4)}, ${wp.longitude.toFixed(4)}</div>
+                        </div>
+                    `
+                });
+                infoWindow.open(map, dot);
+            });
+        });
+
         if (transitPathPoints.length >= 2) {
             const transitPolyline = new google.maps.Polyline({
                 path: transitPathPoints,
