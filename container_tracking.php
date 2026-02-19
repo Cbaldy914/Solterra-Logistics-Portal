@@ -583,9 +583,9 @@ $conn->close();
             cursor: pointer;
         }
         .tracker-filter-btn:hover { filter: brightness(0.96); }
-        .eta-positive { color: #1d4ed8; font-weight: 700; }
+        .eta-positive { color: #488C9A; font-weight: 700; }
         .eta-late { color: #dc2626; font-weight: 700; }
-        .eta-today { color: #0f766e; font-weight: 700; }
+        .eta-today { color: #3A6E7F; font-weight: 700; }
         .status-pill {
             display: inline-block;
             padding: 4px 10px;
@@ -628,14 +628,14 @@ $conn->close();
             border: none;
             border-radius: 8px;
             padding: 6px 10px;
-            background: #2563eb;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
             color: #fff;
             font-size: 0.8em;
             font-weight: 700;
             cursor: pointer;
         }
         .eta-save-btn:hover {
-            background: #1d4ed8;
+            filter: brightness(0.96);
         }
         .use-map-btn {
             background: #0ea5e9;
@@ -683,7 +683,7 @@ $conn->close();
             border-radius: 12px;
         }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 11px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: middle; }
+        th, td { padding: 11px 12px; border-bottom: 1px solid #e2e8f0; text-align: center; vertical-align: middle; }
         th {
             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
             color: #fff;
@@ -695,11 +695,17 @@ $conn->close();
         tbody tr:nth-child(even) { background: #f8fbfe; }
         tbody tr:hover { background: #f0f8fc; }
         .tracker-link {
-            color: #2563eb;
+            color: #488C9A;
             text-decoration: none;
             font-weight: 600;
         }
         .tracker-link:hover { text-decoration: underline; }
+        .eta-edit-form {
+            justify-content: center;
+        }
+        .position-edit-form {
+            justify-content: center;
+        }
         .position-picker-modal {
             display: none;
             position: fixed;
@@ -888,7 +894,7 @@ $conn->close();
                                                 <input type="hidden" name="project_id" value="<?php echo (int)($container['project_id'] ?? 0); ?>">
                                                 <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
                                                 <input type="date" name="eta_date" value="<?php echo htmlspecialchars($etaFieldValue); ?>" required>
-                                                <button type="submit" class="eta-save-btn">Save ETA</button>
+                                                <button type="submit" class="eta-save-btn">Save</button>
                                             </form>
                                         <?php else: ?>
                                             <?php echo htmlspecialchars($etaFieldValue !== '' ? $etaFieldValue : 'N/A'); ?>
@@ -912,7 +918,7 @@ $conn->close();
                                                 <input type="number" step="0.000001" min="-90" max="90" name="vessel_latitude" placeholder="Lat" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLat, 6, '.', '')) : ''; ?>">
                                                 <input type="number" step="0.000001" min="-180" max="180" name="vessel_longitude" placeholder="Lng" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLng, 6, '.', '')) : ''; ?>">
                                                 <button type="button" class="eta-save-btn use-map-btn" <?php echo $map_picker_enabled ? '' : 'disabled title="Map picker unavailable"'; ?>>Use Map</button>
-                                                <button type="submit" class="eta-save-btn">Save Pos</button>
+                                                <button type="submit" class="eta-save-btn">Save</button>
                                             </form>
                                             <?php if ($hasPosition): ?>
                                                 <div class="position-updated">
