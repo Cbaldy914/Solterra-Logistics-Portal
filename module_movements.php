@@ -871,6 +871,95 @@ $conn->close();
             border-bottom: 1px solid #ddd;
             padding-bottom: 10px;
         }
+        .status-flow-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+        }
+        .status-flow-card {
+            min-width: 180px;
+            border-radius: 10px;
+            border: 2px solid transparent;
+            padding: 12px;
+            background: #fff;
+            text-align: center;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            cursor: default;
+        }
+        .status-flow-card.is-clickable {
+            cursor: pointer;
+        }
+        .status-flow-card.is-clickable:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 18px rgba(15,23,42,0.14);
+        }
+        .status-flow-card.manufacturer {
+            background: #e3f2fd;
+            border-color: #3498db;
+        }
+        .status-flow-card.on_water {
+            background: #e0f2fe;
+            border-color: #0ea5e9;
+        }
+        .status-flow-card.transit_warehouse,
+        .status-flow-card.transit_project {
+            background: #eff6ff;
+            border-color: #3b82f6;
+        }
+        .status-flow-card.warehouse {
+            background: #fff3e0;
+            border-color: #f39c12;
+        }
+        .status-flow-card.project {
+            background: #e8f5e8;
+            border-color: #27ae60;
+        }
+        .status-flow-title {
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 6px;
+            font-size: 0.92em;
+        }
+        .status-flow-destination {
+            font-size: 0.78em;
+            color: #475569;
+            margin-bottom: 8px;
+            min-height: 18px;
+        }
+        .status-flow-pallets {
+            font-size: 1.02em;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .status-flow-modules {
+            font-size: 0.82em;
+            color: #475569;
+        }
+        .status-flow-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 30px;
+            gap: 2px;
+            font-weight: 700;
+        }
+        .status-flow-arrow.sea {
+            color: #0ea5e9;
+        }
+        .status-flow-arrow.land {
+            color: #2563eb;
+        }
+        .status-flow-arrow .arrow-icon {
+            font-size: 0.9rem;
+            line-height: 1;
+        }
+        .status-flow-arrow .arrow-line {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
         
         .pallet-count {
             display: grid;
@@ -1062,97 +1151,171 @@ $conn->close();
                 <div class="movement-summary" style="flex: 1; margin-bottom: 0;">
                     <h3>Pallet Status Breakdown</h3>
                     <?php 
-                    // Calculate totals for each main status
                     $status_totals = [
                         'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+                        'On Water' => ['pallets' => 0, 'modules' => 0],
+                        'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
                         'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+                        'In Transit to Project' => ['pallets' => 0, 'modules' => 0],
                         'Delivered to Project' => ['pallets' => 0, 'modules' => 0]
                     ];
-                    
-                    // NEW: Check if any modules ever went through a warehouse
-                    $warehouse_ever_used = false;
-                    foreach ($movement_data as $movement) {
-                        if (strpos($movement['status'], 'Warehouse') !== false || 
-                            !empty($movement['current_warehouse_id_info']) ||
-                            !empty($movement['delivery_warehouse_id'])) {
-                            $warehouse_ever_used = true;
-                            break;
-                        }
-                    }
-                    // Also check detailed breakdown for any warehouse-related statuses
-                    if (!$warehouse_ever_used && !empty($detailed_breakdown)) {
-                        foreach ($detailed_breakdown as $status => $data) {
-                            if (strpos($status, 'Warehouse') !== false) {
-                                $warehouse_ever_used = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Process the detailed breakdown to get totals
+                    $status_destinations = [
+                        'On Water' => [],
+                        'In Transit to Warehouse' => [],
+                        'In Warehouse' => [],
+                        'In Transit to Project' => [],
+                        'Delivered to Project' => []
+                    ];
+
                     if (!empty($detailed_breakdown)) {
                         foreach ($detailed_breakdown as $status => $data) {
                             if (strpos($status, 'At Manufacturer') !== false) {
                                 $status_totals['At Manufacturer']['pallets'] += $data['pallet_count'];
                                 $status_totals['At Manufacturer']['modules'] += $data['total_modules'];
+                            } elseif (strpos($status, 'In Transit to Warehouse') !== false) {
+                                $status_totals['In Transit to Warehouse']['pallets'] += $data['pallet_count'];
+                                $status_totals['In Transit to Warehouse']['modules'] += $data['total_modules'];
+                                $whName = trim((string)($data['warehouse_name'] ?? preg_replace('/^In Transit to Warehouse\s*-\s*/', '', (string)$status)));
+                                if ($whName !== '') {
+                                    $status_destinations['In Transit to Warehouse'][] = $whName;
+                                }
                             } elseif (strpos($status, 'In Warehouse') !== false) {
                                 $status_totals['In Warehouse']['pallets'] += $data['pallet_count'];
                                 $status_totals['In Warehouse']['modules'] += $data['total_modules'];
+                                $whName = trim((string)($data['warehouse_name'] ?? preg_replace('/^In Warehouse\s*-\s*/', '', (string)$status)));
+                                if ($whName !== '') {
+                                    $status_destinations['In Warehouse'][] = $whName;
+                                }
+                            } elseif (strpos($status, 'In Transit to Project') !== false) {
+                                $status_totals['In Transit to Project']['pallets'] += $data['pallet_count'];
+                                $status_totals['In Transit to Project']['modules'] += $data['total_modules'];
+                                $projectName = trim((string)($data['project_name'] ?? preg_replace('/^In Transit to Project\s*-\s*/', '', (string)$status)));
+                                if ($projectName !== '') {
+                                    $status_destinations['In Transit to Project'][] = $projectName;
+                                }
                             } elseif (strpos($status, 'Delivered to Project') !== false) {
                                 $status_totals['Delivered to Project']['pallets'] += $data['pallet_count'];
                                 $status_totals['Delivered to Project']['modules'] += $data['total_modules'];
+                                $projectName = trim((string)($data['project_name'] ?? preg_replace('/^Delivered to Project\s*-\s*/', '', (string)$status)));
+                                if ($projectName !== '') {
+                                    $status_destinations['Delivered to Project'][] = $projectName;
+                                }
                             }
                         }
                     }
+
+                    foreach ($on_water_containers as $containerSummary) {
+                        $status_totals['On Water']['pallets'] += (int)($containerSummary['pallet_count'] ?? 0);
+                        $status_totals['On Water']['modules'] += (int)($containerSummary['module_count'] ?? 0);
+                        $portName = trim((string)($containerSummary['destination_port_name'] ?? ''));
+                        if ($portName !== '') {
+                            $status_destinations['On Water'][] = $portName;
+                        }
+                    }
+
+                    $formatDestinationSummary = function(array $labels, string $singlePrefix, string $multiPrefix): string {
+                        $clean = [];
+                        foreach ($labels as $label) {
+                            $labelClean = trim((string)$label);
+                            if ($labelClean !== '') {
+                                $clean[$labelClean] = true;
+                            }
+                        }
+                        $names = array_keys($clean);
+                        $count = count($names);
+                        if ($count === 0) {
+                            return '';
+                        }
+                        if ($count === 1) {
+                            return $singlePrefix . $names[0];
+                        }
+                        return $multiPrefix . $names[0] . ' +' . ($count - 1) . ' more';
+                    };
+
+                    $flow_nodes = [
+                        'manufacturer' => [
+                            'title' => '📍 At Manufacturer',
+                            'status_key' => 'At Manufacturer',
+                            'click' => 'manufacturer',
+                            'destination' => ''
+                        ],
+                        'on_water' => [
+                            'title' => '⛴ On Water',
+                            'status_key' => 'On Water',
+                            'click' => '',
+                            'destination' => $formatDestinationSummary($status_destinations['On Water'], 'To port: ', 'Ports: ')
+                        ],
+                        'transit_warehouse' => [
+                            'title' => '🚚 In Transit to Warehouse',
+                            'status_key' => 'In Transit to Warehouse',
+                            'click' => '',
+                            'destination' => $formatDestinationSummary($status_destinations['In Transit to Warehouse'], 'To warehouse: ', 'Warehouses: ')
+                        ],
+                        'warehouse' => [
+                            'title' => '🏢 In Warehouse',
+                            'status_key' => 'In Warehouse',
+                            'click' => 'warehouse',
+                            'destination' => $formatDestinationSummary($status_destinations['In Warehouse'], 'At warehouse: ', 'Warehouses: ')
+                        ],
+                        'transit_project' => [
+                            'title' => '🚚 In Transit to Project',
+                            'status_key' => 'In Transit to Project',
+                            'click' => '',
+                            'destination' => $formatDestinationSummary($status_destinations['In Transit to Project'], 'To project: ', 'Projects: ')
+                        ],
+                        'project' => [
+                            'title' => '🎯 Delivered to Project',
+                            'status_key' => 'Delivered to Project',
+                            'click' => 'project',
+                            'destination' => $formatDestinationSummary($status_destinations['Delivered to Project'], 'Delivered to: ', 'Projects: ')
+                        ]
+                    ];
+
+                    $flow_order = ['manufacturer', 'on_water', 'transit_warehouse', 'warehouse', 'transit_project', 'project'];
+                    $active_flow = [];
+                    foreach ($flow_order as $flowKey) {
+                        $statusKey = $flow_nodes[$flowKey]['status_key'];
+                        if (($status_totals[$statusKey]['pallets'] ?? 0) > 0) {
+                            $active_flow[] = $flowKey;
+                        }
+                    }
+                    if (empty($active_flow)) {
+                        $active_flow = ['manufacturer', 'project'];
+                    }
                     ?>
-                    
-                    <div style="display: flex; justify-content: space-between; gap: 15px; align-items: center;">
-                        <!-- At Manufacturer -->
-                        <div onclick="showDetailedBreakdown('manufacturer')" style="flex: 1; text-align: center; padding: 12px; background-color: #e3f2fd; border-radius: 8px; border: 2px solid #3498db; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                            <div style="font-weight: 600; color: #1565c0; margin-bottom: 6px; font-size: 0.9em;">
-                                📍 At Manufacturer
+
+                    <div class="status-flow-row">
+                        <?php foreach ($active_flow as $flowIndex => $flowKey): ?>
+                            <?php
+                                $node = $flow_nodes[$flowKey];
+                                $statusKey = $node['status_key'];
+                                $palletCount = (int)($status_totals[$statusKey]['pallets'] ?? 0);
+                                $moduleCount = (int)($status_totals[$statusKey]['modules'] ?? 0);
+                                $isClickable = $node['click'] !== '';
+                            ?>
+                            <div
+                                class="status-flow-card <?php echo htmlspecialchars($flowKey); ?> <?php echo $isClickable ? 'is-clickable' : ''; ?>"
+                                <?php if ($isClickable): ?>
+                                    onclick="showDetailedBreakdown('<?php echo htmlspecialchars($node['click']); ?>')"
+                                <?php endif; ?>
+                            >
+                                <div class="status-flow-title"><?php echo htmlspecialchars($node['title']); ?></div>
+                                <div class="status-flow-destination"><?php echo htmlspecialchars($node['destination']); ?></div>
+                                <div class="status-flow-pallets"><?php echo number_format($palletCount); ?> pallets</div>
+                                <div class="status-flow-modules"><?php echo number_format($moduleCount); ?> modules</div>
                             </div>
-                            <div style="color: #1976d2; font-size: 1.1em; font-weight: bold;">
-                                <?php echo $status_totals['At Manufacturer']['pallets']; ?> pallets
-                            </div>
-                            <div style="color: #666; font-size: 0.85em;">
-                                <?php echo number_format($status_totals['At Manufacturer']['modules']); ?> modules
-                            </div>
-                        </div>
-                        
-                        <?php if ($warehouse_ever_used): ?>
-                        <!-- Arrow -->
-                        <div style="color: #666; font-size: 1.5em;">→</div>
-                        
-                        <!-- In Warehouse -->
-                        <div onclick="showDetailedBreakdown('warehouse')" style="flex: 1; text-align: center; padding: 12px; background-color: #fff3e0; border-radius: 8px; border: 2px solid #f39c12; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                            <div style="font-weight: 600; color: #e65100; margin-bottom: 6px; font-size: 0.9em;">
-                                🏢 In Warehouse
-                            </div>
-                            <div style="color: #f57c00; font-size: 1.1em; font-weight: bold;">
-                                <?php echo $status_totals['In Warehouse']['pallets']; ?> pallets
-                            </div>
-                            <div style="color: #666; font-size: 0.85em;">
-                                <?php echo number_format($status_totals['In Warehouse']['modules']); ?> modules
-                            </div>
-                        </div>
-                        <?php endif; ?>
-                        
-                        <!-- Arrow -->
-                        <div style="color: #666; font-size: 1.5em;">→</div>
-                        
-                        <!-- Delivered to Project -->
-                        <div onclick="showDetailedBreakdown('project')" style="flex: 1; text-align: center; padding: 12px; background-color: #e8f5e8; border-radius: 8px; border: 2px solid #27ae60; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                            <div style="font-weight: 600; color: #1b5e20; margin-bottom: 6px; font-size: 0.9em;">
-                                🎯 Delivered to Project
-                            </div>
-                            <div style="color: #2e7d32; font-size: 1.1em; font-weight: bold;">
-                                <?php echo $status_totals['Delivered to Project']['pallets']; ?> pallets
-                            </div>
-                            <div style="color: #666; font-size: 0.85em;">
-                                <?php echo number_format($status_totals['Delivered to Project']['modules']); ?> modules
-                            </div>
-                        </div>
+
+                            <?php if ($flowIndex < count($active_flow) - 1): ?>
+                                <?php
+                                    $nextKey = $active_flow[$flowIndex + 1];
+                                    $isSeaArrow = ($flowKey === 'on_water' || $nextKey === 'on_water');
+                                ?>
+                                <div class="status-flow-arrow <?php echo $isSeaArrow ? 'sea' : 'land'; ?>">
+                                    <span class="arrow-icon"><?php echo $isSeaArrow ? '⛴' : '🚚'; ?></span>
+                                    <span class="arrow-line">→</span>
+                                </div>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
                     </div>
                 </div>
             </div>
