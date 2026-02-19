@@ -488,15 +488,62 @@ $conn->close();
         body { font-family: "Poppins", sans-serif; background: #f4f8fb; }
         main { padding: 16px 14px 38px; }
         .tracker-hero {
-            background: linear-gradient(135deg, #ffffff 0%, #eef8fb 100%);
-            border: 1px solid rgba(72, 140, 154, 0.14);
-            border-radius: 18px;
-            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.07);
-            padding: 22px 24px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            border-radius: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            padding: 28px 30px;
             margin-bottom: 20px;
+            position: relative;
+            overflow: hidden;
         }
-        .tracker-hero h1 { margin: 0 0 6px 0; color: #17364d; font-size: 2rem; line-height: 1.1; }
-        .tracker-hero p { margin: 0; color: #59758a; }
+        .tracker-hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .tracker-hero-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        .tracker-hero h1 {
+            margin: 0 0 8px 0;
+            color: #17364d;
+            font-size: 2rem;
+            line-height: 1.1;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .tracker-hero p { margin: 0; color: #59758a; max-width: 720px; }
+        .hero-action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-decoration: none;
+            border: 1px solid #488C9A;
+            color: #488C9A;
+            background: #fff;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .hero-action-btn:hover {
+            background: #488C9A;
+            color: #fff;
+            transform: translateY(-1px);
+        }
         .tracker-card {
             background: #fff;
             border: 1px solid rgba(148, 163, 184, 0.25);
@@ -738,12 +785,21 @@ $conn->close();
     ?>
 
     <div class="tracker-hero">
-        <h1 style="margin:0 0 6px 0;">Container ETA Tracker</h1>
-        <p style="margin:0; color:#64748b;">
-            <?php echo $can_edit_eta
-                ? 'Container status is system-managed; ETA can be updated by your role.'
-                : 'Read-only view of container numbers, ETA timing, and current automated shipment status.'; ?>
-        </p>
+        <div class="tracker-hero-head">
+            <div>
+                <h1>Container ETA Tracker</h1>
+                <p>
+                    <?php echo $can_edit_eta
+                        ? 'Container status is system-managed; ETA and vessel waypoints can be updated by your role.'
+                        : 'Read-only view of container numbers, ETA timing, and current automated shipment status.'; ?>
+                </p>
+            </div>
+            <?php if ($selected_project_id > 0): ?>
+                <a class="hero-action-btn" href="module_movements.php?project_id=<?php echo (int)$selected_project_id; ?>">
+                    <span>&#128506;</span> View Movement Map
+                </a>
+            <?php endif; ?>
+        </div>
     </div>
 
     <?php if (is_array($tracker_flash) && !empty($tracker_flash['message'])): ?>
