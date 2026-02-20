@@ -77,7 +77,9 @@ $project_data = null;
 $movement_data = [];
 $detailed_breakdown = [];
 $on_water_containers = [];
-$transit_breakdown = [];
+$manufacturer_summary = [];
+$intermediate_summary = ['ports' => [], 'warehouses' => []];
+$project_summary = [];
 $errorMessage = '';
 
 // If batch_id is provided but project_id is not, try to get project_id from the batch
@@ -894,7 +896,6 @@ $conn->close();
             cursor: pointer;
         }
         .status-flow-card.is-clickable:hover {
-            transform: translateY(-2px);
             box-shadow: 0 8px 18px rgba(15,23,42,0.14);
         }
         .status-flow-card.manufacturer {
@@ -937,68 +938,19 @@ $conn->close();
         }
         .status-flow-arrow {
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-width: 84px;
-            gap: 2px;
-            padding: 8px 6px;
-            border-radius: 10px;
-            border: 1px dashed #cbd5e1;
-            background: #f8fafc;
+            min-width: 32px;
+            color: #94a3b8;
             font-weight: 700;
-            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            background: transparent;
+            border: none;
+            padding: 0;
             cursor: default;
-        }
-        .status-flow-arrow.is-clickable {
-            cursor: pointer;
-            border-style: solid;
-        }
-        .status-flow-arrow.is-clickable:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 6px 14px rgba(15,23,42,0.12);
-        }
-        .status-flow-arrow.sea {
-            color: #0ea5e9;
-            border-color: rgba(14,165,233,0.45);
-            background: #eff9ff;
-        }
-        .status-flow-arrow.land {
-            color: #2563eb;
-            border-color: rgba(37,99,235,0.35);
-            background: #eef4ff;
-        }
-        .status-flow-arrow.customs {
-            color: #7c3aed;
-            border-color: rgba(124,58,237,0.35);
-            background: #f5f3ff;
-        }
-        .status-flow-arrow .arrow-icon {
-            font-size: 1rem;
-            line-height: 1;
         }
         .status-flow-arrow .arrow-line {
             font-size: 1.2rem;
             line-height: 1;
-        }
-        .status-flow-arrow .arrow-stage {
-            font-size: 0.7rem;
-            font-weight: 600;
-            letter-spacing: 0.01em;
-            text-align: center;
-            line-height: 1.1;
-        }
-        .status-flow-arrow.connector {
-            min-width: 32px;
-            padding: 0;
-            border: none;
-            background: transparent;
-            color: #94a3b8;
-            cursor: default;
-        }
-        .status-flow-arrow.connector .arrow-icon,
-        .status-flow-arrow.connector .arrow-stage {
-            display: none;
         }
         
         .pallet-count {
@@ -1192,335 +1144,140 @@ $conn->close();
                     <h3>Pallet Status Breakdown</h3>
                     <?php
                     $status_totals = [
-                        'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
-                        'In Warehouse' => ['pallets' => 0, 'modules' => 0],
-                        'Delivered to Project' => ['pallets' => 0, 'modules' => 0]
+                        'manufacturer' => ['pallets' => 0, 'modules' => 0],
+                        'intermediate' => ['pallets' => 0, 'modules' => 0],
+                        'project' => ['pallets' => 0, 'modules' => 0]
                     ];
-                    $status_destinations = [
-                        'In Warehouse' => [],
-                        'Delivered to Project' => []
-                    ];
-                    $transit_totals = [
-                        'On Water' => ['pallets' => 0, 'modules' => 0],
-                        'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
-                        'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
-                        'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
-                    ];
-                    $transit_destinations = [
-                        'On Water' => [],
-                        'Cleared Customs' => [],
-                        'In Transit to Warehouse' => [],
-                        'In Transit to Project' => []
-                    ];
+                    $manufacturer_summary = [];
+                    $intermediate_summary = ['ports' => [], 'warehouses' => []];
+                    $project_summary = [];
 
-                    if (!empty($detailed_breakdown)) {
-                        foreach ($detailed_breakdown as $status => $data) {
-                            if (strpos($status, 'At Manufacturer') !== false) {
-                                $status_totals['At Manufacturer']['pallets'] += (int)$data['pallet_count'];
-                                $status_totals['At Manufacturer']['modules'] += (int)$data['total_modules'];
-                            } elseif (strpos($status, 'In Warehouse') !== false) {
-                                $status_totals['In Warehouse']['pallets'] += (int)$data['pallet_count'];
-                                $status_totals['In Warehouse']['modules'] += (int)$data['total_modules'];
-                                $warehouseName = trim((string)($data['warehouse_name'] ?? preg_replace('/^In Warehouse\s*-\s*/', '', (string)$status)));
-                                if ($warehouseName !== '') {
-                                    $status_destinations['In Warehouse'][] = $warehouseName;
-                                }
-                            } elseif (strpos($status, 'Delivered to Project') !== false) {
-                                $status_totals['Delivered to Project']['pallets'] += (int)$data['pallet_count'];
-                                $status_totals['Delivered to Project']['modules'] += (int)$data['total_modules'];
-                                $projectName = trim((string)($data['project_name'] ?? preg_replace('/^Delivered to Project\s*-\s*/', '', (string)$status)));
-                                if ($projectName !== '') {
-                                    $status_destinations['Delivered to Project'][] = $projectName;
-                                }
-                            } elseif (strpos($status, 'In Transit to Warehouse') !== false) {
-                                $transit_totals['In Transit to Warehouse']['pallets'] += (int)$data['pallet_count'];
-                                $transit_totals['In Transit to Warehouse']['modules'] += (int)$data['total_modules'];
-                                $warehouseName = trim((string)($data['warehouse_name'] ?? preg_replace('/^In Transit to Warehouse\s*-\s*/', '', (string)$status)));
-                                if ($warehouseName !== '') {
-                                    $transit_destinations['In Transit to Warehouse'][] = $warehouseName;
-                                }
-                            } elseif (strpos($status, 'In Transit to Project') !== false) {
-                                $transit_totals['In Transit to Project']['pallets'] += (int)$data['pallet_count'];
-                                $transit_totals['In Transit to Project']['modules'] += (int)$data['total_modules'];
-                                $projectName = trim((string)($data['project_name'] ?? preg_replace('/^In Transit to Project\s*-\s*/', '', (string)$status)));
-                                if ($projectName !== '') {
-                                    $transit_destinations['In Transit to Project'][] = $projectName;
-                                }
-                            } elseif (strpos($status, 'Cleared Customs') !== false) {
-                                $transit_totals['Cleared Customs']['pallets'] += (int)$data['pallet_count'];
-                                $transit_totals['Cleared Customs']['modules'] += (int)$data['total_modules'];
+                    $addSummary = function(array &$target, string $label, int $pallets, int $modules): void {
+                        $clean = trim($label);
+                        if ($clean === '') {
+                            return;
+                        }
+                        if (!isset($target[$clean])) {
+                            $target[$clean] = ['pallets' => 0, 'modules' => 0];
+                        }
+                        $target[$clean]['pallets'] += $pallets;
+                        $target[$clean]['modules'] += $modules;
+                    };
+
+                    foreach ($movement_data as $movementEntry) {
+                        $status = trim((string)($movementEntry['status'] ?? ''));
+                        $palletCount = (int)($movementEntry['pallet_count'] ?? 0);
+                        $moduleCount = (int)($movementEntry['total_quantity'] ?? 0);
+                        if ($palletCount <= 0 && $moduleCount <= 0) {
+                            continue;
+                        }
+
+                        $manufacturerName = trim((string)($movementEntry['manufacturer_company'] ?? $movementEntry['manufacturer_name'] ?? 'Unknown Manufacturer'));
+                        if ($manufacturerName === '') {
+                            $manufacturerName = 'Unknown Manufacturer';
+                        }
+                        $addSummary($manufacturer_summary, $manufacturerName, $palletCount, $moduleCount);
+
+                        $currentWarehouse = trim((string)($movementEntry['current_warehouse_name'] ?? ''));
+                        $deliveryWarehouse = trim((string)($movementEntry['delivery_warehouse_name'] ?? ''));
+                        $originWarehouse = trim((string)($movementEntry['origin_warehouse_name'] ?? ''));
+                        $warehouseHistoryName = '';
+
+                        if ($status === 'At Manufacturer') {
+                            $status_totals['manufacturer']['pallets'] += $palletCount;
+                            $status_totals['manufacturer']['modules'] += $moduleCount;
+                        } elseif (strpos($status, 'Delivered to Project') !== false) {
+                            $status_totals['project']['pallets'] += $palletCount;
+                            $status_totals['project']['modules'] += $moduleCount;
+                            $projectName = trim((string)($movementEntry['project_name'] ?? ($project_data['project_name'] ?? 'Project Site')));
+                            if ($projectName === '') {
+                                $projectName = 'Project Site';
                             }
+                            $addSummary($project_summary, $projectName, $palletCount, $moduleCount);
+                            $warehouseHistoryName = $originWarehouse !== '' ? $originWarehouse : ($deliveryWarehouse !== '' ? $deliveryWarehouse : $currentWarehouse);
+                        } else {
+                            // Intermediate totals should only represent pallets physically at an intermediate stop.
+                            if (in_array($status, ['In Warehouse', 'Cleared Customs'], true)) {
+                                $status_totals['intermediate']['pallets'] += $palletCount;
+                                $status_totals['intermediate']['modules'] += $moduleCount;
+                            }
+                            if ($status === 'In Warehouse') {
+                                $warehouseHistoryName = $currentWarehouse;
+                            } elseif ($status === 'Cleared Customs') {
+                                $warehouseHistoryName = $deliveryWarehouse !== '' ? $deliveryWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $originWarehouse);
+                            } elseif ($status === 'In Transit to Warehouse') {
+                                $warehouseHistoryName = $deliveryWarehouse !== '' ? $deliveryWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $originWarehouse);
+                            } elseif ($status === 'In Transit to Project') {
+                                $warehouseHistoryName = $originWarehouse !== '' ? $originWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $deliveryWarehouse);
+                            }
+                        }
+
+                        if ($warehouseHistoryName !== '') {
+                            $addSummary($intermediate_summary['warehouses'], $warehouseHistoryName, $palletCount, $moduleCount);
                         }
                     }
 
-                    foreach ($on_water_containers as $containerSummary) {
-                        $transit_totals['On Water']['pallets'] += (int)($containerSummary['pallet_count'] ?? 0);
-                        $transit_totals['On Water']['modules'] += (int)($containerSummary['module_count'] ?? 0);
-                        $portName = trim((string)($containerSummary['destination_port_name'] ?? ''));
-                        if ($portName !== '') {
-                            $transit_destinations['On Water'][] = $portName;
-                        }
+                    $projectNameDefault = trim((string)($project_data['project_name'] ?? 'Project Site'));
+                    if ($projectNameDefault === '') {
+                        $projectNameDefault = 'Project Site';
+                    }
+                    if (!isset($project_summary[$projectNameDefault])) {
+                        $project_summary[$projectNameDefault] = [
+                            'pallets' => (int)$status_totals['project']['pallets'],
+                            'modules' => (int)$status_totals['project']['modules']
+                        ];
                     }
 
-                    $collectUniqueLabels = function(array ...$labelGroups): array {
-                        $unique = [];
-                        foreach ($labelGroups as $group) {
-                            foreach ($group as $label) {
-                                $clean = trim((string)$label);
-                                if ($clean !== '') {
-                                    $unique[$clean] = true;
-                                }
-                            }
-                        }
-                        return array_keys($unique);
-                    };
+                    ksort($manufacturer_summary);
+                    ksort($intermediate_summary['ports']);
+                    ksort($intermediate_summary['warehouses']);
+                    ksort($project_summary);
 
-                    $formatDestinationSummary = function(array $labels, string $singlePrefix, string $multiPrefix): string {
-                        $count = count($labels);
-                        if ($count === 0) {
-                            return '';
-                        }
-                        if ($count === 1) {
-                            return $singlePrefix . $labels[0];
-                        }
-                        return $multiPrefix . $labels[0] . ' +' . ($count - 1) . ' more';
-                    };
-
-                    $port_destination_labels = $collectUniqueLabels(
-                        $transit_destinations['On Water'],
-                        $transit_destinations['Cleared Customs']
-                    );
-                    $warehouse_destination_labels = $collectUniqueLabels(
-                        $status_destinations['In Warehouse'],
-                        $transit_destinations['In Transit to Warehouse']
-                    );
-                    $project_destination_labels = $collectUniqueLabels(
-                        $status_destinations['Delivered to Project'],
-                        $transit_destinations['In Transit to Project']
-                    );
-
-                    $has_port_stop = (($transit_totals['On Water']['pallets'] + $transit_totals['Cleared Customs']['pallets']) > 0) || !empty($port_destination_labels);
-                    $has_warehouse_stop = (($status_totals['In Warehouse']['pallets'] + $transit_totals['In Transit to Warehouse']['pallets']) > 0) || !empty($warehouse_destination_labels);
+                    $manufacturer_count = count($manufacturer_summary);
+                    $intermediate_count = count($intermediate_summary['ports']) + count($intermediate_summary['warehouses']);
+                    $project_count = count($project_summary);
 
                     $flow_nodes = [
                         [
                             'key' => 'manufacturer',
                             'class' => 'manufacturer',
-                            'title' => '📍 Manufacturer',
-                            'destination' => '',
-                            'pallets' => (int)$status_totals['At Manufacturer']['pallets'],
-                            'modules' => (int)$status_totals['At Manufacturer']['modules'],
+                            'title' => '📍 ' . (($manufacturer_count === 1) ? 'Manufacturer' : 'Manufacturers'),
+                            'pallets' => (int)$status_totals['manufacturer']['pallets'],
+                            'modules' => (int)$status_totals['manufacturer']['modules'],
                             'click' => 'manufacturer'
+                        ],
+                        [
+                            'key' => 'intermediate',
+                            'class' => 'warehouse',
+                            'title' => '🧭 ' . (($intermediate_count === 1) ? 'Port / Warehouse' : 'Ports / Warehouses'),
+                            'pallets' => (int)$status_totals['intermediate']['pallets'],
+                            'modules' => (int)$status_totals['intermediate']['modules'],
+                            'click' => 'intermediate'
+                        ],
+                        [
+                            'key' => 'project',
+                            'class' => 'project',
+                            'title' => '🎯 ' . (($project_count === 1) ? 'Project' : 'Projects'),
+                            'pallets' => (int)$status_totals['project']['pallets'],
+                            'modules' => (int)$status_totals['project']['modules'],
+                            'click' => 'project'
                         ]
                     ];
-
-                    if ($has_port_stop) {
-                        $flow_nodes[] = [
-                            'key' => 'port',
-                            'class' => 'port',
-                            'title' => '⚓ Port / Customs',
-                            'destination' => $formatDestinationSummary($port_destination_labels, 'Destination: ', 'Stops: '),
-                            'pallets' => (int)$transit_totals['Cleared Customs']['pallets'],
-                            'modules' => (int)$transit_totals['Cleared Customs']['modules'],
-                            'click' => 'port'
-                        ];
-                    }
-
-                    if ($has_warehouse_stop) {
-                        $flow_nodes[] = [
-                            'key' => 'warehouse',
-                            'class' => 'warehouse',
-                            'title' => '🏢 Warehouse Stop',
-                            'destination' => $formatDestinationSummary($warehouse_destination_labels, 'Destination: ', 'Stops: '),
-                            'pallets' => (int)$status_totals['In Warehouse']['pallets'],
-                            'modules' => (int)$status_totals['In Warehouse']['modules'],
-                            'click' => 'warehouse'
-                        ];
-                    }
-
-                    $flow_nodes[] = [
-                        'key' => 'project',
-                        'class' => 'project',
-                        'title' => '🎯 Project Site',
-                        'destination' => $formatDestinationSummary($project_destination_labels, 'Destination: ', 'Destinations: '),
-                        'pallets' => (int)$status_totals['Delivered to Project']['pallets'],
-                        'modules' => (int)$status_totals['Delivered to Project']['modules'],
-                        'click' => 'project'
-                    ];
-
-                    $transit_breakdown = [];
-                    $flow_arrows = [];
-                    $addTransitArrow = function(string $key, string $mode, string $icon, string $label, string $title, array $stages) use (&$flow_arrows, &$transit_breakdown): void {
-                        $pallets = 0;
-                        $modules = 0;
-                        foreach ($stages as $stage) {
-                            $pallets += (int)($stage['pallets'] ?? 0);
-                            $modules += (int)($stage['modules'] ?? 0);
-                        }
-                        $is_clickable = $pallets > 0 || $modules > 0;
-                        $flow_arrows[] = [
-                            'key' => $key,
-                            'mode' => $mode,
-                            'icon' => $icon,
-                            'label' => $label,
-                            'pallets' => $pallets,
-                            'modules' => $modules,
-                            'is_clickable' => $is_clickable
-                        ];
-                        $transit_breakdown[$key] = [
-                            'title' => $title,
-                            'stages' => $stages,
-                            'total_pallets' => $pallets,
-                            'total_modules' => $modules
-                        ];
-                    };
-
-                    if ($has_port_stop) {
-                        $addTransitArrow(
-                            'transit_to_port',
-                            'sea',
-                            '⛴',
-                            'On Water',
-                            'Manufacturer to Port Transit',
-                            [
-                                [
-                                    'label' => 'On Water',
-                                    'pallets' => (int)$transit_totals['On Water']['pallets'],
-                                    'modules' => (int)$transit_totals['On Water']['modules'],
-                                    'destinations' => $transit_destinations['On Water']
-                                ],
-                                [
-                                    'label' => 'Cleared Customs',
-                                    'pallets' => (int)$transit_totals['Cleared Customs']['pallets'],
-                                    'modules' => (int)$transit_totals['Cleared Customs']['modules'],
-                                    'destinations' => $transit_destinations['Cleared Customs']
-                                ]
-                            ]
-                        );
-                    }
-
-                    if ($has_warehouse_stop) {
-                        if ($has_port_stop) {
-                            $addTransitArrow(
-                                'transit_to_warehouse',
-                                'land',
-                                '🚚',
-                                'To Warehouse',
-                                'Port to Warehouse Transit',
-                                [
-                                    [
-                                        'label' => 'In Transit to Warehouse',
-                                        'pallets' => (int)$transit_totals['In Transit to Warehouse']['pallets'],
-                                        'modules' => (int)$transit_totals['In Transit to Warehouse']['modules'],
-                                        'destinations' => $transit_destinations['In Transit to Warehouse']
-                                    ]
-                                ]
-                            );
-                        } else {
-                            $addTransitArrow(
-                                'transit_to_warehouse',
-                                'land',
-                                '🚚',
-                                'To Warehouse',
-                                'Manufacturer to Warehouse Transit',
-                                [
-                                    [
-                                        'label' => 'In Transit to Warehouse',
-                                        'pallets' => (int)$transit_totals['In Transit to Warehouse']['pallets'],
-                                        'modules' => (int)$transit_totals['In Transit to Warehouse']['modules'],
-                                        'destinations' => $transit_destinations['In Transit to Warehouse']
-                                    ]
-                                ]
-                            );
-                        }
-                    }
-
-                    if ($has_warehouse_stop) {
-                        $addTransitArrow(
-                            'transit_to_project',
-                            'land',
-                            '🚚',
-                            'To Project',
-                            'Warehouse to Project Transit',
-                            [
-                                [
-                                    'label' => 'In Transit to Project',
-                                    'pallets' => (int)$transit_totals['In Transit to Project']['pallets'],
-                                    'modules' => (int)$transit_totals['In Transit to Project']['modules'],
-                                    'destinations' => $transit_destinations['In Transit to Project']
-                                ]
-                            ]
-                        );
-                    } elseif ($has_port_stop) {
-                        $addTransitArrow(
-                            'transit_to_project',
-                            'land',
-                            '🚚',
-                            'To Project',
-                            'Port to Project Transit',
-                            [
-                                [
-                                    'label' => 'In Transit to Project',
-                                    'pallets' => (int)$transit_totals['In Transit to Project']['pallets'],
-                                    'modules' => (int)$transit_totals['In Transit to Project']['modules'],
-                                    'destinations' => $transit_destinations['In Transit to Project']
-                                ]
-                            ]
-                        );
-                    } else {
-                        $addTransitArrow(
-                            'transit_to_project',
-                            'land',
-                            '🚚',
-                            'Direct',
-                            'Manufacturer to Project Transit',
-                            [
-                                [
-                                    'label' => 'In Transit to Project',
-                                    'pallets' => (int)$transit_totals['In Transit to Project']['pallets'],
-                                    'modules' => (int)$transit_totals['In Transit to Project']['modules'],
-                                    'destinations' => $transit_destinations['In Transit to Project']
-                                ]
-                            ]
-                        );
-                    }
                     ?>
 
                     <div class="status-flow-row">
                         <?php foreach ($flow_nodes as $flowIndex => $node): ?>
-                            <?php $isClickable = !empty($node['click']); ?>
                             <div
-                                class="status-flow-card <?php echo htmlspecialchars((string)$node['class']); ?> <?php echo $isClickable ? 'is-clickable' : ''; ?>"
-                                <?php if ($isClickable): ?>
-                                    onclick="showDetailedBreakdown('<?php echo htmlspecialchars((string)$node['click']); ?>')"
-                                <?php endif; ?>
+                                class="status-flow-card <?php echo htmlspecialchars((string)$node['class']); ?> is-clickable"
+                                onclick="showDetailedBreakdown('<?php echo htmlspecialchars((string)$node['click']); ?>')"
                             >
                                 <div class="status-flow-title"><?php echo htmlspecialchars((string)$node['title']); ?></div>
                                 <div class="status-flow-pallets"><?php echo number_format((int)$node['pallets']); ?> pallets</div>
                                 <div class="status-flow-modules"><?php echo number_format((int)$node['modules']); ?> modules</div>
                             </div>
-
                             <?php if ($flowIndex < count($flow_nodes) - 1): ?>
-                                <?php
-                                    $arrow = $flow_arrows[$flowIndex] ?? [
-                                        'key' => 'transit_gap_' . $flowIndex,
-                                        'mode' => 'land',
-                                        'icon' => '→',
-                                        'label' => 'Transit',
-                                        'is_clickable' => false
-                                    ];
-                                    $arrowClickable = !empty($arrow['is_clickable']);
-                                ?>
-                                <div
-                                    class="status-flow-arrow <?php echo $arrowClickable ? htmlspecialchars((string)$arrow['mode']) : 'connector'; ?> <?php echo $arrowClickable ? 'is-clickable' : ''; ?>"
-                                    <?php if ($arrowClickable): ?>
-                                        onclick="showDetailedBreakdown('<?php echo htmlspecialchars((string)$arrow['key']); ?>')"
-                                    <?php endif; ?>
-                                    title="<?php echo htmlspecialchars((string)$arrow['label']); ?>"
-                                >
-                                    <span class="arrow-icon"><?php echo htmlspecialchars((string)$arrow['icon']); ?></span>
+                                <div class="status-flow-arrow">
                                     <span class="arrow-line">→</span>
-                                    <span class="arrow-stage"><?php echo htmlspecialchars((string)$arrow['label']); ?></span>
                                 </div>
                             <?php endif; ?>
                         <?php endforeach; ?>
@@ -1565,7 +1322,9 @@ $conn->close();
 const movementData = <?php echo json_encode($movement_data ?? []); ?>;
 const projectData = <?php echo json_encode($project_data ?? null); ?>;
 const detailedBreakdown = <?php echo json_encode($detailed_breakdown ?? []); ?>;
-const transitBreakdown = <?php echo json_encode($transit_breakdown ?? []); ?>;
+const manufacturerSummary = <?php echo json_encode($manufacturer_summary ?? []); ?>;
+const intermediateSummary = <?php echo json_encode($intermediate_summary ?? ['ports' => [], 'warehouses' => []]); ?>;
+const projectSummary = <?php echo json_encode($project_summary ?? []); ?>;
 const onWaterContainers = <?php echo json_encode($on_water_containers ?? []); ?>;
 const selectedProjectId = <?php echo json_encode($selected_project_id); ?>;
 
@@ -2635,20 +2394,14 @@ function showDetailedBreakdown(type) {
     let contentHtml = '';
     
     if (type === 'manufacturer') {
-        titleText = '📍 At Manufacturer - Detailed Breakdown';
+        titleText = '📍 Manufacturer Details';
         contentHtml = generateManufacturerBreakdown();
-    } else if (type === 'port') {
-        titleText = '⚓ Port / Customs - Detailed Breakdown';
-        contentHtml = generatePortBreakdown();
-    } else if (type === 'warehouse') {
-        titleText = '🏢 In Warehouse - Detailed Breakdown';
-        contentHtml = generateWarehouseBreakdown();
+    } else if (type === 'intermediate') {
+        titleText = '🧭 Ports / Warehouses Details';
+        contentHtml = generateIntermediateBreakdown();
     } else if (type === 'project') {
-        titleText = '🎯 Delivered to Project - Detailed Breakdown';
+        titleText = '🎯 Project Details';
         contentHtml = generateProjectBreakdown();
-    } else if (Object.prototype.hasOwnProperty.call(transitBreakdown, type)) {
-        titleText = `↔ ${transitBreakdown[type]?.title || 'Transit Stage'} - Detailed Breakdown`;
-        contentHtml = generateTransitBreakdown(type);
     }
     
     title.textContent = titleText;
@@ -2661,93 +2414,28 @@ function closeDetailModal() {
 }
 
 function generateManufacturerBreakdown() {
-    let html = '<div style="max-height: 400px; overflow-y: auto;">';
-    let hasData = false;
+    const entries = Object.entries(manufacturerSummary || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    let html = '<div style="max-height: 420px; overflow-y: auto;">';
 
-    Object.keys(detailedBreakdown).forEach(status => {
-        if (status.includes('At Manufacturer')) {
-            hasData = true;
-            const data = detailedBreakdown[status];
-            const manufacturerName = status.replace('At Manufacturer', '').replace(' - ', '').trim() || 'Manufacturer';
-
-            // Create View Pallets link with status filter
-            const viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=At%20Manufacturer&from=module_movements`;
-
-            html += `
-                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #3498db;">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                        <h4 style="margin: 0; color: #1565c0;">${status}</h4>
-                    </div>
-                    <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
-            `;
-
-            if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
-                html += '<p><strong>Wattage Breakdown:</strong></p><ul style="margin-bottom: 15px;">';
-                Object.keys(data.wattage_breakdown).forEach(wattage => {
-                    const wattData = data.wattage_breakdown[wattage];
-                    html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
-                });
-                html += '</ul>';
-            }
-
-            html += `
-                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
-                        <a href="${viewPalletsUrl}" class="view-pallets-link" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(52,152,219,0.3)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                            View Pallets
-                        </a>
-                    </div>
-                </div>
-            `;
-        }
-    });
-
-    if (!hasData) {
-        html += '<p style="text-align: center; color: #666; font-style: italic;">No modules currently at manufacturer.</p>';
-    }
-
-    html += '</div>';
-    return html;
-}
-
-function generatePortBreakdown() {
-    let html = '<div style="max-height: 400px; overflow-y: auto;">';
-    const groupedByPort = new Map();
-
-    onWaterContainers.forEach(container => {
-        const portName = (container.destination_port_name || 'Unknown Port').trim() || 'Unknown Port';
-        if (!groupedByPort.has(portName)) {
-            groupedByPort.set(portName, { pallets: 0, modules: 0, containers: [] });
-        }
-        const item = groupedByPort.get(portName);
-        item.pallets += Number(container.pallet_count) || 0;
-        item.modules += Number(container.module_count) || 0;
-        item.containers.push(container);
-    });
-
-    if (groupedByPort.size === 0) {
-        html += '<p style="text-align: center; color: #666; font-style: italic;">No active on-water container destinations.</p>';
+    if (entries.length === 0) {
+        html += '<p style="text-align:center; color:#666; font-style:italic;">No manufacturers found for this project.</p>';
     } else {
-        groupedByPort.forEach((portData, portName) => {
-            const containerList = portData.containers
-                .map(container => `<li>${container.container_number || 'N/A'}${container.eta_date ? ` (ETA ${container.eta_date})` : ''}</li>`)
-                .join('');
+        entries.forEach(([name, totals]) => {
             html += `
-                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-                    <h4 style="margin: 0 0 10px 0; color: #0369a1;">${portName}</h4>
-                    <p><strong>Total:</strong> ${portData.pallets.toLocaleString()} pallets, ${portData.modules.toLocaleString()} modules</p>
-                    <p><strong>Containers:</strong></p>
-                    <ul style="margin-bottom: 15px;">${containerList}</ul>
+                <div style="margin-bottom: 12px; padding: 12px; background:#f8fafc; border:1px solid #dbeafe; border-radius:8px; border-left:4px solid #3498db;">
+                    <div style="font-weight:700; color:#1e3a8a; margin-bottom:4px;">${name}</div>
+                    <div style="font-size:13px; color:#334155;">${(Number(totals?.pallets) || 0).toLocaleString()} pallets</div>
+                    <div style="font-size:12px; color:#64748b;">${(Number(totals?.modules) || 0).toLocaleString()} modules</div>
                 </div>
             `;
         });
     }
 
-    const trackerUrl = selectedProjectId ? `container_tracking.php?project_id=${selectedProjectId}` : 'container_tracking.php';
+    const viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=At%20Manufacturer&from=module_movements`;
     html += `
-        <div style="padding-top: 10px; border-top: 1px solid #eee;">
-            <a href="${trackerUrl}" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500;">
-                View Container ETA Tracker
+        <div style="padding-top:10px; border-top:1px solid #eee;">
+            <a href="${viewPalletsUrl}" style="display:inline-flex; align-items:center; gap:6px; padding:8px 14px; background:linear-gradient(135deg,#3498db 0%,#2980b9 100%); color:white; text-decoration:none; border-radius:6px; font-size:0.9em; font-weight:500;">
+                View At-Manufacturer Pallets
             </a>
         </div>
     `;
@@ -2755,174 +2443,80 @@ function generatePortBreakdown() {
     return html;
 }
 
-function generateWarehouseBreakdown() {
-    let html = '<div style="max-height: 400px; overflow-y: auto;">';
-    let hasData = false;
+function generateIntermediateBreakdown() {
+    const ports = Object.entries((intermediateSummary && intermediateSummary.ports) ? intermediateSummary.ports : {}).sort((a, b) => a[0].localeCompare(b[0]));
+    const warehouses = Object.entries((intermediateSummary && intermediateSummary.warehouses) ? intermediateSummary.warehouses : {}).sort((a, b) => a[0].localeCompare(b[0]));
+    let html = '<div style="max-height: 420px; overflow-y: auto;">';
 
-    Object.keys(detailedBreakdown).forEach(status => {
-        if (status.includes('In Warehouse')) {
-            hasData = true;
-            const data = detailedBreakdown[status];
-            const warehouseId = data.warehouse_id;
-            const warehouseName = data.warehouse_name || status.replace('In Warehouse - ', '');
-
-            // Create clickable warehouse link with referrer
-            const warehouseLink = warehouseId
-                ? `<a href="warehouse_info.php?warehouse_id=${warehouseId}&project_id=${selectedProjectId}&from=module_movements" style="color: #e65100; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${warehouseName}</a>`
-                : warehouseName;
-
-            // Create View Pallets link with status filter
-            const viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=In%20Warehouse&from=module_movements`;
-
-            html += `
-                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #f39c12;">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                        <h4 style="margin: 0; color: #e65100;">
-                            <span style="color: #666; font-weight: normal;">In Warehouse - </span>${warehouseLink}
-                        </h4>
+    if (ports.length === 0 && warehouses.length === 0) {
+        html += '<p style="text-align:center; color:#666; font-style:italic;">No ports or warehouses recorded yet.</p>';
+    } else {
+        if (ports.length > 0) {
+            html += '<h4 style="margin:0 0 10px 0; color:#0369a1;">Ports</h4>';
+            ports.forEach(([name, totals]) => {
+                html += `
+                    <div style="margin-bottom: 10px; padding: 10px 12px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; border-left:4px solid #0ea5e9;">
+                        <div style="font-weight:700; color:#0c4a6e;">${name}</div>
+                        <div style="font-size:12px; color:#334155;">${(Number(totals?.pallets) || 0).toLocaleString()} pallets / ${(Number(totals?.modules) || 0).toLocaleString()} modules</div>
                     </div>
-                    <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
-            `;
-
-            if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
-                html += '<p><strong>Wattage Breakdown:</strong></p><ul style="margin-bottom: 15px;">';
-                Object.keys(data.wattage_breakdown).forEach(wattage => {
-                    const wattData = data.wattage_breakdown[wattage];
-                    html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
-                });
-                html += '</ul>';
-            }
-
-            html += `
-                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
-                        <a href="${viewPalletsUrl}" class="view-pallets-link" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(243,156,18,0.3)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                            View Pallets
-                        </a>
-                    </div>
-                </div>
-            `;
+                `;
+            });
         }
-    });
-
-    if (!hasData) {
-        html += '<p style="text-align: center; color: #666; font-style: italic;">No modules currently in warehouse.</p>';
+        if (warehouses.length > 0) {
+            html += '<h4 style="margin:12px 0 10px 0; color:#b45309;">Warehouses</h4>';
+            warehouses.forEach(([name, totals]) => {
+                html += `
+                    <div style="margin-bottom: 10px; padding: 10px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; border-left:4px solid #f59e0b;">
+                        <div style="font-weight:700; color:#92400e;">${name}</div>
+                        <div style="font-size:12px; color:#334155;">${(Number(totals?.pallets) || 0).toLocaleString()} pallets / ${(Number(totals?.modules) || 0).toLocaleString()} modules</div>
+                    </div>
+                `;
+            });
+        }
     }
 
+    const trackerUrl = selectedProjectId ? `container_tracking.php?project_id=${selectedProjectId}` : 'container_tracking.php';
+    const warehouseUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=In%20Warehouse&from=module_movements`;
+    html += `
+        <div style="padding-top:10px; border-top:1px solid #eee; display:flex; gap:8px; flex-wrap:wrap;">
+            <a href="${trackerUrl}" style="display:inline-flex; align-items:center; gap:6px; padding:8px 14px; background:linear-gradient(135deg,#0ea5e9 0%,#0284c7 100%); color:white; text-decoration:none; border-radius:6px; font-size:0.9em; font-weight:500;">
+                View Container ETA Tracker
+            </a>
+            <a href="${warehouseUrl}" style="display:inline-flex; align-items:center; gap:6px; padding:8px 14px; background:linear-gradient(135deg,#f39c12 0%,#e67e22 100%); color:white; text-decoration:none; border-radius:6px; font-size:0.9em; font-weight:500;">
+                View In-Warehouse Pallets
+            </a>
+        </div>
+    `;
     html += '</div>';
     return html;
 }
 
 function generateProjectBreakdown() {
-    let html = '<div style="max-height: 400px; overflow-y: auto;">';
-    let hasData = false;
+    const entries = Object.entries(projectSummary || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    let html = '<div style="max-height: 420px; overflow-y: auto;">';
 
-    Object.keys(detailedBreakdown).forEach(status => {
-        if (status.includes('Delivered to Project')) {
-            hasData = true;
-            const data = detailedBreakdown[status];
-            const projectId = data.project_id || selectedProjectId;
-            const projectName = data.project_name || (projectData ? projectData.project_name : status.replace('Delivered to Project - ', ''));
-
-            // Create clickable project link with referrer
-            const projectLink = projectId
-                ? `<a href="project_overview.php?project_id=${projectId}&from=module_movements" style="color: #1b5e20; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${projectName}</a>`
-                : projectName;
-
-            // Create View Pallets link with status filter
-            const viewPalletsUrl = `manage_pallets.php?project_id=${projectId || selectedProjectId}&status=Delivered%20to%20Project&from=module_movements`;
-
-            html += `
-                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #27ae60;">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                        <h4 style="margin: 0; color: #1b5e20;">
-                            <span style="color: #666; font-weight: normal;">Delivered to Project - </span>${projectLink}
-                        </h4>
-                    </div>
-                    <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
-            `;
-
-            if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
-                html += '<p><strong>Wattage Breakdown:</strong></p><ul style="margin-bottom: 15px;">';
-                Object.keys(data.wattage_breakdown).forEach(wattage => {
-                    const wattData = data.wattage_breakdown[wattage];
-                    html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
-                });
-                html += '</ul>';
-            }
-
-            html += `
-                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
-                        <a href="${viewPalletsUrl}" class="view-pallets-link" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #27ae60 0%, #1e8449 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(39,174,96,0.3)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                            View Pallets
-                        </a>
-                    </div>
-                </div>
-            `;
-        }
-    });
-
-    if (!hasData) {
-        html += '<p style="text-align: center; color: #666; font-style: italic;">No modules have been delivered to project yet.</p>';
-    }
-
-    html += '</div>';
-    return html;
-}
-
-function generateTransitBreakdown(type) {
-    const config = transitBreakdown[type];
-    if (!config) {
-        return '<p style="text-align: center; color: #666; font-style: italic;">No transit details available.</p>';
-    }
-
-    let html = '<div style="max-height: 400px; overflow-y: auto;">';
-    html += `
-        <div style="margin-bottom: 16px; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #dbeafe;">
-            <div style="font-weight: 700; color: #1e3a8a; margin-bottom: 6px;">${config.title || 'Transit Details'}</div>
-            <div style="font-size: 13px; color: #334155;">
-                Total: ${(Number(config.total_pallets) || 0).toLocaleString()} pallets, ${(Number(config.total_modules) || 0).toLocaleString()} modules
-            </div>
-        </div>
-    `;
-
-    const stages = Array.isArray(config.stages) ? config.stages : [];
-    const stagesWithData = stages.filter(stage => (Number(stage.pallets) || 0) > 0 || (Number(stage.modules) || 0) > 0);
-
-    if (stagesWithData.length === 0) {
-        html += '<p style="text-align: center; color: #666; font-style: italic;">No active pallets in this transit stage.</p>';
+    if (entries.length === 0) {
+        html += '<p style="text-align:center; color:#666; font-style:italic;">No project destinations found.</p>';
     } else {
-        stagesWithData.forEach(stage => {
-            const destinations = Array.isArray(stage.destinations) ? Array.from(new Set(stage.destinations.filter(Boolean))) : [];
-            const destinationText = destinations.length === 0
-                ? 'Destination data unavailable'
-                : (destinations.length === 1 ? destinations[0] : `${destinations[0]} +${destinations.length - 1} more`);
-
+        entries.forEach(([name, totals]) => {
             html += `
-                <div style="margin-bottom: 14px; padding: 12px; background: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px;">
-                        <div style="font-weight: 700; color: #1e293b;">${stage.label || 'Transit Stage'}</div>
-                        <div style="font-size: 12px; color: #0f172a; font-weight: 600;">${(Number(stage.pallets) || 0).toLocaleString()} pallets</div>
-                    </div>
-                    <div style="font-size: 12px; color: #475569; margin-bottom: 4px;">${(Number(stage.modules) || 0).toLocaleString()} modules</div>
-                    <div style="font-size: 12px; color: #64748b;">${destinationText}</div>
+                <div style="margin-bottom: 12px; padding: 12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; border-left:4px solid #27ae60;">
+                    <div style="font-weight:700; color:#166534; margin-bottom:4px;">${name}</div>
+                    <div style="font-size:13px; color:#334155;">${(Number(totals?.pallets) || 0).toLocaleString()} pallets</div>
+                    <div style="font-size:12px; color:#64748b;">${(Number(totals?.modules) || 0).toLocaleString()} modules</div>
                 </div>
             `;
         });
     }
 
-    if (type === 'transit_to_port') {
-        const trackerUrl = selectedProjectId ? `container_tracking.php?project_id=${selectedProjectId}` : 'container_tracking.php';
-        html += `
-            <div style="padding-top: 10px; border-top: 1px solid #eee;">
-                <a href="${trackerUrl}" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500;">
-                    View Container ETA Tracker
-                </a>
-            </div>
-        `;
-    }
-
+    const viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=Delivered%20to%20Project&from=module_movements`;
+    html += `
+        <div style="padding-top:10px; border-top:1px solid #eee;">
+            <a href="${viewPalletsUrl}" style="display:inline-flex; align-items:center; gap:6px; padding:8px 14px; background:linear-gradient(135deg,#27ae60 0%,#1e8449 100%); color:white; text-decoration:none; border-radius:6px; font-size:0.9em; font-weight:500;">
+                View Delivered Pallets
+            </a>
+        </div>
+    `;
     html += '</div>';
     return html;
 }

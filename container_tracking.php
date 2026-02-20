@@ -639,6 +639,9 @@ $conn->close();
         }
         .use-map-btn {
             background: #0ea5e9;
+            grid-column: 1 / -1;
+            width: 100%;
+            justify-self: stretch;
         }
         .use-map-btn:hover {
             background: #0284c7;
@@ -879,6 +882,12 @@ $conn->close();
                                     }
                                 ?>
                                 <tr>
+                                    <?php
+                                        $containerProjectId = (int)($container['project_id'] ?? 0);
+                                        $detailsHref = $containerProjectId > 0
+                                            ? ('view_project.php?project_id=' . $containerProjectId . '&search=' . urlencode((string)$container['container_number']))
+                                            : ('manage_deliveries.php?search=' . urlencode((string)$container['container_number']));
+                                    ?>
                                     <td><strong><?php echo htmlspecialchars($container['container_number']); ?></strong></td>
                                     <td><?php echo htmlspecialchars($container['project_name'] ?? 'N/A'); ?></td>
                                     <td><span class="status-pill"><?php echo htmlspecialchars($container['status_of_delivery'] ?? 'N/A'); ?></span></td>
@@ -917,8 +926,8 @@ $conn->close();
                                                 <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
                                                 <input type="number" step="0.000001" min="-90" max="90" name="vessel_latitude" placeholder="Lat" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLat, 6, '.', '')) : ''; ?>">
                                                 <input type="number" step="0.000001" min="-180" max="180" name="vessel_longitude" placeholder="Lng" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLng, 6, '.', '')) : ''; ?>">
-                                                <button type="button" class="eta-save-btn use-map-btn" <?php echo $map_picker_enabled ? '' : 'disabled title="Map picker unavailable"'; ?>>Use Map</button>
                                                 <button type="submit" class="eta-save-btn">Save</button>
+                                                <button type="button" class="eta-save-btn use-map-btn" <?php echo $map_picker_enabled ? '' : 'disabled title="Map picker unavailable"'; ?>>Use Map</button>
                                             </form>
                                             <?php if ($hasPosition): ?>
                                                 <div class="position-updated">
@@ -941,7 +950,9 @@ $conn->close();
                                     <td class="<?php echo $daysClass; ?>"><?php echo htmlspecialchars($daysText); ?></td>
                                     <td><?php echo htmlspecialchars($container['destination_port_name'] ?? 'N/A'); ?></td>
                                     <td><?php echo number_format((int)($container['pallet_count'] ?? 0)); ?></td>
-                                    <td><a href="manage_deliveries.php?search=<?php echo urlencode($container['container_number']); ?>" class="tracker-link">View</a></td>
+                                    <td>
+                                        <a href="<?php echo htmlspecialchars($detailsHref); ?>" class="tracker-link">View</a>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
