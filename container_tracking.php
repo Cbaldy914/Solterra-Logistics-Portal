@@ -33,6 +33,8 @@ $positions_table_exists = false;
 $waypoints_table_exists = false;
 $positions_table_ready_message = '';
 $project_waypoint_library = [];
+$container_waypoint_cutoff = [];
+$container_route_context = [];
 
 function has_container_tracking_positions_table(mysqli $conn): bool {
     $result = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
@@ -212,40 +214,65 @@ try {
                 throw new Exception('Access denied for the selected container project.');
             }
 
-            $lookupSql = "
-                SELECT d1.id
-                FROM deliveries d1
-                JOIN projects p1 ON d1.project_id = p1.id
-                WHERE d1.container_number = ?
-                  AND d1.project_id = ?
-            ";
-            $lookupParams = [$container_number, $container_project_id];
-            $lookupTypes = 'si';
+            if ($form_action === 'delete_waypoint') {
+                if (!$waypoints_table_exists) {
+                    throw new Exception('Waypoint history storage is not available.');
+                }
+                $waypoint_id = (int)($_POST['waypoint_id'] ?? 0);
+                if ($waypoint_id <= 0) {
+                    throw new Exception('Waypoint ID is required.');
+                }
+                $stmtDeleteWaypoint = $conn->prepare("
+                    DELETE FROM container_tracking_waypoints
+                    WHERE id = ? AND container_number = ? AND project_id = ?
+                    LIMIT 1
+                ");
+                if (!$stmtDeleteWaypoint) {
+                    throw new Exception('Failed to prepare waypoint delete query: ' . $conn->error);
+                }
+                $stmtDeleteWaypoint->bind_param("isi", $waypoint_id, $container_number, $container_project_id);
+                $stmtDeleteWaypoint->execute();
+                $deleted_rows = $stmtDeleteWaypoint->affected_rows;
+                $stmtDeleteWaypoint->close();
+                if ($deleted_rows <= 0) {
+                    throw new Exception('Waypoint not found or already removed.');
+                }
+                $postSuccess = "Waypoint deleted for container {$container_number}.";
+            } else {
+                $lookupSql = "
+                    SELECT d1.id
+                    FROM deliveries d1
+                    JOIN projects p1 ON d1.project_id = p1.id
+                    WHERE d1.container_number = ?
+                      AND d1.project_id = ?
+                ";
+                $lookupParams = [$container_number, $container_project_id];
+                $lookupTypes = 'si';
 
-            if (in_array($role, ['admin', 'customer_admin'], true)) {
-                $lookupSql .= " AND p1.account_id = ?";
-                $lookupParams[] = $account_id_for_admin;
-                $lookupTypes .= 'i';
-            }
+                if (in_array($role, ['admin', 'customer_admin'], true)) {
+                    $lookupSql .= " AND p1.account_id = ?";
+                    $lookupParams[] = $account_id_for_admin;
+                    $lookupTypes .= 'i';
+                }
 
-            $lookupSql .= " ORDER BY d1.id DESC LIMIT 1";
-            $stmtLookup = $conn->prepare($lookupSql);
-            if (!$stmtLookup) {
-                throw new Exception('Failed to prepare ETA lookup query: ' . $conn->error);
-            }
-            $stmtLookup->bind_param($lookupTypes, ...$lookupParams);
-            $stmtLookup->execute();
-            $lookupResult = $stmtLookup->get_result();
-            $latestRow = $lookupResult->fetch_assoc();
-            $stmtLookup->close();
+                $lookupSql .= " ORDER BY d1.id DESC LIMIT 1";
+                $stmtLookup = $conn->prepare($lookupSql);
+                if (!$stmtLookup) {
+                    throw new Exception('Failed to prepare ETA lookup query: ' . $conn->error);
+                }
+                $stmtLookup->bind_param($lookupTypes, ...$lookupParams);
+                $stmtLookup->execute();
+                $lookupResult = $stmtLookup->get_result();
+                $latestRow = $lookupResult->fetch_assoc();
+                $stmtLookup->close();
 
-            if (!$latestRow || empty($latestRow['id'])) {
-                throw new Exception('No editable delivery record found for that container.');
-            }
+                if (!$latestRow || empty($latestRow['id'])) {
+                    throw new Exception('No editable delivery record found for that container.');
+                }
 
-            $latest_delivery_id = (int)$latestRow['id'];
+                $latest_delivery_id = (int)$latestRow['id'];
 
-            if ($form_action === 'update_position') {
+                if ($form_action === 'update_position') {
                 if (!$positions_table_exists) {
                     throw new Exception('Container position storage is not available yet.');
                 }
@@ -346,6 +373,7 @@ try {
                 $stmtUpdateEta->execute();
                 $stmtUpdateEta->close();
                 $postSuccess = "ETA updated for container {$container_number}.";
+                }
             }
         } catch (Exception $postException) {
             $postError = $postException->getMessage();
@@ -417,7 +445,17 @@ try {
             d.created_at,
             d.project_id,
             p.project_name,
+            COALESCE(d.warehouse_id, 0) AS destination_warehouse_id,
             COALESCE(w.name, 'Unknown Port') AS destination_port_name,
+            COALESCE(w.street_address, '') AS destination_port_street,
+            COALESCE(w.city, '') AS destination_port_city,
+            COALESCE(w.state, '') AS destination_port_state,
+            COALESCE(w.zip_code, '') AS destination_port_zip,
+            COALESCE(op.name, '') AS origin_port_name,
+            COALESCE(op.street_address, '') AS origin_port_street,
+            COALESCE(op.city, '') AS origin_port_city,
+            COALESCE(op.state, '') AS origin_port_state,
+            COALESCE(op.zip_code, '') AS origin_port_zip,
             $positionSelectSql
             $waypointSelectSql
             (
@@ -436,6 +474,7 @@ try {
             GROUP BY d1.container_number
         ) latest ON latest.latest_delivery_id = d.id
         JOIN projects p ON d.project_id = p.id
+        LEFT JOIN warehouses op ON d.origin_port_id = op.id
         LEFT JOIN warehouses w ON d.warehouse_id = w.id
         $positionJoinSql
         ORDER BY (d.anticipated_delivery_date IS NULL), d.anticipated_delivery_date ASC, d.container_number ASC
@@ -460,10 +499,55 @@ try {
                     $days_to_eta = null;
                 }
             }
+
+            $destination_address_parts = array_filter([
+                $row['destination_port_street'] ?? '',
+                $row['destination_port_city'] ?? '',
+                $row['destination_port_state'] ?? '',
+                $row['destination_port_zip'] ?? ''
+            ]);
+            $origin_address_parts = array_filter([
+                $row['origin_port_street'] ?? '',
+                $row['origin_port_city'] ?? '',
+                $row['origin_port_state'] ?? '',
+                $row['origin_port_zip'] ?? ''
+            ]);
+
+            $row['destination_port_full_address'] = implode(', ', $destination_address_parts);
+            $row['origin_port_full_address'] = implode(', ', $origin_address_parts);
+            $row['origin_port_name'] = trim((string)($row['origin_port_name'] ?? ''));
+
+            $container_number_key = trim((string)($row['container_number'] ?? ''));
+            $cutoff_raw = trim((string)($row['departed_date'] ?? ''));
+            if ($cutoff_raw === '') {
+                $cutoff_raw = trim((string)($row['created_at'] ?? ''));
+            }
+            $cutoff_ts = $cutoff_raw !== '' ? strtotime($cutoff_raw) : false;
+            if ($container_number_key !== '' && $cutoff_ts !== false) {
+                $container_waypoint_cutoff[$container_number_key] = $cutoff_ts;
+            }
+
             $row['days_to_eta'] = $days_to_eta;
             $row['vessel_latitude'] = ($row['vessel_latitude'] !== null && $row['vessel_latitude'] !== '') ? (float)$row['vessel_latitude'] : null;
             $row['vessel_longitude'] = ($row['vessel_longitude'] !== null && $row['vessel_longitude'] !== '') ? (float)$row['vessel_longitude'] : null;
+            $position_updated_raw = trim((string)($row['vessel_position_updated_at'] ?? ''));
+            $position_updated_ts = $position_updated_raw !== '' ? strtotime($position_updated_raw) : false;
+            if ($row['vessel_latitude'] !== null && $row['vessel_longitude'] !== null && $cutoff_ts !== false) {
+                if ($position_updated_ts === false || $position_updated_ts < $cutoff_ts) {
+                    $row['vessel_latitude'] = null;
+                    $row['vessel_longitude'] = null;
+                    $row['vessel_position_updated_at'] = null;
+                }
+            }
             $row['waypoint_count'] = (int)($row['waypoint_count'] ?? 0);
+            if ($container_number_key !== '') {
+                $container_route_context[$container_number_key] = [
+                    'origin_port_name' => $row['origin_port_name'] !== '' ? $row['origin_port_name'] : 'Origin Port',
+                    'origin_port_full_address' => $row['origin_port_full_address'],
+                    'destination_port_name' => trim((string)($row['destination_port_name'] ?? '')),
+                    'destination_port_full_address' => $row['destination_port_full_address']
+                ];
+            }
             $containers[] = $row;
         }
         $stmtContainers->close();
@@ -473,7 +557,7 @@ try {
 
     if ($waypoints_table_exists && $selected_project_id > 0) {
         $stmtProjectWaypoints = $conn->prepare("
-            SELECT container_number, latitude, longitude, recorded_at
+            SELECT id, container_number, latitude, longitude, recorded_at
             FROM container_tracking_waypoints
             WHERE project_id = ?
             ORDER BY container_number ASC, recorded_at ASC, id ASC
@@ -487,10 +571,17 @@ try {
                 if ($containerNumberKey === '') {
                     continue;
                 }
+                $recorded_raw = trim((string)($waypointRow['recorded_at'] ?? ''));
+                $recorded_ts = $recorded_raw !== '' ? strtotime($recorded_raw) : false;
+                $cutoff_ts = $container_waypoint_cutoff[$containerNumberKey] ?? null;
+                if ($cutoff_ts !== null && ($recorded_ts === false || $recorded_ts < $cutoff_ts)) {
+                    continue;
+                }
                 if (!isset($project_waypoint_library[$containerNumberKey])) {
                     $project_waypoint_library[$containerNumberKey] = [];
                 }
                 $project_waypoint_library[$containerNumberKey][] = [
+                    'id' => (int)($waypointRow['id'] ?? 0),
                     'latitude' => (float)$waypointRow['latitude'],
                     'longitude' => (float)$waypointRow['longitude'],
                     'recorded_at' => $waypointRow['recorded_at']
@@ -499,6 +590,18 @@ try {
             $stmtProjectWaypoints->close();
         }
     }
+
+    foreach ($containers as &$containerRow) {
+        $containerNumberKey = trim((string)($containerRow['container_number'] ?? ''));
+        $history = ($containerNumberKey !== '' && isset($project_waypoint_library[$containerNumberKey]))
+            ? $project_waypoint_library[$containerNumberKey]
+            : [];
+        $containerRow['waypoint_count'] = count($history);
+        $containerRow['last_waypoint_at'] = !empty($history)
+            ? (string)($history[count($history) - 1]['recorded_at'] ?? '')
+            : null;
+    }
+    unset($containerRow);
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
 }
@@ -710,6 +813,19 @@ $conn->close();
             color: #475569;
             line-height: 1.35;
         }
+        .waypoint-open-btn {
+            border: 1px solid #0ea5e9;
+            border-radius: 999px;
+            background: #f0f9ff;
+            color: #0369a1;
+            padding: 4px 10px;
+            font-size: 0.82em;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .waypoint-open-btn:hover {
+            background: #e0f2fe;
+        }
         .tracker-table-wrap {
             overflow-x: auto;
             border: 1px solid #dbe5ee;
@@ -733,6 +849,43 @@ $conn->close();
             font-weight: 600;
         }
         .tracker-link:hover { text-decoration: underline; }
+        .tracker-actions {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .tracker-action-btn {
+            display: inline-block;
+            border: 1px solid #488C9A;
+            color: #488C9A;
+            background: #fff;
+            padding: 5px 10px;
+            border-radius: 999px;
+            text-decoration: none;
+            font-size: 0.8em;
+            font-weight: 700;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+        }
+        .tracker-action-btn:hover {
+            background: #488C9A;
+            color: #fff;
+        }
+        .tracker-action-btn.receive {
+            border-color: #166534;
+            color: #166534;
+        }
+        .tracker-action-btn.receive:hover {
+            background: #166534;
+            color: #fff;
+        }
+        .tracker-action-disabled {
+            color: #94a3b8;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
         .eta-edit-form {
             justify-content: center;
         }
@@ -831,6 +984,54 @@ $conn->close();
             align-items: center;
             gap: 8px;
         }
+        .waypoint-modal-list {
+            max-height: min(58vh, 520px);
+            overflow-y: auto;
+            border: 1px solid #dbe5ee;
+            border-radius: 10px;
+            background: #fff;
+        }
+        .waypoint-modal-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .waypoint-modal-table th,
+        .waypoint-modal-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            text-align: left;
+            font-size: 0.9em;
+            color: #1e293b;
+        }
+        .waypoint-modal-table th {
+            position: sticky;
+            top: 0;
+            background: #f8fbfe;
+            font-size: 0.78em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #475569;
+            z-index: 1;
+        }
+        .waypoint-delete-btn {
+            border: 1px solid #dc2626;
+            color: #dc2626;
+            background: #fff;
+            border-radius: 8px;
+            padding: 4px 8px;
+            font-size: 0.78em;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .waypoint-delete-btn:hover {
+            background: #fef2f2;
+        }
+        .waypoint-empty {
+            padding: 16px 14px;
+            color: #64748b;
+            text-align: center;
+            font-size: 0.9em;
+        }
         @media (max-width: 900px) {
             .position-edit-form {
                 grid-template-columns: 1fr;
@@ -915,7 +1116,7 @@ $conn->close();
                                 <th>Days To ETA</th>
                                 <th>Destination Port</th>
                                 <th>Pallets</th>
-                                <th>Details</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -940,9 +1141,13 @@ $conn->close();
                                 <tr>
                                     <?php
                                         $containerProjectId = (int)($container['project_id'] ?? 0);
+                                        $destinationWarehouseId = (int)($container['destination_warehouse_id'] ?? 0);
                                         $detailsHref = $containerProjectId > 0
                                             ? ('view_project.php?project_id=' . $containerProjectId . '&search=' . urlencode((string)$container['container_number']))
                                             : ('manage_deliveries.php?search=' . urlencode((string)$container['container_number']));
+                                        $receiveHref = $destinationWarehouseId > 0
+                                            ? ('manage_warehouse_inventory.php?warehouse_id=' . $destinationWarehouseId . '&tab=inboundTransit&container=' . urlencode((string)$container['container_number']))
+                                            : '';
                                     ?>
                                     <td><strong><?php echo htmlspecialchars($container['container_number']); ?></strong></td>
                                     <td><?php echo htmlspecialchars($container['project_name'] ?? 'N/A'); ?></td>
@@ -1000,14 +1205,32 @@ $conn->close();
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <div class="position-display"><?php echo number_format($waypointCount); ?> point<?php echo $waypointCount === 1 ? '' : 's'; ?></div>
+                                        <?php if ($waypointCount > 0): ?>
+                                            <button
+                                                type="button"
+                                                class="waypoint-open-btn"
+                                                data-container-number="<?php echo htmlspecialchars((string)$container['container_number']); ?>"
+                                                data-project-id="<?php echo (int)($container['project_id'] ?? 0); ?>"
+                                            >
+                                                <?php echo number_format($waypointCount); ?> point<?php echo $waypointCount === 1 ? '' : 's'; ?>
+                                            </button>
+                                        <?php else: ?>
+                                            <div class="position-display">0 points</div>
+                                        <?php endif; ?>
                                         <div class="waypoint-meta">Last: <?php echo htmlspecialchars($lastWaypointAt !== '' ? $lastWaypointAt : 'N/A'); ?></div>
                                     </td>
                                     <td class="<?php echo $daysClass; ?>"><?php echo htmlspecialchars($daysText); ?></td>
                                     <td><?php echo htmlspecialchars($container['destination_port_name'] ?? 'N/A'); ?></td>
                                     <td><?php echo number_format((int)($container['pallet_count'] ?? 0)); ?></td>
                                     <td>
-                                        <a href="<?php echo htmlspecialchars($detailsHref); ?>" class="tracker-link">View</a>
+                                        <div class="tracker-actions">
+                                            <a href="<?php echo htmlspecialchars($detailsHref); ?>" class="tracker-action-btn">View</a>
+                                            <?php if ($receiveHref !== ''): ?>
+                                                <a href="<?php echo htmlspecialchars($receiveHref); ?>" class="tracker-action-btn receive">Receive</a>
+                                            <?php else: ?>
+                                                <span class="tracker-action-disabled">No destination port</span>
+                                            <?php endif; ?>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -1043,6 +1266,32 @@ $conn->close();
             </div>
         </div>
     <?php endif; ?>
+
+    <div id="waypointDetailsModal" class="position-picker-modal" aria-hidden="true">
+        <div class="position-picker-content">
+            <div class="position-picker-header">
+                <h3 id="waypointModalTitle">Container Waypoints</h3>
+                <button type="button" class="position-picker-close" id="closeWaypointDetailsModalBtn" aria-label="Close">&times;</button>
+            </div>
+            <div style="padding: 14px 16px 6px; color: #334155; font-size: 0.92em;">
+                Review route points in order. Deleting a waypoint removes it from tracker history and movement-map route rendering.
+            </div>
+            <div class="waypoint-modal-list" id="waypointModalList"></div>
+            <div class="position-picker-footer">
+                <div class="position-picker-route-info dim" id="waypointModalMeta">No waypoints selected.</div>
+                <div class="position-picker-actions">
+                    <button type="button" class="eta-save-btn" id="closeWaypointDetailsModalFooterBtn">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <form method="POST" id="deleteWaypointForm" style="display:none;">
+        <input type="hidden" name="form_action" value="delete_waypoint">
+        <input type="hidden" name="container_number" id="deleteWaypointContainerNumber" value="">
+        <input type="hidden" name="project_id" id="deleteWaypointProjectId" value="">
+        <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
+        <input type="hidden" name="waypoint_id" id="deleteWaypointId" value="">
+    </form>
 </main>
 <?php if ($map_picker_enabled): ?>
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
@@ -1050,6 +1299,7 @@ $conn->close();
 <?php if ($can_edit_eta && $positions_table_exists): ?>
 <script>
 const projectWaypointLibrary = <?php echo json_encode($project_waypoint_library ?? []); ?>;
+const containerRouteContext = <?php echo json_encode($container_route_context ?? []); ?>;
 let positionPickerMap = null;
 let positionPickerMarker = null;
 let positionPickerSelected = null;
@@ -1060,8 +1310,11 @@ let routeReferenceMarkers = [];
 let routeWaypointMarkers = [];
 let routeVesselMarker = null;
 let routeReferencePath = [];
+let routeReferenceSnapPoints = [];
 let routeLockEnabled = false;
 let routeLockAvailable = false;
+let pickerGeocoder = null;
+const pickerGeocodeCache = new Map();
 
 function buildPickerBoatIcon(iconSize = 34) {
     return {
@@ -1080,6 +1333,52 @@ function buildPickerBoatIcon(iconSize = 34) {
 
 function normalizeContainerNumber(value) {
     return String(value || '').trim();
+}
+
+function getContainerRouteContext(containerNumber) {
+    const key = normalizeContainerNumber(containerNumber);
+    if (!key || !containerRouteContext || typeof containerRouteContext !== 'object') {
+        return null;
+    }
+    return containerRouteContext[key] || null;
+}
+
+function appendRoutePointIfDistinct(path, point) {
+    if (!point) return;
+    if (path.length === 0) {
+        path.push(point);
+        return;
+    }
+    const last = path[path.length - 1];
+    if (Math.abs(last.lat - point.lat) > 1e-7 || Math.abs(last.lng - point.lng) > 1e-7) {
+        path.push(point);
+    }
+}
+
+function resolvePickerAddress(address) {
+    const normalized = String(address || '').trim();
+    if (!normalized || !window.google || !window.google.maps) {
+        return Promise.resolve(null);
+    }
+    if (pickerGeocodeCache.has(normalized)) {
+        return Promise.resolve(pickerGeocodeCache.get(normalized));
+    }
+    if (!pickerGeocoder) {
+        pickerGeocoder = new google.maps.Geocoder();
+    }
+    return new Promise((resolve) => {
+        pickerGeocoder.geocode({ address: normalized }, (results, status) => {
+            if (status === 'OK' && results && results[0] && results[0].geometry && results[0].geometry.location) {
+                const point = results[0].geometry.location;
+                const latLng = { lat: Number(point.lat()), lng: Number(point.lng()) };
+                pickerGeocodeCache.set(normalized, latLng);
+                resolve(latLng);
+                return;
+            }
+            pickerGeocodeCache.set(normalized, null);
+            resolve(null);
+        });
+    });
 }
 
 function getWaypointsForContainer(containerNumber) {
@@ -1131,6 +1430,7 @@ function clearRouteReferenceVisuals() {
         routeVesselMarker = null;
     }
     routeReferencePath = [];
+    routeReferenceSnapPoints = [];
     routeLockEnabled = false;
     routeLockAvailable = false;
     setRouteLockUI(false, false);
@@ -1156,73 +1456,122 @@ function latLngToObject(latLng) {
     return { lat: Number(latLng.lat()), lng: Number(latLng.lng()) };
 }
 
+function appendSnapPointIfDistinct(points, point) {
+    if (!point) return;
+    if (points.length === 0) {
+        points.push(point);
+        return;
+    }
+    const last = points[points.length - 1];
+    if (Math.abs(last.lat - point.lat) > 1e-8 || Math.abs(last.lng - point.lng) > 1e-8) {
+        points.push(point);
+    }
+}
+
+function buildRouteSnapPoints(pathPoints) {
+    const points = [];
+    if (!Array.isArray(pathPoints) || pathPoints.length === 0) {
+        return points;
+    }
+    if (pathPoints.length === 1) {
+        appendSnapPointIfDistinct(points, pathPoints[0]);
+        return points;
+    }
+
+    for (let i = 0; i < pathPoints.length - 1; i++) {
+        const a = pathPoints[i];
+        const b = pathPoints[i + 1];
+        const distance = Math.hypot((b.lat - a.lat), (b.lng - a.lng));
+        const steps = Math.max(24, Math.min(120, Math.round(distance * 90)));
+        for (let step = 0; step <= steps; step++) {
+            const t = step / steps;
+            appendSnapPointIfDistinct(points, {
+                lat: a.lat + ((b.lat - a.lat) * t),
+                lng: a.lng + ((b.lng - a.lng) * t)
+            });
+        }
+    }
+    return points;
+}
+
 function snapLatLngToRoute(latLng) {
     if (!latLng || routeReferencePath.length < 2) {
         return latLng;
     }
     const point = latLngToObject(latLng);
-    let bestPoint = null;
-    let minDistanceSq = Infinity;
 
-    for (let i = 0; i < routeReferencePath.length - 1; i++) {
-        const a = routeReferencePath[i];
-        const b = routeReferencePath[i + 1];
-        const dx = b.lng - a.lng;
-        const dy = b.lat - a.lat;
-        const denominator = (dx * dx) + (dy * dy);
-
-        let t = 0;
-        if (denominator > 0) {
-            t = ((point.lng - a.lng) * dx + (point.lat - a.lat) * dy) / denominator;
+    const snapCandidates = routeReferenceSnapPoints.length > 0
+        ? routeReferenceSnapPoints
+        : routeReferencePath;
+    let nearestSnapPoint = null;
+    let nearestDistanceSq = Infinity;
+    snapCandidates.forEach((candidate) => {
+        const distanceSq = Math.pow(candidate.lat - point.lat, 2) + Math.pow(candidate.lng - point.lng, 2);
+        if (distanceSq < nearestDistanceSq) {
+            nearestDistanceSq = distanceSq;
+            nearestSnapPoint = candidate;
         }
-        t = Math.max(0, Math.min(1, t));
-
-        const projected = {
-            lat: a.lat + (dy * t),
-            lng: a.lng + (dx * t)
-        };
-        const distanceSq = Math.pow(projected.lat - point.lat, 2) + Math.pow(projected.lng - point.lng, 2);
-        if (distanceSq < minDistanceSq) {
-            minDistanceSq = distanceSq;
-            bestPoint = projected;
-        }
-    }
-
-    if (!bestPoint) {
+    });
+    if (!nearestSnapPoint) {
         return latLng;
     }
-    return new google.maps.LatLng(bestPoint.lat, bestPoint.lng);
+    return new google.maps.LatLng(nearestSnapPoint.lat, nearestSnapPoint.lng);
 }
 
-function setRouteReferenceForContainer(containerNumber, existingLatLng = null) {
+async function setRouteReferenceForContainer(containerNumber, existingLatLng = null) {
     clearRouteReferenceVisuals();
 
     const ownRoute = getWaypointsForContainer(containerNumber);
     const fallbackRoute = ownRoute.length >= 2 ? ownRoute : getFallbackProjectRoutePoints();
-    if (fallbackRoute.length < 2) {
+    const routeContext = getContainerRouteContext(containerNumber) || {};
+    const originName = String(routeContext.origin_port_name || 'Origin Port').trim() || 'Origin Port';
+    const destinationName = String(routeContext.destination_port_name || 'Destination Port').trim() || 'Destination Port';
+    const originPoint = await resolvePickerAddress(routeContext.origin_port_full_address || '');
+    const destinationPoint = await resolvePickerAddress(routeContext.destination_port_full_address || '');
+
+    if (fallbackRoute.length < 2 && !originPoint && !destinationPoint) {
         setRouteInfo('Route assist: no existing multi-point route yet. Add at least 2 waypoints first.', true);
         return;
     }
 
-    routeReferencePath = fallbackRoute.map((p) => ({ lat: p.lat, lng: p.lng }));
+    const resolvedRoutePath = [];
+    appendRoutePointIfDistinct(resolvedRoutePath, originPoint);
+    fallbackRoute.forEach((p) => appendRoutePointIfDistinct(resolvedRoutePath, { lat: p.lat, lng: p.lng }));
+    appendRoutePointIfDistinct(resolvedRoutePath, destinationPoint);
+    if (resolvedRoutePath.length < 2) {
+        fallbackRoute.forEach((p) => appendRoutePointIfDistinct(resolvedRoutePath, { lat: p.lat, lng: p.lng }));
+    }
+    if (resolvedRoutePath.length < 2) {
+        setRouteInfo('Route assist: no existing multi-point route yet. Add at least 2 waypoints first.', true);
+        return;
+    }
+
+    routeReferencePath = resolvedRoutePath;
+    routeReferenceSnapPoints = buildRouteSnapPoints(routeReferencePath);
     routeLockAvailable = true;
     routeLockEnabled = true;
     setRouteLockUI(true, true);
 
     routeReferencePolyline = new google.maps.Polyline({
         path: routeReferencePath,
-        geodesic: true,
+        // Keep route geometry consistent with snap math so selected points stay on the visible line.
+        geodesic: false,
         strokeColor: '#0369a1',
         strokeOpacity: 0.88,
         strokeWeight: 4,
         map: positionPickerMap,
         zIndex: 12
     });
+    routeReferencePolyline.addListener('click', (event) => {
+        if (event && event.latLng) {
+            setPickerSelected(event.latLng);
+        }
+    });
 
     const startMarker = new google.maps.Marker({
         position: routeReferencePath[0],
         map: positionPickerMap,
-        title: 'Route Start',
+        title: originName,
         icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: 6,
@@ -1237,7 +1586,7 @@ function setRouteReferenceForContainer(containerNumber, existingLatLng = null) {
     const endMarker = new google.maps.Marker({
         position: routeReferencePath[routeReferencePath.length - 1],
         map: positionPickerMap,
-        title: 'Route End',
+        title: destinationName,
         icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: 6,
@@ -1274,9 +1623,13 @@ function setRouteReferenceForContainer(containerNumber, existingLatLng = null) {
     });
 
     const containerLastWaypoint = ownRoute.length > 0 ? ownRoute[ownRoute.length - 1] : null;
-    const vesselPosition = containerLastWaypoint
-        ? new google.maps.LatLng(containerLastWaypoint.lat, containerLastWaypoint.lng)
-        : (existingLatLng || null);
+    const fallbackOriginPoint = originPoint
+        ? new google.maps.LatLng(originPoint.lat, originPoint.lng)
+        : (routeReferencePath.length > 0 ? new google.maps.LatLng(routeReferencePath[0].lat, routeReferencePath[0].lng) : null);
+    const vesselPosition = existingLatLng
+        || (containerLastWaypoint
+            ? new google.maps.LatLng(containerLastWaypoint.lat, containerLastWaypoint.lng)
+            : fallbackOriginPoint);
     if (vesselPosition) {
         routeVesselMarker = new google.maps.Marker({
             position: vesselPosition,
@@ -1301,9 +1654,16 @@ function setRouteReferenceForContainer(containerNumber, existingLatLng = null) {
     }
 
     const usingOwnRoute = ownRoute.length >= 2;
-    setRouteInfo(usingOwnRoute
-        ? 'Route assist: using this container\'s existing route. Map clicks are locked to that line.'
-        : 'Route assist: using a project reference route. Map clicks are locked to that line.');
+    const anchoredToPorts = Boolean(originPoint || destinationPoint);
+    if (usingOwnRoute) {
+        setRouteInfo(anchoredToPorts
+            ? 'Route assist: using this container\'s route anchored to origin/destination port. Map clicks are locked to that line.'
+            : 'Route assist: using this container\'s existing route. Map clicks are locked to that line.');
+    } else {
+        setRouteInfo(anchoredToPorts
+            ? 'Route assist: using a project reference route anchored to origin/destination port. Map clicks are locked to that line.'
+            : 'Route assist: using a project reference route. Map clicks are locked to that line.');
+    }
 }
 
 function setPickerSelected(latLng) {
@@ -1332,7 +1692,7 @@ function setPickerSelected(latLng) {
     if (applyBtn) applyBtn.disabled = false;
 }
 
-function openPositionPicker(formEl) {
+async function openPositionPicker(formEl) {
     if (!window.google || !window.google.maps) {
         alert('Map picker is not available right now.');
         return;
@@ -1374,7 +1734,7 @@ function openPositionPicker(formEl) {
         positionPickerMap.setZoom(initialZoom);
     }
 
-    setRouteReferenceForContainer(containerNumber, existingLatLng);
+    await setRouteReferenceForContainer(containerNumber, existingLatLng);
 
     const applyBtn = document.getElementById('applyPositionPickerBtn');
     if (applyBtn) applyBtn.disabled = true;
@@ -1402,7 +1762,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.use-map-btn:not([disabled])').forEach((btn) => {
         btn.addEventListener('click', () => {
             const formEl = btn.closest('form');
-            if (formEl) openPositionPicker(formEl);
+            if (formEl) {
+                openPositionPicker(formEl).catch((error) => {
+                    console.error('Unable to open map picker route assist:', error);
+                });
+            }
         });
     });
 
@@ -1431,5 +1795,131 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 <?php endif; ?>
+<script>
+const waypointLibraryData = <?php echo json_encode($project_waypoint_library ?? []); ?>;
+const canEditWaypoints = <?php echo $can_edit_eta ? 'true' : 'false'; ?>;
+
+function normalizeWaypointContainerNumber(value) {
+    return String(value || '').trim();
+}
+
+function getWaypointRowsForContainer(containerNumber) {
+    const key = normalizeWaypointContainerNumber(containerNumber);
+    if (!key || !waypointLibraryData || typeof waypointLibraryData !== 'object') {
+        return [];
+    }
+    const rows = Array.isArray(waypointLibraryData[key]) ? waypointLibraryData[key] : [];
+    return rows.map((row) => {
+        const latitude = Number(row.latitude);
+        const longitude = Number(row.longitude);
+        return {
+            id: Number(row.id) || 0,
+            latitude,
+            longitude,
+            recordedAt: String(row.recorded_at || '')
+        };
+    }).filter((row) => Number.isFinite(row.latitude) && Number.isFinite(row.longitude));
+}
+
+function openWaypointDetailsModal(containerNumber, projectId) {
+    const modal = document.getElementById('waypointDetailsModal');
+    const titleEl = document.getElementById('waypointModalTitle');
+    const listEl = document.getElementById('waypointModalList');
+    const metaEl = document.getElementById('waypointModalMeta');
+    if (!modal || !titleEl || !listEl || !metaEl) return;
+
+    const rows = getWaypointRowsForContainer(containerNumber);
+    titleEl.textContent = `Waypoints • ${containerNumber}`;
+    metaEl.textContent = rows.length > 0
+        ? `${rows.length} waypoint${rows.length === 1 ? '' : 's'} recorded`
+        : 'No waypoints recorded yet.';
+
+    if (rows.length === 0) {
+        listEl.innerHTML = '<div class="waypoint-empty">No waypoint history is available for this container.</div>';
+    } else {
+        const tableRows = rows.map((row, index) => {
+            const positionText = `${row.latitude.toFixed(6)}, ${row.longitude.toFixed(6)}`;
+            const deleteBtn = canEditWaypoints
+                ? `<button type="button" class="waypoint-delete-btn" data-waypoint-id="${row.id}" data-container-number="${containerNumber}" data-project-id="${projectId}">Delete</button>`
+                : '<span style="color:#94a3b8;font-size:0.82em;font-weight:600;">Read Only</span>';
+            return `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>${positionText}</td>
+                    <td>${row.recordedAt || 'N/A'}</td>
+                    <td>${deleteBtn}</td>
+                </tr>
+            `;
+        }).join('');
+
+        listEl.innerHTML = `
+            <table class="waypoint-modal-table">
+                <thead>
+                    <tr>
+                        <th style="width:80px;">#</th>
+                        <th>Coordinates</th>
+                        <th>Recorded At</th>
+                        <th style="width:120px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+        `;
+    }
+
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeWaypointDetailsModal() {
+    const modal = document.getElementById('waypointDetailsModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.waypoint-open-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const containerNumber = normalizeWaypointContainerNumber(btn.dataset.containerNumber || '');
+            const projectId = Number(btn.dataset.projectId || 0);
+            if (!containerNumber || projectId <= 0) return;
+            openWaypointDetailsModal(containerNumber, projectId);
+        });
+    });
+
+    document.getElementById('closeWaypointDetailsModalBtn')?.addEventListener('click', closeWaypointDetailsModal);
+    document.getElementById('closeWaypointDetailsModalFooterBtn')?.addEventListener('click', closeWaypointDetailsModal);
+    document.getElementById('waypointDetailsModal')?.addEventListener('click', (event) => {
+        if (event.target.id === 'waypointDetailsModal') {
+            closeWaypointDetailsModal();
+        }
+    });
+
+    document.getElementById('waypointModalList')?.addEventListener('click', (event) => {
+        const deleteBtn = event.target.closest('.waypoint-delete-btn');
+        if (!deleteBtn) return;
+
+        const waypointId = Number(deleteBtn.dataset.waypointId || 0);
+        const containerNumber = normalizeWaypointContainerNumber(deleteBtn.dataset.containerNumber || '');
+        const projectId = Number(deleteBtn.dataset.projectId || 0);
+        if (waypointId <= 0 || !containerNumber || projectId <= 0) return;
+
+        const confirmed = window.confirm('Delete this waypoint? This cannot be undone.');
+        if (!confirmed) return;
+
+        const form = document.getElementById('deleteWaypointForm');
+        const idInput = document.getElementById('deleteWaypointId');
+        const containerInput = document.getElementById('deleteWaypointContainerNumber');
+        const projectInput = document.getElementById('deleteWaypointProjectId');
+        if (!form || !idInput || !containerInput || !projectInput) return;
+
+        idInput.value = String(waypointId);
+        containerInput.value = containerNumber;
+        projectInput.value = String(projectId);
+        form.submit();
+    });
+});
+</script>
 </body>
 </html>
