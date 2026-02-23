@@ -687,6 +687,7 @@ var analyticsTableData = <?php echo json_encode([
         'delivered' => $delivered_combined ?? 0,
         'at_manufacturer' => $at_manufacturer_combined ?? 0,
         'on_water' => $on_water_combined ?? 0,
+        'customs_hold' => $customs_hold_combined ?? 0,
         'cleared_customs' => $cleared_customs_combined ?? 0,
         'in_transit_to_warehouse' => $in_transit_to_warehouse_combined ?? 0,
         'in_warehouse' => $in_warehouse_combined ?? 0,
@@ -816,6 +817,7 @@ function updateAnalyticsTables(unit) {
             var combinedStatusTotalOrder = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'total_order');
             var combinedStatusAtMfr = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'at_manufacturer');
             var combinedStatusOnWater = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'on_water');
+            var combinedStatusCustomsHold = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'customs_hold');
             var combinedStatusCleared = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'cleared_customs');
             var combinedStatusToWarehouse = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_transit_to_warehouse');
             var combinedStatusInWarehouse = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_warehouse');
@@ -829,6 +831,7 @@ function updateAnalyticsTables(unit) {
                 if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusTotalOrder, unit);
                 if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusAtMfr, unit);
                 if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusOnWater, unit);
+                if (data.combined.customs_hold > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusCustomsHold, unit);
                 if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusCleared, unit);
                 if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusToWarehouse, unit);
                 if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusInWarehouse, unit);
@@ -848,6 +851,7 @@ function updateAnalyticsTables(unit) {
                     if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.total_order, unit, wattage), unit);
                     if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.at_manufacturer || 0, unit, wattage), unit);
                     if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.on_water || 0, unit, wattage), unit);
+                    if (data.combined.customs_hold > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.customs_hold || 0, unit, wattage), unit);
                     if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.cleared_customs || 0, unit, wattage), unit);
                     if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_transit_to_warehouse || 0, unit, wattage), unit);
                     if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_warehouse || 0, unit, wattage), unit);
@@ -941,6 +945,7 @@ var pieChartData = <?php echo json_encode(array_values($pieChartPercentages ?? [
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
 var colorMap = {
     'Delivered to Project': '#488C9A', 'At Manufacturer': '#293E4C', 'On Water': '#66B2FF',
+    'Customs Hold': '#dc2626',
     'Cleared Customs': '#32CD32', 'In Transit to Warehouse': '#9370DB',
     'In Transit to Project': '#C0C0C0', 'In Warehouse': '#FF6B6B', 'Exceptions': '#f57c00'
 };
@@ -1231,6 +1236,7 @@ var colorMap = {
     'Delivered to Project': '#488C9A',
     'At Manufacturer': '#293E4C', 
     'On Water': '#66B2FF',
+    'Customs Hold': '#dc2626',
     'Cleared Customs': '#32CD32',
     'In Transit to Warehouse': '#9370DB',
     'In Transit to Project': '#C0C0C0',
@@ -1740,6 +1746,16 @@ function generateShippingContent(filter){
                 }
             }
             html+=`</div>`;
+        }else if(filter==='Customs Hold'){
+            html+=`<div style="text-align:center;margin-top:15px;">`;
+            html+=`<p style="color:#666;margin-bottom:10px;">Pallets are being reviewed by customs. Use the customs hold queue to release eligible pallets.</p>`;
+            for(const key in shippingBreakdown){
+                if(key.includes('Customs Hold') && shippingBreakdown[key].warehouse_id){
+                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>&tab=customsHold" class="modal-action" style="background:#dc2626;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Manage Customs Hold</a>`;
+                    break;
+                }
+            }
+            html+=`</div>`;
         }else if(filter==='Cleared Customs'){
             // For Cleared Customs status, link to warehouse inventory for drayage shipment
             html+=`<div style="text-align:center;margin-top:15px;">`;
@@ -2090,6 +2106,7 @@ function updateDeliveryTables(filterType) {
                 at_manufacturer: <?php echo $at_manufacturer_combined; ?>,
                 in_warehouse: <?php echo $in_warehouse_combined; ?>,
                 on_water: <?php echo $on_water_combined; ?>,
+                customs_hold: <?php echo $customs_hold_combined; ?>,
                 cleared_customs: <?php echo $cleared_customs_combined; ?>,
                 in_transit_to_warehouse: <?php echo $in_transit_to_warehouse_combined; ?>,
                 in_transit_to_project: <?php echo $in_transit_to_project_combined; ?>,
@@ -2111,6 +2128,7 @@ function updateDeliveryTables(filterType) {
                         at_manufacturer: <?php echo ($srs['at_manufacturer'] ?? 0); ?>,
                         in_warehouse: <?php echo $srs['in_warehouse']; ?>,
                         on_water: <?php echo $srs['on_water']; ?>,
+                        customs_hold: <?php echo ($srs['customs_hold'] ?? 0); ?>,
                         cleared_customs: <?php echo $srs['cleared_customs']; ?>,
                         in_transit_to_warehouse: <?php echo ($srs['in_transit_to_warehouse'] ?? 0); ?>,
                         in_transit_to_project: <?php echo ($srs['in_transit_to_project'] ?? 0); ?>,
@@ -2135,6 +2153,7 @@ function updateDeliveryTables(filterType) {
             at_manufacturer: Math.round(window.originalTableData.mw.at_manufacturer * 1000000 / avgWattage),
             in_warehouse: Math.round(window.originalTableData.mw.in_warehouse * 1000000 / avgWattage),
             on_water: Math.round(window.originalTableData.mw.on_water * 1000000 / avgWattage),
+            customs_hold: Math.round(window.originalTableData.mw.customs_hold * 1000000 / avgWattage),
             cleared_customs: Math.round(window.originalTableData.mw.cleared_customs * 1000000 / avgWattage),
             in_transit_to_warehouse: Math.round(window.originalTableData.mw.in_transit_to_warehouse * 1000000 / avgWattage),
             in_transit_to_project: Math.round(window.originalTableData.mw.in_transit_to_project * 1000000 / avgWattage),
@@ -2151,6 +2170,7 @@ function updateDeliveryTables(filterType) {
             at_manufacturer: Math.round(window.originalTableData.modules.at_manufacturer / modulesPerPallet),
             in_warehouse: Math.round(window.originalTableData.modules.in_warehouse / modulesPerPallet),
             on_water: Math.round(window.originalTableData.modules.on_water / modulesPerPallet),
+            customs_hold: Math.round(window.originalTableData.modules.customs_hold / modulesPerPallet),
             cleared_customs: Math.round(window.originalTableData.modules.cleared_customs / modulesPerPallet),
             in_transit_to_warehouse: Math.round(window.originalTableData.modules.in_transit_to_warehouse / modulesPerPallet),
             in_transit_to_project: Math.round(window.originalTableData.modules.in_transit_to_project / modulesPerPallet),
@@ -2169,6 +2189,7 @@ function updateDeliveryTables(filterType) {
                 at_manufacturer: (window.originalTableData.pallets.at_manufacturer / palletsPerTruck).toFixed(1),
                 in_warehouse: (window.originalTableData.pallets.in_warehouse / palletsPerTruck).toFixed(1),
                 on_water: (window.originalTableData.pallets.on_water / palletsPerTruck).toFixed(1),
+                customs_hold: (window.originalTableData.pallets.customs_hold / palletsPerTruck).toFixed(1),
                 cleared_customs: (window.originalTableData.pallets.cleared_customs / palletsPerTruck).toFixed(1),
                 in_transit_to_warehouse: (window.originalTableData.pallets.in_transit_to_warehouse / palletsPerTruck).toFixed(1),
                 in_transit_to_project: (window.originalTableData.pallets.in_transit_to_project / palletsPerTruck).toFixed(1),
@@ -2215,6 +2236,7 @@ function updateDeliveryTables(filterType) {
                 at_manufacturer: Math.round(data.at_manufacturer * 1000000 / wattage),
                 in_warehouse: Math.round(data.in_warehouse * 1000000 / wattage),
                 on_water: Math.round(data.on_water * 1000000 / wattage),
+                customs_hold: Math.round((data.customs_hold || 0) * 1000000 / wattage),
                 cleared_customs: Math.round(data.cleared_customs * 1000000 / wattage),
                 in_transit_to_warehouse: Math.round(data.in_transit_to_warehouse * 1000000 / wattage),
                 in_transit_to_project: Math.round(data.in_transit_to_project * 1000000 / wattage)
@@ -2226,6 +2248,7 @@ function updateDeliveryTables(filterType) {
                 at_manufacturer: Math.round(window.originalTableData.modules.sub_rows_status[key].at_manufacturer / modulesPerPallet),
                 in_warehouse: Math.round(window.originalTableData.modules.sub_rows_status[key].in_warehouse / modulesPerPallet),
                 on_water: Math.round(window.originalTableData.modules.sub_rows_status[key].on_water / modulesPerPallet),
+                customs_hold: Math.round((window.originalTableData.modules.sub_rows_status[key].customs_hold || 0) / modulesPerPallet),
                 cleared_customs: Math.round(window.originalTableData.modules.sub_rows_status[key].cleared_customs / modulesPerPallet),
                 in_transit_to_warehouse: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_warehouse / modulesPerPallet),
                 in_transit_to_project: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_project / modulesPerPallet)
@@ -2238,6 +2261,7 @@ function updateDeliveryTables(filterType) {
                     at_manufacturer: (window.originalTableData.pallets.sub_rows_status[key].at_manufacturer / palletsPerTruck).toFixed(1),
                     in_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_warehouse / palletsPerTruck).toFixed(1),
                     on_water: (window.originalTableData.pallets.sub_rows_status[key].on_water / palletsPerTruck).toFixed(1),
+                    customs_hold: ((window.originalTableData.pallets.sub_rows_status[key].customs_hold || 0) / palletsPerTruck).toFixed(1),
                     cleared_customs: (window.originalTableData.pallets.sub_rows_status[key].cleared_customs / palletsPerTruck).toFixed(1),
                     in_transit_to_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_warehouse / palletsPerTruck).toFixed(1),
                     in_transit_to_project: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_project / palletsPerTruck).toFixed(1)
@@ -2330,6 +2354,7 @@ function updateDeliveryTables(filterType) {
                 cells[idx++].textContent = formatNumber(pal.total_order || 0, 0);
                 cells[idx++].textContent = formatNumber(pal.at_manufacturer || 0, 0);
                 if (data.on_water > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.on_water || 0, 0);
+                if (data.customs_hold > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.customs_hold || 0, 0);
                 if (data.cleared_customs > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.cleared_customs || 0, 0);
                 if (data.in_transit_to_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.in_transit_to_warehouse || 0, 0);
                 if (data.in_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.in_warehouse || 0, 0);
@@ -2343,6 +2368,7 @@ function updateDeliveryTables(filterType) {
                         total_order: (pal.total_order || 0) / window.conversionAvailability.avgPalletsPerTruck,
                         at_manufacturer: (pal.at_manufacturer || 0) / window.conversionAvailability.avgPalletsPerTruck,
                         on_water: (pal.on_water || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        customs_hold: (pal.customs_hold || 0) / window.conversionAvailability.avgPalletsPerTruck,
                         cleared_customs: (pal.cleared_customs || 0) / window.conversionAvailability.avgPalletsPerTruck,
                         in_transit_to_warehouse: (pal.in_transit_to_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
                         in_warehouse: (pal.in_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
@@ -2354,6 +2380,7 @@ function updateDeliveryTables(filterType) {
                         total_order: (data.total_order || 0) / window.conversionAvailability.avgModulesPerTruck,
                         at_manufacturer: (data.at_manufacturer || 0) / window.conversionAvailability.avgModulesPerTruck,
                         on_water: (data.on_water || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        customs_hold: (data.customs_hold || 0) / window.conversionAvailability.avgModulesPerTruck,
                         cleared_customs: (data.cleared_customs || 0) / window.conversionAvailability.avgModulesPerTruck,
                         in_transit_to_warehouse: (data.in_transit_to_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
                         in_warehouse: (data.in_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
@@ -2368,6 +2395,7 @@ function updateDeliveryTables(filterType) {
                     cells[idx++].textContent = formatNumber(tl.total_order, 1);
                     cells[idx++].textContent = formatNumber(tl.at_manufacturer || 0, 1);
                     if (data.on_water > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.on_water || 0, 1);
+                    if (data.customs_hold > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.customs_hold || 0, 1);
                     if (data.cleared_customs > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.cleared_customs || 0, 1);
                     if (data.in_transit_to_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.in_transit_to_warehouse || 0, 1);
                     if (data.in_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.in_warehouse || 0, 1);
@@ -2380,6 +2408,7 @@ function updateDeliveryTables(filterType) {
                 cells[2].textContent = formatNumber((data.at_manufacturer || 0), decimals);
                 let cellIndex = 3;
                 if (data.on_water > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.on_water, decimals); }
+                if (data.customs_hold > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.customs_hold, decimals); }
                 if (data.cleared_customs > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.cleared_customs, decimals); }
                 if (data.in_transit_to_warehouse > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.in_transit_to_warehouse, decimals); }
                 if (data.in_warehouse > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.in_warehouse, decimals); }
@@ -2465,6 +2494,7 @@ function updateDeliveryTables(filterType) {
                     cells[idx2++].textContent = formatNumber(palSub.total_order || 0, 0);
                     cells[idx2++].textContent = formatNumber(palSub.at_manufacturer || 0, 0);
                     if (data.on_water > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.on_water || 0, 0);
+                    if (data.customs_hold > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.customs_hold || 0, 0);
                     if (data.cleared_customs > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.cleared_customs || 0, 0);
                     if (data.in_transit_to_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.in_transit_to_warehouse || 0, 0);
                     if (data.in_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.in_warehouse || 0, 0);
@@ -2479,6 +2509,7 @@ function updateDeliveryTables(filterType) {
                             total_order: (palSub.total_order || 0) / window.conversionAvailability.avgPalletsPerTruck,
                             at_manufacturer: (palSub.at_manufacturer || 0) / window.conversionAvailability.avgPalletsPerTruck,
                             on_water: (palSub.on_water || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            customs_hold: (palSub.customs_hold || 0) / window.conversionAvailability.avgPalletsPerTruck,
                             cleared_customs: (palSub.cleared_customs || 0) / window.conversionAvailability.avgPalletsPerTruck,
                             in_transit_to_warehouse: (palSub.in_transit_to_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
                             in_warehouse: (palSub.in_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
@@ -2490,6 +2521,7 @@ function updateDeliveryTables(filterType) {
                             total_order: (subData.total_order || 0) / window.conversionAvailability.avgModulesPerTruck,
                             at_manufacturer: (subData.at_manufacturer || 0) / window.conversionAvailability.avgModulesPerTruck,
                             on_water: (subData.on_water || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            customs_hold: (subData.customs_hold || 0) / window.conversionAvailability.avgModulesPerTruck,
                             cleared_customs: (subData.cleared_customs || 0) / window.conversionAvailability.avgModulesPerTruck,
                             in_transit_to_warehouse: (subData.in_transit_to_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
                             in_warehouse: (subData.in_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
@@ -2503,6 +2535,7 @@ function updateDeliveryTables(filterType) {
                         cells[idx2++].textContent = formatNumber(source.total_order, 1);
                         cells[idx2++].textContent = formatNumber(source.at_manufacturer || 0, 1);
                         if (data.on_water > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.on_water || 0, 1);
+                        if (data.customs_hold > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.customs_hold || 0, 1);
                         if (data.cleared_customs > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.cleared_customs || 0, 1);
                         if (data.in_transit_to_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.in_transit_to_warehouse || 0, 1);
                         if (data.in_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.in_warehouse || 0, 1);
@@ -2514,6 +2547,7 @@ function updateDeliveryTables(filterType) {
                     cells[2].textContent = formatNumber((subData.at_manufacturer || 0), decimals);
                     let idx = 3;
                     if (data.on_water > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.on_water || 0), decimals); }
+                    if (data.customs_hold > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.customs_hold || 0), decimals); }
                     if (data.cleared_customs > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.cleared_customs || 0), decimals); }
                     if (data.in_transit_to_warehouse > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals); }
                     if (data.in_warehouse > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.in_warehouse || 0), decimals); }
@@ -2764,6 +2798,12 @@ function generateCustomerShippingContent(status) {
                     html += `<div style="text-align:center;margin-top:20px;">` +
                            `<a href="view_project.php?project_id=<?php echo $project_id; ?>&status_filter=${encodeURIComponent(status)}" class="customer-modal-btn">View Shipments</a>` +
                            `</div>`;
+                } else if(status === 'Customs Hold') {
+                    if(data.warehouse_id) {
+                        html += `<div style="text-align:center;margin-top:20px;">` +
+                               `<a href="manage_warehouse_inventory.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>&tab=customsHold" class="customer-modal-btn" style="background:#dc2626;border-color:#dc2626;">View Customs Hold</a>` +
+                               `</div>`;
+                    }
                 } else if(status === 'In Warehouse') {
                     if(data.warehouse_id) {
                         html += `<div style="text-align:center;margin-top:20px;">` +

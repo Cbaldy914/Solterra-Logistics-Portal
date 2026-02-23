@@ -688,6 +688,29 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             returnPalletsToOrigin($conn, $selected_ids);
 
+            $tracking_pairs = [];
+            $d_placeholders_for_pairs = implode(',', array_fill(0, count($selected_ids), '?'));
+            $stmtTrackingPairs = $conn->prepare("
+                SELECT DISTINCT container_number, project_id
+                FROM deliveries
+                WHERE id IN ($d_placeholders_for_pairs)
+                  AND project_id IS NOT NULL
+                  AND container_number IS NOT NULL
+                  AND TRIM(container_number) <> ''
+            ");
+            if ($stmtTrackingPairs) {
+                $stmtTrackingPairs->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
+                $stmtTrackingPairs->execute();
+                $resTrackingPairs = $stmtTrackingPairs->get_result();
+                while ($pair = $resTrackingPairs->fetch_assoc()) {
+                    $tracking_pairs[] = [
+                        'container_number' => trim((string)$pair['container_number']),
+                        'project_id' => (int)$pair['project_id']
+                    ];
+                }
+                $stmtTrackingPairs->close();
+            }
+
             $dp_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
             $stmtLinks = $conn->prepare("DELETE FROM delivery_pallets WHERE delivery_id IN ($dp_placeholders)");
             $stmtLinks->bind_param(str_repeat('i', count($selected_ids)), ...$selected_ids);
@@ -702,6 +725,70 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $deleted = (int)$stmtDelete->affected_rows;
             $stmtDelete->close();
+
+            if (!empty($tracking_pairs)) {
+                $has_waypoints_table = false;
+                $has_positions_table = false;
+                $tableCheckWaypoints = $conn->query("SHOW TABLES LIKE 'container_tracking_waypoints'");
+                if ($tableCheckWaypoints) {
+                    $has_waypoints_table = $tableCheckWaypoints->num_rows > 0;
+                    $tableCheckWaypoints->close();
+                }
+                $tableCheckPositions = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
+                if ($tableCheckPositions) {
+                    $has_positions_table = $tableCheckPositions->num_rows > 0;
+                    $tableCheckPositions->close();
+                }
+
+                $stmtRemainingDeliveries = $conn->prepare("
+                    SELECT COUNT(*) AS cnt
+                    FROM deliveries
+                    WHERE project_id = ? AND container_number = ?
+                ");
+                $stmtDeleteWaypoints = $has_waypoints_table
+                    ? $conn->prepare("DELETE FROM container_tracking_waypoints WHERE project_id = ? AND container_number = ?")
+                    : null;
+                $stmtDeletePositions = $has_positions_table
+                    ? $conn->prepare("DELETE FROM container_tracking_positions WHERE project_id = ? AND container_number = ?")
+                    : null;
+
+                if ($stmtRemainingDeliveries) {
+                    foreach ($tracking_pairs as $pair) {
+                        $project_id_pair = (int)$pair['project_id'];
+                        $container_number_pair = (string)$pair['container_number'];
+                        if ($project_id_pair <= 0 || $container_number_pair === '') {
+                            continue;
+                        }
+
+                        $remaining_count = 0;
+                        $stmtRemainingDeliveries->bind_param("is", $project_id_pair, $container_number_pair);
+                        $stmtRemainingDeliveries->execute();
+                        $stmtRemainingDeliveries->bind_result($remaining_count_raw);
+                        if ($stmtRemainingDeliveries->fetch()) {
+                            $remaining_count = (int)$remaining_count_raw;
+                        }
+                        $stmtRemainingDeliveries->free_result();
+
+                        if ($remaining_count === 0) {
+                            if ($stmtDeleteWaypoints) {
+                                $stmtDeleteWaypoints->bind_param("is", $project_id_pair, $container_number_pair);
+                                $stmtDeleteWaypoints->execute();
+                            }
+                            if ($stmtDeletePositions) {
+                                $stmtDeletePositions->bind_param("is", $project_id_pair, $container_number_pair);
+                                $stmtDeletePositions->execute();
+                            }
+                        }
+                    }
+                    $stmtRemainingDeliveries->close();
+                }
+                if ($stmtDeleteWaypoints) {
+                    $stmtDeleteWaypoints->close();
+                }
+                if ($stmtDeletePositions) {
+                    $stmtDeletePositions->close();
+                }
+            }
 
             $conn->commit();
             $_SESSION['messages'][] = "<p>Successfully deleted {$deleted} delivery record(s).</p>";
@@ -755,6 +842,7 @@ $total_deliveries = count($deliveries);
 $status_counts = [
     'Pending' => 0,
     'On Water' => 0,
+    'Customs Hold' => 0,
     'Cleared Customs' => 0,
     'In Transit to Warehouse' => 0,
     'Delivered to Warehouse' => 0,
@@ -2053,6 +2141,8 @@ sort($unique_suppliers);
                     $status_badge_class = 'stat-item-default';
                     if ($status === 'On Water') {
                         $status_badge_class = 'stat-item-transit';
+                    } elseif ($status === 'Customs Hold') {
+                        $status_badge_class = 'stat-item-canceled';
                     } elseif ($status === 'Cleared Customs') {
                         $status_badge_class = 'stat-item-pending';
                     } elseif (strpos($status, 'In Transit') !== false) {
@@ -2125,6 +2215,7 @@ sort($unique_suppliers);
                         <option value="">All Statuses</option>
                         <option value="Pending" <?php echo $status_filter == 'Pending' ? 'selected' : ''; ?>>Pending</option>
                         <option value="On Water" <?php echo $status_filter == 'On Water' ? 'selected' : ''; ?>>On Water</option>
+                        <option value="Customs Hold" <?php echo $status_filter == 'Customs Hold' ? 'selected' : ''; ?>>Customs Hold</option>
                         <option value="Cleared Customs" <?php echo $status_filter == 'Cleared Customs' ? 'selected' : ''; ?>>Cleared Customs</option>
                         <option value="In Transit to Warehouse" <?php echo $status_filter == 'In Transit to Warehouse' ? 'selected' : ''; ?>>In Transit to Warehouse</option>
                         <option value="Delivered to Warehouse" <?php echo $status_filter == 'Delivered to Warehouse' ? 'selected' : ''; ?>>Delivered to Warehouse</option>
@@ -2334,6 +2425,8 @@ sort($unique_suppliers);
                             $statusClass = 'status-badge ';
                             if ($statusLabel === 'On Water' || strpos((string)$statusLabel, 'In Transit') !== false) {
                                 $statusClass .= 'status-transit';
+                            } elseif ($statusLabel === 'Customs Hold') {
+                                $statusClass .= 'status-canceled';
                             } elseif ($statusLabel === 'Cleared Customs' || $statusLabel === 'Mixed Status' || $statusLabel === 'Pending') {
                                 $statusClass .= 'status-pending';
                             } elseif (strpos((string)$statusLabel, 'Delivered') !== false) {

@@ -416,10 +416,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             throw new Exception('No pallets selected to ship.');
         }
 
-        // Server-side guard: block shipments for pallets already in transit or on water
+        // Server-side guard: block shipments for pallets already in transit, on water, or customs-held.
         $placeholders_guard = implode(',', array_fill(0, count($palletIds), '?'));
         $types_guard = str_repeat('i', count($palletIds));
-        $disallowed = ['In Transit to Warehouse','In Transit to Project','On Water'];
+        $disallowed = ['In Transit to Warehouse','In Transit to Project','On Water','Customs Hold'];
         $status_placeholders_guard = implode(',', array_fill(0, count($disallowed), '?'));
         $stmtGuard = $conn->prepare(
             "SELECT id, status FROM inventory_pallets WHERE id IN ($placeholders_guard) AND status IN ($status_placeholders_guard)"
@@ -435,7 +435,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             $stmtGuard->close();
             if (!empty($blocked)) {
                 $ids = array_map(function($x){ return $x['id'].' ('.$x['status'].')'; }, $blocked);
-                throw new Exception('Cannot create shipment for pallets already in transit or on water: ' . implode(', ', $ids));
+                throw new Exception('Cannot create shipment for pallets that are in transit, on water, or on customs hold: ' . implode(', ', $ids));
             }
         }
 
@@ -1243,6 +1243,8 @@ try {
     $allowed_statuses = [
         'At Manufacturer',
         'In Warehouse',
+        'Cleared Customs',
+        'Customs Hold',
         'Delivered to Project',
         'Allocated to Project',
         'In Transit to Warehouse',
@@ -1342,7 +1344,7 @@ try {
         }
 
         // Available to ship count
-        $available_statuses = ['In Warehouse','At Manufacturer','Delivered to Project'];
+        $available_statuses = ['In Warehouse','Cleared Customs','At Manufacturer','Delivered to Project'];
         $avail_placeholders = implode(',', array_fill(0, count($available_statuses), '?'));
         $stmtAvail = $conn->prepare(
             "SELECT COUNT(DISTINCT ip.id) as total " . $count_base . $count_where . " AND ip.status IN (" . $avail_placeholders . ")"
@@ -1418,7 +1420,7 @@ try {
             $stmtCount->close();
         }
 
-        $available_statuses = ['In Warehouse','At Manufacturer','Delivered to Project'];
+        $available_statuses = ['In Warehouse','Cleared Customs','At Manufacturer','Delivered to Project'];
         $avail_placeholders = implode(',', array_fill(0, count($available_statuses), '?'));
         $stmtAvail = $conn->prepare(
             "SELECT COUNT(DISTINCT ip.id) as total " . $count_base . $count_where . " AND ip.status IN (" . $avail_placeholders . ")"
@@ -3244,6 +3246,10 @@ function statusColorFor(statusName) {
     switch (statusName) {
         case 'In Warehouse':
             return '#0ea5e9';
+        case 'Cleared Customs':
+            return '#059669';
+        case 'Customs Hold':
+            return '#dc2626';
         case 'At Manufacturer':
             return '#22c55e';
         case 'In Transit to Warehouse':
@@ -3261,10 +3267,12 @@ function getStatusBreakdownRows() {
     const allocatedToProjectCount = Number(currentStatusCounts['Allocated to Project'] || 0);
     const orderedStatuses = [
         'At Manufacturer',
+        'On Water',
+        'Customs Hold',
+        'Cleared Customs',
         'In Warehouse',
         'In Transit to Warehouse',
         'In Transit to Project',
-        'On Water',
         'Delivered to Project'
     ];
 
@@ -3348,11 +3356,13 @@ function updateHeaderStats() {
     const total = Number(totalPallets || 0);
     const allocatedToProject = getStatusCount('Allocated to Project');
     const inWarehouse = getStatusCount('In Warehouse') + allocatedToProject;
+    const clearedCustoms = getStatusCount('Cleared Customs');
+    const customsHold = getStatusCount('Customs Hold');
     const atManufacturer = getStatusCount('At Manufacturer');
     const delivered = getStatusCount('Delivered to Project');
     const inTransit = getStatusCount('In Transit to Warehouse') + getStatusCount('In Transit to Project') + getStatusCount('On Water');
-    const readyToShip = inWarehouse + atManufacturer + delivered;
-    const other = Math.max(0, total - (inWarehouse + atManufacturer + inTransit + delivered));
+    const readyToShip = inWarehouse + clearedCustoms + atManufacturer + delivered;
+    const other = Math.max(0, total - (inWarehouse + clearedCustoms + customsHold + atManufacturer + inTransit + delivered));
 
     totalEl.textContent = total.toLocaleString();
     readyEl.textContent = readyToShip.toLocaleString();
@@ -3362,6 +3372,8 @@ function updateHeaderStats() {
 
     const segments = [
         { label: 'In Warehouse', value: inWarehouse, color: '#0ea5e9' },
+        { label: 'Cleared Customs', value: clearedCustoms, color: '#059669' },
+        { label: 'Customs Hold', value: customsHold, color: '#dc2626' },
         { label: 'At Manufacturer', value: atManufacturer, color: '#22c55e' },
         { label: 'In Transit', value: inTransit, color: '#f59e0b' },
         { label: 'Delivered', value: delivered, color: '#6366f1' },
@@ -3999,7 +4011,7 @@ const openShipModalBtn = document.getElementById('openShipModalBtn');
 const closeShipModalBtn = shipModal ? shipModal.querySelector('.close-modal-btn') : null;
 
 function selectionHasInvalidPallets() {
-    const invalidMatch = /in transit|on water/i;
+    const invalidMatch = /in transit|on water|customs hold/i;
     const selected = document.querySelectorAll('.pallet-checkbox:checked');
 
     for (const cb of selected) {
@@ -4060,7 +4072,7 @@ function initializePreviousArrivalHintInteractions() {
 
 function handleOpenShipModalClick(e) {
     if (selectionHasInvalidPallets()) {
-        alert('You cannot create a delivery for pallets that are already In Transit or On Water. Please deselect those pallets to proceed.');
+        alert('You cannot create a delivery for pallets that are In Transit, On Water, or on Customs Hold. Please deselect those pallets to proceed.');
         return;
     }
     openShipModal();

@@ -2488,6 +2488,21 @@
 }
 .shipping-boxes-container .shipping-box.on-water .status-count { color: #66B2FF; }
 
+.shipping-boxes-container .shipping-box.customs-hold {
+    background: linear-gradient(180deg, rgba(220, 38, 38, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.customs-hold::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #991b1b 0%, #dc2626 50%, #ef4444 100%);
+    border-radius: 14px 14px 0 0;
+}
+.shipping-boxes-container .shipping-box.customs-hold .status-count { color: #dc2626; }
+
 .shipping-boxes-container .shipping-box.cleared-customs {
     background: linear-gradient(180deg, rgba(50, 205, 50, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
 }
@@ -2675,6 +2690,21 @@
     border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.on-water .status-count { color: #66B2FF; }
+
+.shipping-boxes-container .shipping-box-customer.customs-hold {
+    background: linear-gradient(180deg, rgba(220, 38, 38, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.customs-hold::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #991b1b 0%, #dc2626 50%, #ef4444 100%);
+    border-radius: 14px 14px 0 0;
+}
+.shipping-boxes-container .shipping-box-customer.customs-hold .status-count { color: #dc2626; }
 
 .shipping-boxes-container .shipping-box-customer.cleared-customs {
     background: linear-gradient(180deg, rgba(50, 205, 50, 0.12) 0%, #ffffff 25%, #f8fafc 100%);

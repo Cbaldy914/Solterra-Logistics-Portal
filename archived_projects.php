@@ -53,12 +53,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_archive_id']))
         $stmt = $conn->prepare('SELECT id, project_id, account_id, project_name, archive_path FROM archived_projects WHERE id = ?');
         $stmt->bind_param('i', $archive_id);
     } else {
-        $stmt = $conn->prepare('
+        $stmt = $conn->prepare("
             SELECT ap.id, ap.project_id, ap.account_id, ap.project_name, ap.archive_path
             FROM archived_projects ap
             JOIN customer_account_users cau ON ap.account_id = cau.account_id
             WHERE ap.id = ? AND cau.user_id = ? AND cau.role IN ('admin', 'customer_admin')
-        ');
+        ");
         $stmt->bind_param('ii', $archive_id, $user_id);
     }
     $stmt->execute();
@@ -127,6 +127,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_archive_id']))
         $stmtDelModules->bind_param('i', $project_id);
         $stmtDelModules->execute();
         $stmtDelModules->close();
+
+        // Remove container tracking history for this project during hard delete.
+        $waypointsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_waypoints'");
+        $hasWaypointsTable = $waypointsTableCheck && $waypointsTableCheck->num_rows > 0;
+        if ($waypointsTableCheck) {
+            $waypointsTableCheck->close();
+        }
+        if ($hasWaypointsTable) {
+            $stmtDelTrackingWaypoints = $conn->prepare('DELETE FROM container_tracking_waypoints WHERE project_id = ?');
+            if ($stmtDelTrackingWaypoints) {
+                $stmtDelTrackingWaypoints->bind_param('i', $project_id);
+                $stmtDelTrackingWaypoints->execute();
+                $stmtDelTrackingWaypoints->close();
+            }
+        }
+
+        $positionsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
+        $hasPositionsTable = $positionsTableCheck && $positionsTableCheck->num_rows > 0;
+        if ($positionsTableCheck) {
+            $positionsTableCheck->close();
+        }
+        if ($hasPositionsTable) {
+            $stmtDelTrackingPositions = $conn->prepare('DELETE FROM container_tracking_positions WHERE project_id = ?');
+            if ($stmtDelTrackingPositions) {
+                $stmtDelTrackingPositions->bind_param('i', $project_id);
+                $stmtDelTrackingPositions->execute();
+                $stmtDelTrackingPositions->close();
+            }
+        }
 
         $stmtDelDeliveries = $conn->prepare('DELETE FROM deliveries WHERE project_id = ?');
         $stmtDelDeliveries->bind_param('i', $project_id);

@@ -907,6 +907,7 @@ $lineChartDataJSON = json_encode($lineChartData);
 $status_totals = [
     'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
     'On Water' => ['pallets' => 0, 'modules' => 0],
+    'Customs Hold' => ['pallets' => 0, 'modules' => 0],
     'Delivered to Project' => ['pallets' => 0, 'modules' => 0],
     'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
     'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
@@ -985,6 +986,7 @@ while ($row = $res_status->fetch_assoc()) {
         $delivery_totals[$lbl] = [
             'At Manufacturer'        => 0,
             'On Water'               => 0,
+            'Customs Hold'           => 0,
             'Cleared Customs'        => 0,
             'In Transit to Warehouse'=> 0,
             'In Warehouse'           => 0,
@@ -1102,6 +1104,7 @@ $pieChartData = [
     'Delivered to Project'    => 0,
     'At Manufacturer'         => 0,
     'On Water'                => 0,
+    'Customs Hold'            => 0,
     'Cleared Customs'         => 0,
     'In Transit to Warehouse' => 0,
     'In Transit to Project'   => 0,
@@ -1136,6 +1139,7 @@ foreach ($all_wattages as $lbl => $info) {
 
     $atman = $delivery_totals[$lbl]['At Manufacturer'] ?? 0;
     $onw   = $delivery_totals[$lbl]['On Water'] ?? 0;
+    $hold  = $delivery_totals[$lbl]['Customs Hold'] ?? 0;
     $clr   = $delivery_totals[$lbl]['Cleared Customs'] ?? 0;
     $itw   = $delivery_totals[$lbl]['In Transit to Warehouse'] ?? 0;
     $inw   = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
@@ -1155,6 +1159,7 @@ foreach ($all_wattages as $lbl => $info) {
         'total_order'            => $to,
         'at_manufacturer'        => $atman,
         'on_water'               => $onw,
+        'customs_hold'           => $hold,
         'cleared_customs'        => $clr,
         'in_transit_to_warehouse'=> $itw,
         'in_warehouse'           => $inw,
@@ -1170,6 +1175,7 @@ foreach ($all_wattages as $lbl => $info) {
 $delivered_combined = 0;
 $at_manufacturer_combined = 0;
 $on_water_combined = 0;
+$customs_hold_combined = 0;
 $cleared_customs_combined = 0;
 $in_transit_to_warehouse_combined = 0;
 $in_warehouse_combined = 0;
@@ -1181,6 +1187,7 @@ foreach ($sub_rows as $sr) {
 foreach ($sub_rows_status as $srs) {
     $at_manufacturer_combined += ($srs['at_manufacturer'] ?? 0);
     $on_water_combined += ($srs['on_water'] ?? 0);
+    $customs_hold_combined += ($srs['customs_hold'] ?? 0);
     $cleared_customs_combined += ($srs['cleared_customs'] ?? 0);
     $in_transit_to_warehouse_combined += ($srs['in_transit_to_warehouse'] ?? 0);
     $in_warehouse_combined += ($srs['in_warehouse'] ?? 0);
@@ -1191,6 +1198,7 @@ foreach ($sub_rows_status as $srs) {
 $pieChartData['Delivered to Project']    = $delivered_combined;
 $pieChartData['At Manufacturer']         = $at_manufacturer_combined;
 $pieChartData['On Water']                = $on_water_combined;
+$pieChartData['Customs Hold']            = $customs_hold_combined;
 $pieChartData['Cleared Customs']         = $cleared_customs_combined;
 $pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
 $pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
@@ -2500,6 +2508,7 @@ $has_shipping_started = $delivery_count > 0;
 $step4_completed = $has_shipping_started && 
                   ($status_totals['At Manufacturer']['pallets'] ?? 0) == 0 && 
                   ($status_totals['On Water']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['Customs Hold']['pallets'] ?? 0) == 0 && 
                   ($status_totals['Cleared Customs']['pallets'] ?? 0) == 0 && 
                   ($status_totals['In Transit to Warehouse']['pallets'] ?? 0) == 0 && 
                   ($status_totals['In Warehouse']['pallets'] ?? 0) == 0 && 
@@ -2771,6 +2780,7 @@ if ($has_modules_per_pallet_data && $total_modules_for_mpp > 0) {
 $statuses_of_interest = [
     'At Manufacturer',
     'On Water',
+    'Customs Hold',
     'Cleared Customs',
     'In Transit to Warehouse',
     'In Warehouse',
@@ -2783,6 +2793,7 @@ $pallets_status_main = [
     'delivered' => 0,
     'at_manufacturer' => 0,
     'on_water' => 0,
+    'customs_hold' => 0,
     'cleared_customs' => 0,
     'in_transit_to_warehouse' => 0,
     'in_warehouse' => 0,
@@ -2793,6 +2804,7 @@ foreach ($statuses_of_interest as $s) {
     switch ($s) {
         case 'At Manufacturer': $pallets_status_main['at_manufacturer'] = $count; break;
         case 'On Water': $pallets_status_main['on_water'] = $count; break;
+        case 'Customs Hold': $pallets_status_main['customs_hold'] = $count; break;
         case 'Cleared Customs': $pallets_status_main['cleared_customs'] = $count; break;
         case 'In Transit to Warehouse': $pallets_status_main['in_transit_to_warehouse'] = $count; break;
         case 'In Warehouse': $pallets_status_main['in_warehouse'] = $count; break;
@@ -2817,6 +2829,7 @@ foreach ($statuses_of_interest as $s) {
                     'delivered' => 0,
                     'at_manufacturer' => 0,
                     'on_water' => 0,
+                    'customs_hold' => 0,
                     'cleared_customs' => 0,
                     'in_transit_to_warehouse' => 0,
                     'in_warehouse' => 0,
@@ -2827,6 +2840,7 @@ foreach ($statuses_of_interest as $s) {
             switch ($s) {
                 case 'At Manufacturer': $pallets_sub_rows_status[$label]['at_manufacturer'] += $pal; break;
                 case 'On Water': $pallets_sub_rows_status[$label]['on_water'] += $pal; break;
+                case 'Customs Hold': $pallets_sub_rows_status[$label]['customs_hold'] += $pal; break;
                 case 'Cleared Customs': $pallets_sub_rows_status[$label]['cleared_customs'] += $pal; break;
                 case 'In Transit to Warehouse': $pallets_sub_rows_status[$label]['in_transit_to_warehouse'] += $pal; break;
                 case 'In Warehouse': $pallets_sub_rows_status[$label]['in_warehouse'] += $pal; break;

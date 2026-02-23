@@ -69,6 +69,8 @@ try {
         'site_safety' => 0,
         'site_scheduling' => 0,
         'site_operating_hours' => 0,
+        'tracking_waypoints' => 0,
+        'tracking_positions' => 0,
         'delivery_pallets' => 0,
         'deliveries' => 0,
         'pallets' => 0,
@@ -123,6 +125,37 @@ try {
     $stmtDelDeliveryPallets->execute();
     $deleted_counts['delivery_pallets'] = $stmtDelDeliveryPallets->affected_rows;
     $stmtDelDeliveryPallets->close();
+
+    // Step 1b: Delete container tracking records for this project.
+    $waypointsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_waypoints'");
+    $hasWaypointsTable = $waypointsTableCheck && $waypointsTableCheck->num_rows > 0;
+    if ($waypointsTableCheck) {
+        $waypointsTableCheck->close();
+    }
+    if ($hasWaypointsTable) {
+        $stmtDelTrackingWaypoints = $conn->prepare("DELETE FROM container_tracking_waypoints WHERE project_id = ?");
+        if ($stmtDelTrackingWaypoints) {
+            $stmtDelTrackingWaypoints->bind_param("i", $project_id);
+            $stmtDelTrackingWaypoints->execute();
+            $deleted_counts['tracking_waypoints'] = $stmtDelTrackingWaypoints->affected_rows;
+            $stmtDelTrackingWaypoints->close();
+        }
+    }
+
+    $positionsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
+    $hasPositionsTable = $positionsTableCheck && $positionsTableCheck->num_rows > 0;
+    if ($positionsTableCheck) {
+        $positionsTableCheck->close();
+    }
+    if ($hasPositionsTable) {
+        $stmtDelTrackingPositions = $conn->prepare("DELETE FROM container_tracking_positions WHERE project_id = ?");
+        if ($stmtDelTrackingPositions) {
+            $stmtDelTrackingPositions->bind_param("i", $project_id);
+            $stmtDelTrackingPositions->execute();
+            $deleted_counts['tracking_positions'] = $stmtDelTrackingPositions->affected_rows;
+            $stmtDelTrackingPositions->close();
+        }
+    }
     
     // Step 2: Delete inventory_pallets from modules assigned to this project
     $stmtDelPallets = $conn->prepare("
