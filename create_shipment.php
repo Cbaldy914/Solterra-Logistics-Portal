@@ -69,6 +69,168 @@ if (!$is_global_admin) {
     }
 }
 
+function slp_table_exists(mysqli $conn, string $table): bool {
+    $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    if ($safeTable === '') {
+        return false;
+    }
+    $result = $conn->query("SHOW TABLES LIKE '" . $conn->real_escape_string($safeTable) . "'");
+    if (!$result) {
+        return false;
+    }
+    $exists = $result->num_rows > 0;
+    $result->close();
+    return $exists;
+}
+
+function slp_find_existing_column(mysqli $conn, string $table, array $candidates): ?string {
+    $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    if ($safeTable === '') {
+        return null;
+    }
+    foreach ($candidates as $candidate) {
+        $column = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$candidate);
+        if ($column === '') {
+            continue;
+        }
+        $sql = "SHOW COLUMNS FROM `{$safeTable}` LIKE '" . $conn->real_escape_string($column) . "'";
+        $result = $conn->query($sql);
+        if ($result) {
+            $exists = $result->num_rows > 0;
+            $result->close();
+            if ($exists) {
+                return $column;
+            }
+        }
+    }
+    return null;
+}
+
+function slp_initialize_ocean_tracking(mysqli $conn, array $trackingSeeds, int $userId): void {
+    if (empty($trackingSeeds)) {
+        return;
+    }
+    $positionsTableExists = slp_table_exists($conn, 'container_tracking_positions');
+    $waypointsTableExists = slp_table_exists($conn, 'container_tracking_waypoints');
+    if (!$positionsTableExists && !$waypointsTableExists) {
+        return;
+    }
+
+    $seedMap = [];
+    foreach ($trackingSeeds as $seed) {
+        $containerNumber = trim((string)($seed['container_number'] ?? ''));
+        $projectId = (int)($seed['project_id'] ?? 0);
+        $originPortId = (int)($seed['origin_port_id'] ?? 0);
+        if ($containerNumber === '' || $projectId <= 0) {
+            continue;
+        }
+        $seedKey = $containerNumber . '|' . $projectId;
+        $seedMap[$seedKey] = [
+            'container_number' => $containerNumber,
+            'project_id' => $projectId,
+            'origin_port_id' => $originPortId
+        ];
+    }
+    if (empty($seedMap)) {
+        return;
+    }
+
+    $originCoordsByPortId = [];
+    $originPortIds = array_values(array_unique(array_filter(array_map(static function ($seed) {
+        return (int)($seed['origin_port_id'] ?? 0);
+    }, array_values($seedMap)))));
+
+    if (!empty($originPortIds)) {
+        $latColumn = slp_find_existing_column($conn, 'warehouses', ['latitude', 'lat']);
+        $lngColumn = slp_find_existing_column($conn, 'warehouses', ['longitude', 'lng', 'lon']);
+        if ($latColumn !== null && $lngColumn !== null) {
+            $placeholders = implode(',', array_fill(0, count($originPortIds), '?'));
+            $types = str_repeat('i', count($originPortIds));
+            $sqlPorts = "SELECT id, `{$latColumn}` AS latitude, `{$lngColumn}` AS longitude FROM warehouses WHERE id IN ($placeholders)";
+            $stmtPorts = $conn->prepare($sqlPorts);
+            if ($stmtPorts) {
+                $stmtPorts->bind_param($types, ...$originPortIds);
+                $stmtPorts->execute();
+                $resultPorts = $stmtPorts->get_result();
+                while ($port = $resultPorts->fetch_assoc()) {
+                    $portId = (int)($port['id'] ?? 0);
+                    if ($portId <= 0) {
+                        continue;
+                    }
+                    $lat = isset($port['latitude']) ? (float)$port['latitude'] : null;
+                    $lng = isset($port['longitude']) ? (float)$port['longitude'] : null;
+                    if ($lat !== null && $lng !== null && $lat >= -90 && $lat <= 90 && $lng >= -180 && $lng <= 180) {
+                        $originCoordsByPortId[$portId] = ['lat' => $lat, 'lng' => $lng];
+                    }
+                }
+                $stmtPorts->close();
+            }
+        }
+    }
+
+    $stmtDeleteWaypoints = null;
+    if ($waypointsTableExists) {
+        $stmtDeleteWaypoints = $conn->prepare("DELETE FROM container_tracking_waypoints WHERE container_number = ? AND project_id = ?");
+    }
+    $stmtDeletePosition = null;
+    $stmtUpsertPosition = null;
+    if ($positionsTableExists) {
+        $stmtDeletePosition = $conn->prepare("DELETE FROM container_tracking_positions WHERE container_number = ? AND project_id = ?");
+        $stmtUpsertPosition = $conn->prepare("
+            INSERT INTO container_tracking_positions
+                (container_number, project_id, latitude, longitude, updated_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                latitude = VALUES(latitude),
+                longitude = VALUES(longitude),
+                updated_by = VALUES(updated_by),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+    }
+    $stmtInsertWaypoint = null;
+    if ($waypointsTableExists) {
+        $stmtInsertWaypoint = $conn->prepare("
+            INSERT INTO container_tracking_waypoints
+                (container_number, project_id, latitude, longitude, recorded_by)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+    }
+
+    foreach ($seedMap as $seed) {
+        $containerNumber = $seed['container_number'];
+        $projectId = (int)$seed['project_id'];
+        $originPortId = (int)$seed['origin_port_id'];
+        $originCoords = $originCoordsByPortId[$originPortId] ?? null;
+
+        if ($stmtDeleteWaypoints) {
+            $stmtDeleteWaypoints->bind_param("si", $containerNumber, $projectId);
+            $stmtDeleteWaypoints->execute();
+        }
+        if ($stmtDeletePosition) {
+            $stmtDeletePosition->bind_param("si", $containerNumber, $projectId);
+            $stmtDeletePosition->execute();
+        }
+
+        if ($originCoords && $stmtUpsertPosition) {
+            $lat = (float)$originCoords['lat'];
+            $lng = (float)$originCoords['lng'];
+            $stmtUpsertPosition->bind_param("siddi", $containerNumber, $projectId, $lat, $lng, $userId);
+            $stmtUpsertPosition->execute();
+        }
+        if ($originCoords && $stmtInsertWaypoint) {
+            $lat = (float)$originCoords['lat'];
+            $lng = (float)$originCoords['lng'];
+            $stmtInsertWaypoint->bind_param("siddi", $containerNumber, $projectId, $lat, $lng, $userId);
+            $stmtInsertWaypoint->execute();
+        }
+    }
+
+    if ($stmtDeleteWaypoints) { $stmtDeleteWaypoints->close(); }
+    if ($stmtDeletePosition) { $stmtDeletePosition->close(); }
+    if ($stmtUpsertPosition) { $stmtUpsertPosition->close(); }
+    if ($stmtInsertWaypoint) { $stmtInsertWaypoint->close(); }
+}
+
 // --- Handle Bulk Manufacturer Pallet ID Linking ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'bulk_link_manufacturer_ids') {
     header('Content-Type: application/json');
@@ -400,6 +562,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 // --- Handle Pallet Shipment ---
 $shipMessage = '';
 $createdDeliveryIds = [];
+$is_overseas_shipment = false;
+$shipmentCreationSuccessful = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
     if (!$can_manage_shipments) {
         $_SESSION['create_shipment_message'] = 'You are not authorized to create shipments.';
@@ -410,6 +574,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
     }
     $conn->begin_transaction();
     try {
+        $ocean_tracking_seeds = [];
         // Get selected pallet IDs first
         $palletIds = $_POST['selected_pallets'] ?? [];
         if (empty($palletIds)) {
@@ -809,6 +974,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             if (empty($currentBolNumber)) {
                 $currentBolNumber = 'BOL-' . date('Ymd-His') . '-' . ($groupIndex + 1);
             }
+
+            $currentContainerNumber = trim((string)$container_number);
+            if ($is_overseas_shipment && $shipmentMode === 'multi') {
+                if (!empty($container_numbers_array) && array_key_exists($groupIndex, $container_numbers_array)) {
+                    $currentContainerNumber = trim((string)$container_numbers_array[$groupIndex]);
+                } elseif ($currentContainerNumber === '' && !empty($currentBolNumber)) {
+                    $currentContainerNumber = trim((string)$currentBolNumber);
+                }
+            }
             
 
 
@@ -936,7 +1110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 // Add container_number for overseas shipments or when explicitly provided (e.g., drayage)
                 if ($is_overseas_shipment || !empty($container_number)) {
                     $deliveryColumns[] = 'container_number';
-                    $deliveryParams[] = $container_number;
+                    $deliveryParams[] = $is_overseas_shipment ? $currentContainerNumber : $container_number;
                     $deliveryTypes .= 's';
                 }
                 
@@ -980,6 +1154,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 $deliveryId = $conn->insert_id;
                 $createdDeliveryIds[] = $deliveryId;
 
+                if ($is_overseas_shipment && $currentContainerNumber !== '') {
+                    $trackingProjectId = (int)$groupAssignedProjectId;
+                    if ($trackingProjectId <= 0 && $project_id_from_url > 0) {
+                        $trackingProjectId = (int)$project_id_from_url;
+                    }
+                    if ($trackingProjectId > 0) {
+                        $ocean_tracking_seeds[] = [
+                            'container_number' => $currentContainerNumber,
+                            'project_id' => $trackingProjectId,
+                            'origin_port_id' => (int)$origin_port_id
+                        ];
+                    }
+                }
+
                 foreach ($palletsForWatt as $pallet) {
                     $stmtLink->bind_param('ii', $deliveryId, $pallet['id']);
                     if (!$stmtLink->execute()) {
@@ -1007,7 +1195,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
         $stmtLink->close();
         $stmtUp->close();
+
+        if ($is_overseas_shipment) {
+            slp_initialize_ocean_tracking($conn, $ocean_tracking_seeds, (int)$user_id);
+        }
         $conn->commit();
+        $shipmentCreationSuccessful = true;
         
         // Count unique BOL numbers instead of total delivery records
         $uniqueBolNumbers = [];
@@ -1114,12 +1307,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             // Check if this is a drayage shipment - if so, don't include Generate BOL link
             $isDrayageShipment = !empty($_POST['drayage_container_ids']);
             $bolLink = $isDrayageShipment ? '' : " <a href='{$bolLinkUrl}' style='color: #488C9A; text-decoration: underline; margin-left: 10px;'>Generate BOL</a>";
+            $containerTrackingHref = "container_tracking.php";
+            if ($project_id_from_url > 0) {
+                $containerTrackingHref .= "?project_id={$project_id_from_url}";
+            }
             
             $deliveryWord = ($totalDeliveries === 1) ? 'delivery' : 'deliveries';
             
             if ($destinationType === 'warehouse') {
                 if ($is_overseas_shipment) {
-                    $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now on water to the selected port. To receive modules into the port when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
+                    $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now on water to the selected port. Track vessel updates in <a href='{$containerTrackingHref}' style='color: #488C9A; text-decoration: underline;'>Container ETA Tracker</a>.{$bolLink}";
                 } else {
                     $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
                 }
@@ -1159,12 +1356,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             }
         }
     } else {
-        // Normal shipment - redirect back to create_shipment.php
-        $_SESSION['create_shipment_message'] = $shipMessage;
-        // Preserve project_id in redirect for breadcrumb navigation
-        $redirect_url = "create_shipment.php";
-        if ($project_id_from_url > 0) {
-            $redirect_url .= "?project_id=" . $project_id_from_url;
+        if ($shipmentCreationSuccessful && $is_overseas_shipment) {
+            $_SESSION['container_tracking_flash'] = [
+                'type' => 'success',
+                'message' => strip_tags((string)$shipMessage)
+            ];
+            $redirect_url = "container_tracking.php";
+            if ($project_id_from_url > 0) {
+                $redirect_url .= "?project_id=" . $project_id_from_url;
+            }
+        } else {
+            // Normal shipment - redirect back to create_shipment.php
+            $_SESSION['create_shipment_message'] = $shipMessage;
+            // Preserve project_id in redirect for breadcrumb navigation
+            $redirect_url = "create_shipment.php";
+            if ($project_id_from_url > 0) {
+                $redirect_url .= "?project_id=" . $project_id_from_url;
+            }
         }
     }
     header("Location: " . $redirect_url);

@@ -520,43 +520,19 @@ try {
             $waypoints_table_exists = $waypoints_table_check->num_rows > 0;
             $waypoints_table_check->close();
         }
-        $vessel_routes_table_exists = false;
-        $vessel_routes_table_check = $conn->query("SHOW TABLES LIKE 'container_vessel_routes'");
-        if ($vessel_routes_table_check) {
-            $vessel_routes_table_exists = $vessel_routes_table_check->num_rows > 0;
-            $vessel_routes_table_check->close();
-        }
-        $vessel_assignments_table_exists = false;
-        $vessel_assignments_table_check = $conn->query("SHOW TABLES LIKE 'container_vessel_route_assignments'");
-        if ($vessel_assignments_table_check) {
-            $vessel_assignments_table_exists = $vessel_assignments_table_check->num_rows > 0;
-            $vessel_assignments_table_check->close();
-        }
-        $vessel_route_waypoints_table_exists = false;
-        $vessel_route_waypoints_table_check = $conn->query("SHOW TABLES LIKE 'container_vessel_route_waypoints'");
-        if ($vessel_route_waypoints_table_check) {
-            $vessel_route_waypoints_table_exists = $vessel_route_waypoints_table_check->num_rows > 0;
-            $vessel_route_waypoints_table_check->close();
-        }
 
-        $positionSelectSql = $positions_table_exists
-            ? "MAX(ctp.latitude) AS vessel_latitude,
-               MAX(ctp.longitude) AS vessel_longitude,
-               MAX(ctp.updated_at) AS vessel_position_updated_at,"
-            : "NULL AS vessel_latitude,
+        $positionSelectSql = "NULL AS vessel_latitude,
                NULL AS vessel_longitude,
                NULL AS vessel_position_updated_at,";
-        $positionJoinSql = $positions_table_exists
-            ? "LEFT JOIN container_tracking_positions ctp
-               ON ctp.container_number = d.container_number AND ctp.project_id = d.project_id"
-            : "";
+        $positionJoinSql = "";
 
         // Fetch active on-water containers for this project (manual lat/lng overrides projected path)
         $stmtOnWater = $conn->prepare("
             SELECT
                 d.container_number,
                 MAX(d.anticipated_delivery_date) AS eta_date,
-                MIN(COALESCE(d.left_warehouse_date, DATE(d.created_at))) AS departed_date,
+                MAX(COALESCE(d.left_warehouse_date, DATE(d.created_at))) AS departed_date,
+                MAX(d.created_at) AS latest_delivery_created_at,
                 MAX(d.status_of_delivery) AS status_of_delivery,
                 MAX(COALESCE(w.id, 0)) AS destination_port_id,
                 MAX(COALESCE(w.name, 'Unknown Port')) AS destination_port_name,
@@ -566,6 +542,7 @@ try {
                 MAX(COALESCE(w.state, '')) AS destination_port_state,
                 MAX(COALESCE(w.zip_code, '')) AS destination_port_zip,
                 MAX(COALESCE(
+                    op.name,
                     ml.location_name,
                     mfg.name,
                     CASE
@@ -574,10 +551,10 @@ try {
                     END,
                     'Unknown Origin'
                 )) AS origin_name,
-                MAX(COALESCE(ml.street_address, mfg.street_address, '')) AS origin_street,
-                MAX(COALESCE(ml.city, mfg.city, '')) AS origin_city,
-                MAX(COALESCE(ml.state, mfg.state, '')) AS origin_state,
-                MAX(COALESCE(ml.zip_code, mfg.zip_code, '')) AS origin_zip,
+                MAX(COALESCE(op.street_address, ml.street_address, mfg.street_address, '')) AS origin_street,
+                MAX(COALESCE(op.city, ml.city, mfg.city, '')) AS origin_city,
+                MAX(COALESCE(op.state, ml.state, mfg.state, '')) AS origin_state,
+                MAX(COALESCE(op.zip_code, ml.zip_code, mfg.zip_code, '')) AS origin_zip,
                 COUNT(DISTINCT dp.inventory_pallet_id) AS pallet_count,
                 COALESCE(SUM(COALESCE(ip.quantity, 0)), 0) AS module_count
             FROM deliveries d
@@ -587,6 +564,7 @@ try {
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
             LEFT JOIN manufacturers mfg ON ml.manufacturer_id = mfg.id
+            LEFT JOIN warehouses op ON d.origin_port_id = op.id
             LEFT JOIN warehouses w ON d.warehouse_id = w.id
             $positionJoinSql
             WHERE d.project_id = ?
@@ -631,17 +609,13 @@ try {
                     'status_of_delivery' => $container['status_of_delivery'],
                     'eta_date' => $container['eta_date'],
                     'departed_date' => $container['departed_date'],
+                    'latest_delivery_created_at' => $container['latest_delivery_created_at'] ?? null,
                     'days_to_eta' => $days_to_eta,
                     'vessel_latitude' => isset($container['vessel_latitude']) && $container['vessel_latitude'] !== null ? (float)$container['vessel_latitude'] : null,
                     'vessel_longitude' => isset($container['vessel_longitude']) && $container['vessel_longitude'] !== null ? (float)$container['vessel_longitude'] : null,
                     'vessel_position_updated_at' => $container['vessel_position_updated_at'] ?? null,
                     'waypoints' => [],
                     'waypoint_count' => 0,
-                    'vessel_route_id' => null,
-                    'vessel_route_name' => null,
-                    'vessel_voyage_reference' => null,
-                    'vessel_route_waypoints' => [],
-                    'vessel_route_waypoint_count' => 0,
                     'destination_port_id' => !empty($container['destination_port_id']) ? (int)$container['destination_port_id'] : null,
                     'destination_port_name' => $container['destination_port_name'],
                     'destination_port_full_address' => implode(', ', $destination_address_parts),
@@ -652,6 +626,89 @@ try {
                 ];
             }
             $stmtOnWater->close();
+        }
+
+        $departure_cutoff_by_container = [];
+        foreach ($on_water_containers as $container_ref) {
+            $cn = trim((string)($container_ref['container_number'] ?? ''));
+            if ($cn === '') {
+                continue;
+            }
+            $cutoff_raw = trim((string)($container_ref['latest_delivery_created_at'] ?? ''));
+            if ($cutoff_raw === '') {
+                $cutoff_raw = trim((string)($container_ref['departed_date'] ?? ''));
+            }
+            if ($cutoff_raw === '') {
+                continue;
+            }
+            $departed_ts = strtotime($cutoff_raw);
+            if ($departed_ts === false) {
+                continue;
+            }
+            $departure_cutoff_by_container[$cn] = $departed_ts;
+        }
+
+        if ($positions_table_exists && !empty($on_water_containers)) {
+            $container_numbers = array_values(array_unique(array_map(function ($c) {
+                return trim((string)($c['container_number'] ?? ''));
+            }, $on_water_containers)));
+            $container_numbers = array_values(array_filter($container_numbers, function ($num) {
+                return $num !== '';
+            }));
+
+            if (!empty($container_numbers)) {
+                $placeholders = implode(',', array_fill(0, count($container_numbers), '?'));
+                $position_sql = "
+                    SELECT container_number, latitude, longitude, updated_at
+                    FROM container_tracking_positions
+                    WHERE project_id = ?
+                      AND container_number IN ($placeholders)
+                ";
+                $position_stmt = $conn->prepare($position_sql);
+                if ($position_stmt) {
+                    $position_types = 'i' . str_repeat('s', count($container_numbers));
+                    $position_params = array_merge([(int)$selected_project_id], $container_numbers);
+                    $position_stmt->bind_param($position_types, ...$position_params);
+                    $position_stmt->execute();
+                    $position_result = $position_stmt->get_result();
+
+                    $positions_by_container = [];
+                    while ($position_row = $position_result->fetch_assoc()) {
+                        $cn = trim((string)($position_row['container_number'] ?? ''));
+                        if ($cn === '') {
+                            continue;
+                        }
+                        $positions_by_container[$cn] = $position_row;
+                    }
+                    $position_stmt->close();
+
+                    foreach ($on_water_containers as &$container_ref) {
+                        $cn = trim((string)($container_ref['container_number'] ?? ''));
+                        if ($cn === '' || !isset($positions_by_container[$cn])) {
+                            continue;
+                        }
+                        $position_row = $positions_by_container[$cn];
+                        $updated_raw = trim((string)($position_row['updated_at'] ?? ''));
+                        $updated_ts = $updated_raw !== '' ? strtotime($updated_raw) : false;
+                        $cutoff_ts = $departure_cutoff_by_container[$cn] ?? null;
+                        if ($cutoff_ts !== null && ($updated_ts === false || $updated_ts < $cutoff_ts)) {
+                            continue;
+                        }
+
+                        $lat = isset($position_row['latitude']) ? (float)$position_row['latitude'] : null;
+                        $lng = isset($position_row['longitude']) ? (float)$position_row['longitude'] : null;
+                        $has_valid_position = ($lat !== null && $lng !== null && $lat >= -90 && $lat <= 90 && $lng >= -180 && $lng <= 180);
+                        if (!$has_valid_position) {
+                            continue;
+                        }
+
+                        $container_ref['vessel_latitude'] = $lat;
+                        $container_ref['vessel_longitude'] = $lng;
+                        $container_ref['vessel_position_updated_at'] = $position_row['updated_at'] ?? null;
+                    }
+                    unset($container_ref);
+                }
+            }
         }
 
         if ($waypoints_table_exists && !empty($on_water_containers)) {
@@ -685,6 +742,12 @@ try {
                         if ($cn === '') {
                             continue;
                         }
+                        $recorded_raw = trim((string)($waypoint_row['recorded_at'] ?? ''));
+                        $recorded_ts = $recorded_raw !== '' ? strtotime($recorded_raw) : false;
+                        $cutoff_ts = $departure_cutoff_by_container[$cn] ?? null;
+                        if ($cutoff_ts !== null && ($recorded_ts === false || $recorded_ts < $cutoff_ts)) {
+                            continue;
+                        }
                         if (!isset($waypoints_by_container[$cn])) {
                             $waypoints_by_container[$cn] = [];
                         }
@@ -701,110 +764,6 @@ try {
                         $history = $waypoints_by_container[$cn] ?? [];
                         $container_ref['waypoints'] = $history;
                         $container_ref['waypoint_count'] = count($history);
-                    }
-                    unset($container_ref);
-                }
-            }
-        }
-
-        if ($vessel_routes_table_exists && $vessel_assignments_table_exists && $vessel_route_waypoints_table_exists && !empty($on_water_containers)) {
-            $container_numbers = array_values(array_unique(array_map(function ($c) {
-                return trim((string)($c['container_number'] ?? ''));
-            }, $on_water_containers)));
-            $container_numbers = array_values(array_filter($container_numbers, function ($num) {
-                return $num !== '';
-            }));
-
-            if (!empty($container_numbers)) {
-                $placeholders = implode(',', array_fill(0, count($container_numbers), '?'));
-                $assignments_sql = "
-                    SELECT
-                        cvra.container_number,
-                        cvra.route_id,
-                        COALESCE(cvr.vessel_name, '') AS vessel_name,
-                        COALESCE(cvr.voyage_reference, '') AS voyage_reference
-                    FROM container_vessel_route_assignments cvra
-                    JOIN container_vessel_routes cvr
-                        ON cvr.id = cvra.route_id
-                    WHERE cvra.project_id = ?
-                      AND cvra.container_number IN ($placeholders)
-                      AND cvr.project_id = cvra.project_id
-                      AND cvr.is_active = 1
-                ";
-                $assignments_stmt = $conn->prepare($assignments_sql);
-                if ($assignments_stmt) {
-                    $assignment_types = 'i' . str_repeat('s', count($container_numbers));
-                    $assignment_params = array_merge([(int)$selected_project_id], $container_numbers);
-                    $assignments_stmt->bind_param($assignment_types, ...$assignment_params);
-                    $assignments_stmt->execute();
-                    $assignment_result = $assignments_stmt->get_result();
-
-                    $assignment_by_container = [];
-                    $route_ids = [];
-                    while ($assignment_row = $assignment_result->fetch_assoc()) {
-                        $cn = trim((string)($assignment_row['container_number'] ?? ''));
-                        if ($cn === '') {
-                            continue;
-                        }
-                        $route_id = (int)($assignment_row['route_id'] ?? 0);
-                        if ($route_id <= 0) {
-                            continue;
-                        }
-                        $assignment_by_container[$cn] = [
-                            'route_id' => $route_id,
-                            'vessel_name' => trim((string)($assignment_row['vessel_name'] ?? '')),
-                            'voyage_reference' => trim((string)($assignment_row['voyage_reference'] ?? ''))
-                        ];
-                        $route_ids[$route_id] = true;
-                    }
-                    $assignments_stmt->close();
-
-                    $route_waypoints_by_route = [];
-                    $route_id_list = array_keys($route_ids);
-                    if (!empty($route_id_list)) {
-                        $route_placeholders = implode(',', array_fill(0, count($route_id_list), '?'));
-                        $route_waypoints_sql = "
-                            SELECT route_id, latitude, longitude, recorded_at
-                            FROM container_vessel_route_waypoints
-                            WHERE route_id IN ($route_placeholders)
-                            ORDER BY route_id ASC, recorded_at ASC, id ASC
-                        ";
-                        $route_waypoints_stmt = $conn->prepare($route_waypoints_sql);
-                        if ($route_waypoints_stmt) {
-                            $route_waypoint_types = str_repeat('i', count($route_id_list));
-                            $route_waypoints_stmt->bind_param($route_waypoint_types, ...$route_id_list);
-                            $route_waypoints_stmt->execute();
-                            $route_waypoints_result = $route_waypoints_stmt->get_result();
-                            while ($route_waypoint_row = $route_waypoints_result->fetch_assoc()) {
-                                $route_id = (int)($route_waypoint_row['route_id'] ?? 0);
-                                if ($route_id <= 0) {
-                                    continue;
-                                }
-                                if (!isset($route_waypoints_by_route[$route_id])) {
-                                    $route_waypoints_by_route[$route_id] = [];
-                                }
-                                $route_waypoints_by_route[$route_id][] = [
-                                    'latitude' => (float)$route_waypoint_row['latitude'],
-                                    'longitude' => (float)$route_waypoint_row['longitude'],
-                                    'recorded_at' => $route_waypoint_row['recorded_at']
-                                ];
-                            }
-                            $route_waypoints_stmt->close();
-                        }
-                    }
-
-                    foreach ($on_water_containers as &$container_ref) {
-                        $cn = trim((string)($container_ref['container_number'] ?? ''));
-                        if (!isset($assignment_by_container[$cn])) {
-                            continue;
-                        }
-                        $assignment = $assignment_by_container[$cn];
-                        $route_id = (int)($assignment['route_id'] ?? 0);
-                        $container_ref['vessel_route_id'] = $route_id > 0 ? $route_id : null;
-                        $container_ref['vessel_route_name'] = $assignment['vessel_name'] !== '' ? $assignment['vessel_name'] : null;
-                        $container_ref['vessel_voyage_reference'] = $assignment['voyage_reference'] !== '' ? $assignment['voyage_reference'] : null;
-                        $container_ref['vessel_route_waypoints'] = $route_waypoints_by_route[$route_id] ?? [];
-                        $container_ref['vessel_route_waypoint_count'] = count($container_ref['vessel_route_waypoints']);
                     }
                     unset($container_ref);
                 }
@@ -1842,16 +1801,14 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             return null;
         }
     };
-    const renderedVesselRouteShapes = new Set();
-
     await Promise.all(onWaterContainers.map(async (container) => {
         const manualLat = Number(container.vessel_latitude);
         const manualLng = Number(container.vessel_longitude);
-        const hasManualPosition = Number.isFinite(manualLat) &&
+        const rawHasManualPosition = Number.isFinite(manualLat) &&
             Number.isFinite(manualLng) &&
             manualLat >= -90 && manualLat <= 90 &&
             manualLng >= -180 && manualLng <= 180;
-        const manualPosition = hasManualPosition ? new google.maps.LatLng(manualLat, manualLng) : null;
+        const manualPosition = rawHasManualPosition ? new google.maps.LatLng(manualLat, manualLng) : null;
 
         const waypointPoints = [];
         if (Array.isArray(container.waypoints)) {
@@ -1872,40 +1829,13 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                 });
             });
         }
-        const vesselRoutePoints = [];
-        if (Array.isArray(container.vessel_route_waypoints)) {
-            container.vessel_route_waypoints.forEach((wp) => {
-                const wpLat = Number(wp.latitude);
-                const wpLng = Number(wp.longitude);
-                if (!Number.isFinite(wpLat) || !Number.isFinite(wpLng)) {
-                    return;
-                }
-                if (wpLat < -90 || wpLat > 90 || wpLng < -180 || wpLng > 180) {
-                    return;
-                }
-                vesselRoutePoints.push({
-                    position: new google.maps.LatLng(wpLat, wpLng),
-                    recordedAt: wp.recorded_at ? String(wp.recorded_at) : 'N/A',
-                    latitude: wpLat,
-                    longitude: wpLng
-                });
-            });
-        }
-
         const originPosition = await resolveAddress(container.origin_full_address);
         const destinationPosition = await resolveAddress(container.destination_port_full_address);
-        const waypointSource = waypointPoints.length > 0
-            ? 'container'
-            : (vesselRoutePoints.length > 0 ? 'vessel_route' : 'none');
-        const activeWaypointPoints = waypointSource === 'container'
-            ? waypointPoints
-            : (waypointSource === 'vessel_route' ? vesselRoutePoints : []);
+        const waypointSource = waypointPoints.length > 0 ? 'container' : 'none';
+        const activeWaypointPoints = waypointPoints;
+        const hasManualPosition = rawHasManualPosition && activeWaypointPoints.length > 0;
         const sampledWaypointPoints = sampleWaypointPoints(activeWaypointPoints, 9);
         const hasTransitProgress = hasManualPosition || activeWaypointPoints.length > 0;
-        const vesselRouteId = Number(container.vessel_route_id) || 0;
-        const usingVesselRoute = waypointSource === 'vessel_route' && vesselRouteId > 0;
-        const vesselRouteKey = usingVesselRoute ? `route_${vesselRouteId}` : '';
-        const shouldRenderRouteGeometry = !usingVesselRoute || !renderedVesselRouteShapes.has(vesselRouteKey);
 
         let markerPosition = null;
         if (hasManualPosition) {
@@ -1932,9 +1862,7 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             ? 'Container tracking coordinates'
             : (waypointSource === 'container'
                 ? 'Latest container waypoint'
-                : (waypointSource === 'vessel_route'
-                    ? 'Assigned vessel route waypoint'
-                    : 'Origin port (awaiting first waypoint)'));
+                : 'Origin port (awaiting first waypoint)');
         const positionValueText = `${markerPosition.lat().toFixed(4)}, ${markerPosition.lng().toFixed(4)}`;
         const positionUpdatedText = hasManualPosition && container.vessel_position_updated_at
             ? String(container.vessel_position_updated_at)
@@ -1947,18 +1875,15 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
 
         // Draw transit only after tracking progress exists.
         const transitPathPoints = [];
-        if (hasTransitProgress && shouldRenderRouteGeometry) {
+        if (hasTransitProgress) {
             if (originPosition) {
                 appendPointIfDistinct(transitPathPoints, originPosition);
             }
             sampledWaypointPoints.forEach((wp) => appendPointIfDistinct(transitPathPoints, wp.position));
             appendPointIfDistinct(transitPathPoints, markerPosition);
-            if (destinationPosition) {
-                appendPointIfDistinct(transitPathPoints, destinationPosition);
-            }
         }
 
-        if (hasTransitProgress && shouldRenderRouteGeometry) {
+        if (hasTransitProgress) {
             sampledWaypointPoints.forEach((wp, index) => {
                 bounds.extend(wp.position);
                 const dot = new google.maps.Marker({
@@ -1985,7 +1910,7 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             });
         }
 
-        if (transitPathPoints.length >= 2 && shouldRenderRouteGeometry) {
+        if (transitPathPoints.length >= 2) {
             const transitPolyline = new google.maps.Polyline({
                 path: transitPathPoints,
                 geodesic: true,
@@ -2011,10 +1936,6 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                 infoWindow.open(map);
             });
         }
-        if (usingVesselRoute && shouldRenderRouteGeometry) {
-            renderedVesselRouteShapes.add(vesselRouteKey);
-        }
-
         const marker = new google.maps.Marker({
             position: markerPosition,
             map: map,
@@ -2022,14 +1943,7 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             icon: buildBoatMarkerIcon(),
             zIndex: 35
         });
-        const vesselRouteName = String(container.vessel_route_name || '').trim();
-        const vesselVoyageRef = String(container.vessel_voyage_reference || '').trim();
-        const vesselRouteLabel = vesselRouteName
-            ? `${vesselRouteName}${vesselVoyageRef ? ` (${vesselVoyageRef})` : ''}`
-            : 'N/A';
-        const waypointSourceText = waypointSource === 'container'
-            ? 'Container-specific'
-            : (waypointSource === 'vessel_route' ? 'Assigned vessel route' : 'No waypoints');
+        const waypointSourceText = waypointSource === 'container' ? 'Container-specific' : 'No waypoints';
 
         const infoContent = `
             <div style="font-family:'Poppins',Arial,sans-serif; min-width:250px;">
@@ -2043,7 +1957,6 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                     <div style="margin-bottom:6px;"><strong>Position Source:</strong> ${positionSourceText}</div>
                     <div style="margin-bottom:6px;"><strong>Vessel Position:</strong> ${positionValueText}</div>
                     <div style="margin-bottom:6px;"><strong>Position Updated:</strong> ${positionUpdatedText}</div>
-                    <div style="margin-bottom:6px;"><strong>Vessel Route:</strong> ${vesselRouteLabel}</div>
                     <div style="margin-bottom:6px;"><strong>Waypoint Source:</strong> ${waypointSourceText}</div>
                     <div style="margin-bottom:6px;"><strong>Waypoint Updates:</strong> ${waypointCount}</div>
                     <div style="margin-bottom:6px;"><strong>Last Waypoint:</strong> ${lastWaypointAt}</div>

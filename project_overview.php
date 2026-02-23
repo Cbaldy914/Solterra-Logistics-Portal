@@ -1735,16 +1735,10 @@ function generateShippingContent(filter){
         if(filter==='At Manufacturer'){
             html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=At%20Manufacturer" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
         }else if(filter==='On Water'){
-            // For On Water status, link to the appropriate port warehouse for receiving
+            // For On Water status, link to container tracking
             html+=`<div style="text-align:center;margin-top:15px;">`;
-            html+=`<p style="color:#666;margin-bottom:10px;">Pallets are in ocean transit. When they arrive at port, they will be available for receiving.</p>`;
-            // Find the port warehouse for this project's overseas pallets
-            for(const key in shippingBreakdown){
-                if(key.includes('On Water') && shippingBreakdown[key].warehouse_id){
-                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Receive at Port</a>`;
-                    break;
-                }
-            }
+            html+=`<p style="color:#666;margin-bottom:10px;">Pallets are in ocean transit. Update vessel position and waypoints from Container ETA Tracker.</p>`;
+            html+=`<a href="container_tracking.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Open Container ETA Tracker</a>`;
             html+=`</div>`;
         }else if(filter==='Customs Hold'){
             html+=`<div style="text-align:center;margin-top:15px;">`;
