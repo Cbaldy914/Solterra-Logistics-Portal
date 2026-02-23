@@ -54,6 +54,8 @@ if ($role !== 'global_admin') {
 $warehouse = null;
 $pallets_in_storage = [];
 $pallets_in_transit = [];
+$port_cleared_pallets = [];
+$port_customs_hold_pallets = [];
 $errorMessage = '';
 $successMessage = $_SESSION['move_pallet_message'] ?? '';
 if (isset($_SESSION['move_pallet_message'])) unset($_SESSION['move_pallet_message']);
@@ -184,6 +186,56 @@ function fetchPortContainersCleared($conn, $warehouse_id, $received_status) {
         }
     
     return $containers_cleared;
+}
+
+/**
+ * PORT-SPECIFIC: Fetch individual pallets by status for customs workflow.
+ *
+ * @param mysqli $conn Database connection
+ * @param int $warehouse_id Port ID
+ * @param string $status Pallet status to return (e.g., Cleared Customs, Customs Hold)
+ * @return array
+ */
+function fetchPortPalletsByStatus($conn, $warehouse_id, $status) {
+    $rows = [];
+
+    $stmt = $conn->prepare("
+        SELECT
+            ip.id AS pallet_id,
+            ip.pallet_identifier,
+            ip.wattage,
+            ip.quantity,
+            ip.arrival_date,
+            COALESCE(ip.customs_hold_cost, 0) AS customs_hold_cost,
+            ip.customs_hold_cost_notes,
+            ip.customs_hold_cost_updated_at,
+            COALESCE(NULLIF(TRIM(d.bol_number), ''), 'N/A') AS container_number,
+            COALESCE(p.project_name, 'N/A') AS project_name,
+            COALESCE(m.vendor_name, 'N/A') AS origin_vendor
+        FROM inventory_pallets ip
+        LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+        LEFT JOIN deliveries d ON dp.delivery_id = d.id
+        LEFT JOIN projects p ON ip.assigned_project_id = p.id
+        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE ip.current_warehouse_id = ?
+          AND ip.status = ?
+        ORDER BY d.bol_number ASC, ip.arrival_date DESC, ip.id DESC
+    ");
+
+    if (!$stmt) {
+        return $rows;
+    }
+
+    $stmt->bind_param("is", $warehouse_id, $status);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $rows[] = $row;
+    }
+    $stmt->close();
+
+    return $rows;
 }
 
 /**
@@ -538,6 +590,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 
 // ===========================================================================================
+// PORT CUSTOMS HOLD ACTIONS
+// ===========================================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && in_array($_POST['action'], ['place_customs_hold', 'release_customs_hold'], true)) {
+    $redirect_tab = 'customsHold';
+    $redirect_url = "manage_warehouse_inventory.php?warehouse_id={$warehouse_id}&tab={$redirect_tab}";
+    if (!empty($_GET['project_id'])) {
+        $redirect_url .= '&project_id=' . urlencode((string)$_GET['project_id']);
+    }
+
+    try {
+        $action = $_POST['action'];
+        $selected = isset($_POST['customs_pallet_ids']) && is_array($_POST['customs_pallet_ids']) ? $_POST['customs_pallet_ids'] : [];
+        $pallet_ids = array_values(array_filter(array_map('intval', $selected), static function ($v) {
+            return $v > 0;
+        }));
+
+        if (empty($pallet_ids)) {
+            throw new Exception('Select at least one pallet.');
+        }
+
+        $stmtPort = $conn->prepare("SELECT is_port FROM warehouses WHERE id = ? LIMIT 1");
+        if (!$stmtPort) {
+            throw new Exception('Unable to validate facility type.');
+        }
+        $stmtPort->bind_param("i", $warehouse_id);
+        $stmtPort->execute();
+        $stmtPort->bind_result($port_flag);
+        $is_port_action = false;
+        if ($stmtPort->fetch()) {
+            $is_port_action = ((int)$port_flag === 1);
+        }
+        $stmtPort->close();
+
+        if (!$is_port_action) {
+            throw new Exception('Customs hold actions are only available for ports.');
+        }
+
+        $cost_input = trim((string)($_POST['customs_cost_per_pallet'] ?? '0'));
+        $cost_per_pallet = is_numeric($cost_input) ? (float)$cost_input : 0.0;
+        if ($cost_per_pallet < 0) {
+            throw new Exception('Cost per pallet cannot be negative.');
+        }
+        $cost_notes = trim((string)($_POST['customs_cost_notes'] ?? ''));
+        if (strlen($cost_notes) > 255) {
+            $cost_notes = substr($cost_notes, 0, 255);
+        }
+
+        $new_status = ($action === 'place_customs_hold') ? 'Customs Hold' : 'Cleared Customs';
+        $expected_status = ($action === 'place_customs_hold') ? 'Cleared Customs' : 'Customs Hold';
+        $id_list = implode(',', $pallet_ids);
+
+        $sql = "
+            UPDATE inventory_pallets
+            SET status = ?,
+                customs_hold_cost = COALESCE(customs_hold_cost, 0) + ?,
+                customs_hold_cost_notes = CASE WHEN ? <> '' THEN ? ELSE customs_hold_cost_notes END,
+                customs_hold_cost_updated_at = NOW()
+            WHERE id IN ($id_list)
+              AND current_warehouse_id = ?
+              AND status = ?
+        ";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new Exception('Failed to prepare customs hold update.');
+        }
+
+        $stmt->bind_param("sdssis", $new_status, $cost_per_pallet, $cost_notes, $cost_notes, $warehouse_id, $expected_status);
+        $stmt->execute();
+        $affected = $stmt->affected_rows;
+        $stmt->close();
+
+        if ($affected <= 0) {
+            throw new Exception('No pallets were updated. They may already be in the target status.');
+        }
+
+        $successMessage = $action === 'place_customs_hold'
+            ? "Placed {$affected} pallet(s) on Customs Hold."
+            : "Released {$affected} pallet(s) to Cleared Customs.";
+        if ($cost_per_pallet > 0) {
+            $successMessage .= ' Added $' . number_format($cost_per_pallet, 2) . ' per pallet.';
+        }
+        $_SESSION['move_pallet_message'] = $successMessage;
+    } catch (Exception $e) {
+        $_SESSION['move_pallet_message'] = 'Error: ' . $e->getMessage();
+    }
+
+    header("Location: {$redirect_url}");
+    exit();
+}
+
+// ===========================================================================================
 // MAIN EXECUTION: FETCH FACILITY DATA AND CONFIGURE INTERFACE
 // ===========================================================================================
 
@@ -629,6 +773,8 @@ try {
     $containers_cleared = [];
     if ($is_port) {
         $containers_cleared = fetchPortContainersCleared($conn, $warehouse_id, $received_status);
+        $port_cleared_pallets = fetchPortPalletsByStatus($conn, $warehouse_id, 'Cleared Customs');
+        $port_customs_hold_pallets = fetchPortPalletsByStatus($conn, $warehouse_id, 'Customs Hold');
     }
 
     // ===========================================================================================
@@ -1374,6 +1520,13 @@ $conn->close();
         foreach ($pallets_in_storage as $p) {
             $total_modules_stored += (int)($p['quantity'] ?? 0);
         }
+        if ($is_port && !empty($port_customs_hold_pallets)) {
+            foreach ($port_customs_hold_pallets as $p) {
+                $total_modules_stored += (int)($p['quantity'] ?? 0);
+            }
+            $total_pallets += count($port_customs_hold_pallets);
+            $total_storage_cost_monthly_rate += count($port_customs_hold_pallets) * (float)($warehouse_fees['monthly'] ?? 0);
+        }
         ?>
         <div class="cost-overview-container">
             <div class="cost-card">
@@ -1397,6 +1550,9 @@ $conn->close();
         <div class="tabs-container">
             <div class="tabs">
                 <button id="storedInventoryTab" class="active"><?php echo $inventory_title; ?> (<?php echo $is_port ? count($containers_cleared) : count($pallets_in_storage); ?>)</button>
+                <?php if ($is_port): ?>
+                    <button id="customsHoldTab">Customs Hold (<?php echo count($port_customs_hold_pallets); ?>)</button>
+                <?php endif; ?>
                 <button id="inboundTransitTab">Inbound Transit (<?php echo count($pallets_in_transit); ?>)</button>
                 <button id="truckloadHistoryTab"><?php echo $history_title; ?> (<?php echo count($inbound_history) + count($outbound_history); ?>)</button>
             </div>
@@ -1537,6 +1693,140 @@ $conn->close();
                 </table>
             </div>
         </div>
+
+        <?php if ($is_port): ?>
+        <!-- TAB CONTENT: CUSTOMS HOLD -->
+        <div id="customsHoldContent" class="tab-content">
+            <h2>Customs Hold Management</h2>
+            <p style="margin: 0 0 16px; color: #6b7280;">
+                Move individual pallets between <strong>Cleared Customs</strong> and <strong>Customs Hold</strong>.
+                Customs cost entered here is applied as a per-pallet amount.
+            </p>
+
+            <div class="table-controls-header">
+                <div class="filter-controls">
+                    <label>Search:</label>
+                    <input type="text" id="customsHoldSearch" placeholder="Filter by pallet ID, container, project, vendor...">
+                </div>
+            </div>
+
+            <form method="POST" style="margin-bottom: 26px;" onsubmit="return validateCustomsSelection('eligible')">
+                <input type="hidden" name="action" value="place_customs_hold">
+                <h3 style="margin: 0 0 10px; color: #293E4C;">Cleared Customs Pallets (Eligible for Hold)</h3>
+                <div class="table-responsive">
+                    <table id="customsEligibleTable">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAllEligibleCustoms" onchange="toggleCustomsRows('eligible')"> Select</th>
+                                <th>Pallet ID</th>
+                                <th>Container</th>
+                                <th>Project</th>
+                                <th>Vendor</th>
+                                <th>Wattage</th>
+                                <th>Modules</th>
+                                <th>Arrival Date</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($port_cleared_pallets)): ?>
+                                <?php foreach ($port_cleared_pallets as $row): ?>
+                                    <tr class="customs-row-eligible">
+                                        <td><input type="checkbox" class="customs-checkbox-eligible" name="customs_pallet_ids[]" value="<?php echo (int)$row['pallet_id']; ?>"></td>
+                                        <td><?php echo htmlspecialchars($row['pallet_identifier'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($row['container_number'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($row['project_name'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($row['origin_vendor'] ?? 'N/A'); ?></td>
+                                        <td><?php echo (int)$row['wattage']; ?>W</td>
+                                        <td><?php echo number_format((int)$row['quantity']); ?></td>
+                                        <td><?php echo !empty($row['arrival_date']) ? htmlspecialchars(date('m-d-Y', strtotime($row['arrival_date']))) : 'N/A'; ?></td>
+                                        <td>
+                                            <a href="pallet_details.php?pallet_id=<?php echo (int)$row['pallet_id']; ?>&project_id=<?php echo (int)$from_project_id; ?>&from=warehouse_info&warehouse_id=<?php echo (int)$warehouse_id; ?>" style="color:#488C9A; text-decoration:none; font-weight:600;">
+                                                View
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="9">No cleared-customs pallets are currently available.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-form-row" style="margin-top: 12px;">
+                    <div>
+                        <label for="hold_cost_per_pallet">Customs Cost per Pallet ($)</label>
+                        <input type="number" step="0.01" min="0" name="customs_cost_per_pallet" id="hold_cost_per_pallet" value="0">
+                    </div>
+                    <div>
+                        <label for="hold_cost_notes">Cost Notes (Optional)</label>
+                        <input type="text" maxlength="255" name="customs_cost_notes" id="hold_cost_notes" placeholder="Exam hold fee, broker charge, inspection fee...">
+                    </div>
+                </div>
+                <button type="submit" class="action-button" style="margin-top: 12px; background:#dc2626;">Place Selected on Customs Hold</button>
+            </form>
+
+            <form method="POST" onsubmit="return validateCustomsSelection('held')">
+                <input type="hidden" name="action" value="release_customs_hold">
+                <h3 style="margin: 0 0 10px; color: #293E4C;">Pallets Currently on Customs Hold</h3>
+                <div class="table-responsive">
+                    <table id="customsHeldTable">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAllHeldCustoms" onchange="toggleCustomsRows('held')"> Select</th>
+                                <th>Pallet ID</th>
+                                <th>Container</th>
+                                <th>Project</th>
+                                <th>Vendor</th>
+                                <th>Wattage</th>
+                                <th>Modules</th>
+                                <th>Hold Cost</th>
+                                <th>Notes</th>
+                                <th>Updated</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($port_customs_hold_pallets)): ?>
+                                <?php foreach ($port_customs_hold_pallets as $row): ?>
+                                    <tr class="customs-row-held">
+                                        <td><input type="checkbox" class="customs-checkbox-held" name="customs_pallet_ids[]" value="<?php echo (int)$row['pallet_id']; ?>"></td>
+                                        <td><?php echo htmlspecialchars($row['pallet_identifier'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($row['container_number'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($row['project_name'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($row['origin_vendor'] ?? 'N/A'); ?></td>
+                                        <td><?php echo (int)$row['wattage']; ?>W</td>
+                                        <td><?php echo number_format((int)$row['quantity']); ?></td>
+                                        <td>$<?php echo number_format((float)($row['customs_hold_cost'] ?? 0), 2); ?></td>
+                                        <td><?php echo htmlspecialchars($row['customs_hold_cost_notes'] ?? ''); ?></td>
+                                        <td><?php echo !empty($row['customs_hold_cost_updated_at']) ? htmlspecialchars(date('m-d-Y H:i', strtotime($row['customs_hold_cost_updated_at']))) : 'N/A'; ?></td>
+                                        <td>
+                                            <a href="pallet_details.php?pallet_id=<?php echo (int)$row['pallet_id']; ?>&project_id=<?php echo (int)$from_project_id; ?>&from=warehouse_info&warehouse_id=<?php echo (int)$warehouse_id; ?>" style="color:#488C9A; text-decoration:none; font-weight:600;">
+                                                View
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="11">No pallets are currently on customs hold.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-form-row" style="margin-top: 12px;">
+                    <div>
+                        <label for="release_cost_per_pallet">Additional Cost per Pallet ($)</label>
+                        <input type="number" step="0.01" min="0" name="customs_cost_per_pallet" id="release_cost_per_pallet" value="0">
+                    </div>
+                    <div>
+                        <label for="release_cost_notes">Release Notes (Optional)</label>
+                        <input type="text" maxlength="255" name="customs_cost_notes" id="release_cost_notes" placeholder="Released by customs, inspection complete...">
+                    </div>
+                </div>
+                <button type="submit" class="action-button" style="margin-top: 12px;">Release Selected to Cleared Customs</button>
+            </form>
+        </div>
+        <?php endif; ?>
 
         <!-- TAB CONTENT: INBOUND TRANSIT -->
         <div id="inboundTransitContent" class="tab-content">
@@ -2263,6 +2553,42 @@ function filterTransitTable() {
     });
 }
 
+function filterCustomsHoldTables() {
+    const input = document.getElementById('customsHoldSearch');
+    if (!input) return;
+    const textFilter = input.value.toLowerCase().trim();
+    ['#customsEligibleTable tbody tr', '#customsHeldTable tbody tr'].forEach(selector => {
+        document.querySelectorAll(selector).forEach(row => {
+            if (!textFilter) {
+                row.style.display = '';
+                return;
+            }
+            const rowText = (row.textContent || '').toLowerCase();
+            row.style.display = rowText.includes(textFilter) ? '' : 'none';
+        });
+    });
+}
+
+function toggleCustomsRows(type) {
+    const selectAll = document.getElementById(type === 'eligible' ? 'selectAllEligibleCustoms' : 'selectAllHeldCustoms');
+    const selector = type === 'eligible' ? '.customs-checkbox-eligible' : '.customs-checkbox-held';
+    if (!selectAll) return;
+    document.querySelectorAll(selector).forEach(cb => {
+        if (cb.closest('tr') && cb.closest('tr').style.display === 'none') return;
+        cb.checked = selectAll.checked;
+    });
+}
+
+function validateCustomsSelection(type) {
+    const selector = type === 'eligible' ? '.customs-checkbox-eligible:checked' : '.customs-checkbox-held:checked';
+    const selectedCount = document.querySelectorAll(selector).length;
+    if (selectedCount === 0) {
+        alert('Select at least one pallet before submitting.');
+        return false;
+    }
+    return true;
+}
+
 // ========== MODAL MANAGEMENT ==========
 const moveModal = document.getElementById('moveModal');
 const receiveModal = document.getElementById('receiveModal');
@@ -2614,6 +2940,7 @@ function uploadWarehousePOD(deliveryId, projectId) {
 document.addEventListener('DOMContentLoaded', () => {
     // Main tab clicks
     document.getElementById('storedInventoryTab')?.addEventListener('click', () => showMainTab('storedInventory'));
+    document.getElementById('customsHoldTab')?.addEventListener('click', () => showMainTab('customsHold'));
     document.getElementById('inboundTransitTab')?.addEventListener('click', () => showMainTab('inboundTransit'));
     document.getElementById('truckloadHistoryTab')?.addEventListener('click', () => showMainTab('truckloadHistory'));
 
@@ -2623,6 +2950,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('storedProjectFilter')?.addEventListener('change', filterStoredTable);
     document.getElementById('transitSearch')?.addEventListener('keyup', filterTransitTable);
     document.getElementById('transitWattageFilter')?.addEventListener('change', filterTransitTable);
+    document.getElementById('customsHoldSearch')?.addEventListener('keyup', filterCustomsHoldTables);
 
     // Button event listeners
     document.getElementById('receiveTruckloadBtn')?.addEventListener('click', openReceiveTruckloadModal);
@@ -2731,6 +3059,20 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     } catch (e) { console.warn('Project prefilter not applied:', e); }
+
+    // Respect ?tab=... for direct navigation
+    try {
+        const requestedTab = new URLSearchParams(window.location.search).get('tab');
+        if (requestedTab === 'customsHold' && document.getElementById('customsHoldTab')) {
+            showMainTab('customsHold');
+        } else if (requestedTab === 'inboundTransit') {
+            showMainTab('inboundTransit');
+        } else if (requestedTab === 'truckloadHistory') {
+            showMainTab('truckloadHistory');
+        }
+    } catch (e) {
+        console.warn('Tab query parameter could not be applied.', e);
+    }
 });
 
 // Toggle inbound delivery details

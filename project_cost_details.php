@@ -552,6 +552,7 @@ function enrichPalletCostData(array $row, $conn) {
     $recorded_cost    = isset($row['warehouse_cost']) ? (float)$row['warehouse_cost'] : 0.0;
     $freight_cost     = isset($row['freight_cost']) ? (float)$row['freight_cost'] : 0.0;
     $accessorial_cost = isset($row['accessorial_cost']) ? (float)$row['accessorial_cost'] : 0.0;
+    $customs_hold_cost = isset($row['customs_hold_cost']) ? (float)$row['customs_hold_cost'] : 0.0;
     $fallback_freight = isset($row['fallback_freight_share']) ? (float)$row['fallback_freight_share'] : 0.0;
     $fallback_accessorial = isset($row['fallback_accessorial_share']) ? (float)$row['fallback_accessorial_share'] : 0.0;
 
@@ -583,14 +584,15 @@ function enrichPalletCostData(array $row, $conn) {
     $row['calculated_warehouse_cost'] = $recorded_cost;
     $row['display_warehouse_cost']  = $recorded_cost + $pending_cost;
     $row['freight_cost']            = $freight_cost;
-    $row['accessorial_cost']        = $accessorial_cost;
+    $row['customs_hold_cost']       = $customs_hold_cost;
+    $row['accessorial_cost']        = $accessorial_cost + $customs_hold_cost;
     $module_cost = null;
     if (array_key_exists('module_cost', $row)) {
         $module_cost = $row['module_cost'] !== null ? (float)$row['module_cost'] : null;
     }
 
     $row['module_cost']             = $module_cost;
-    $row['total_cost']              = $row['display_warehouse_cost'] + $freight_cost + $accessorial_cost + ($module_cost ?? 0);
+    $row['total_cost']              = $row['display_warehouse_cost'] + $freight_cost + $row['accessorial_cost'] + ($module_cost ?? 0);
 
     return $row;
 }
@@ -868,7 +870,7 @@ $pallet_has_milestones_map = [];
 $deliveries = [];
 
 // Prepare statement for fetching pallets for efficiency
-$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost, m.id AS module_batch_id, m.cost_per_watt, CASE WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE NULL END AS module_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost, ip.customs_hold_cost, m.id AS module_batch_id, m.cost_per_watt, CASE WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE NULL END AS module_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
     $quantity          = (int)($delivery['quantity'] ?? 0);
@@ -1139,7 +1141,7 @@ $warehouse_ids_for_lookup = [];
 $pallet_base_sql = "
     SELECT 
         ip.id, ip.pallet_identifier, ip.status, ip.manufacturer, ip.quantity, ip.wattage,
-        ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost,
+        ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost, ip.customs_hold_cost,
         m.id AS module_batch_id,
         m.cost_per_watt,
         CASE
@@ -1278,6 +1280,7 @@ $module_cost_per_watt_display = $module_cost_per_watt !== null
 // Project totals for header (ignore filters)
 $project_total_freight_cost = 0.0;
 $project_total_accessorial_costs = 0.0;
+$project_total_customs_hold_cost = 0.0;
 $project_total_watts = 0.0;
 $project_total_delivered_watts = 0.0;
 
@@ -1303,6 +1306,25 @@ if ($stmt_project_totals) {
     $stmt_project_totals->fetch();
     $stmt_project_totals->close();
 }
+
+$stmt_project_customs_hold = $conn->prepare("
+    SELECT COALESCE(SUM(COALESCE(ip.customs_hold_cost, 0)), 0)
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE ip.assigned_project_id = ?
+       OR ip.current_project_id = ?
+       OR m.project_id = ?
+");
+if ($stmt_project_customs_hold) {
+    $stmt_project_customs_hold->bind_param('iii', $project_id, $project_id, $project_id);
+    $stmt_project_customs_hold->execute();
+    $stmt_project_customs_hold->bind_result($project_total_customs_hold_cost);
+    $stmt_project_customs_hold->fetch();
+    $stmt_project_customs_hold->close();
+}
+
+$project_total_accessorial_costs += $project_total_customs_hold_cost;
 
 $project_total_warehousing_cost = calculateProjectWarehousingCostAccrued($project_id, $conn);
 $project_total_module_cost_full = 0.0;
@@ -3526,6 +3548,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     const projectIdForLinks = <?php echo (int)$project_id; ?>;
     const deliveryStatusOptions = [
         'On Water',
+        'Customs Hold',
         'Cleared Customs',
         'In Transit to Warehouse',
         'Delivered to Warehouse',

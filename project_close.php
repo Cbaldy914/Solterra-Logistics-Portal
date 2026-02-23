@@ -487,7 +487,7 @@ function fetchPalletCosts($conn, $project_id) {
                d.warehouse_arrival_date, d.left_warehouse_date, d.actual_delivery_date, d.anticipated_delivery_date,
                d.warehouse_id, d.origin_type, d.origin_id,
                dp.inventory_pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity,
-               ip.current_warehouse_id, ip.arrival_date,
+               ip.current_warehouse_id, ip.arrival_date, COALESCE(ip.customs_hold_cost, 0) AS customs_hold_cost,
                w.name AS warehouse_name, p.project_name
         FROM deliveries d
         JOIN delivery_pallets dp ON dp.delivery_id = d.id
@@ -509,6 +509,7 @@ function fetchPalletCosts($conn, $project_id) {
         'allocated_pallet_cost' => 0,
         'freight_total' => 0,
         'accessorial_total' => 0,
+        'customs_hold_total' => 0,
         'warehousing_total' => 0,
         'solterra_total' => 0,
     ];
@@ -545,6 +546,7 @@ function fetchPalletCosts($conn, $project_id) {
                 'quantity' => $r['quantity'] ?? '',
                 'truckload_cost' => 0.0,
                 'accessorial_costs' => 0.0,
+                'customs_hold_cost' => floatval($r['customs_hold_cost'] ?? 0),
                 'warehouse_cost' => $warehouse_cost,
                 'total_load_cost' => 0.0,
                 'allocated_pallet_cost' => 0.0,
@@ -584,9 +586,11 @@ function fetchPalletCosts($conn, $project_id) {
         $rows[] = $p;
         $summary['pallet_count'] += 1;
         $summary['allocated_pallet_cost'] += $p['allocated_pallet_cost'];
+        $summary['customs_hold_total'] += floatval($p['customs_hold_cost'] ?? 0);
         $summary['warehousing_total'] += $p['warehouse_cost'];
     }
 
+    $summary['accessorial_total'] += $summary['customs_hold_total'];
     $summary['total_cost'] = $summary['freight_total'] + $summary['accessorial_total'] + $summary['warehousing_total'] + $summary['solterra_total'];
     return ['rows' => array_values($rows), 'summary' => $summary];
 }
@@ -1065,15 +1069,16 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $costData = fetchPalletCosts($conn, $project_id);
     $costRows = $costData['rows'];
     if (!empty($costRows)) {
-        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Warehousing Cost','Truckload Freight','Accessorial Costs','Total Load Cost','Total Freight Cost (pallet)','Total Logistics Cost (pallet)','Warehouse Arrival','Left Warehouse'];
+        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Warehousing Cost','Truckload Freight','Accessorial Costs','Customs Hold Cost','Total Load Cost','Total Freight Cost (pallet)','Total Logistics Cost (pallet)','Warehouse Arrival','Left Warehouse'];
         $rows = [];
         foreach ($costRows as $r) {
             $pallet_freight_total = $r['allocated_pallet_cost'];
-            $pallet_logistics_total = $pallet_freight_total + ($r['warehouse_cost'] ?? 0);
+            $customs_hold_cost = floatval($r['customs_hold_cost'] ?? 0);
+            $pallet_logistics_total = $pallet_freight_total + ($r['warehouse_cost'] ?? 0) + $customs_hold_cost;
             $rows[] = [
                 $r['pallet_id'], $r['pallet_identifier'], $r['delivery_id'], $r['bol_number'],
                 $r['supplier'], $r['destination'], $r['status'], $r['wattage'], $r['quantity'],
-                $r['warehouse_cost'], $r['truckload_cost'], $r['accessorial_costs'], $r['total_load_cost'],
+                $r['warehouse_cost'], $r['truckload_cost'], $r['accessorial_costs'], $customs_hold_cost, $r['total_load_cost'],
                 $pallet_freight_total, $pallet_logistics_total,
                 $r['warehouse_arrival_date'], $r['left_warehouse_date']
             ];
@@ -1389,6 +1394,16 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $stmtCosts->close();
         $totalFreightCost = (float)($costRow['freight'] ?? 0);
         $totalAccessorialCost = (float)($costRow['accessorial'] ?? 0);
+        $totalCustomsHoldCost = 0.0;
+        $stmtCustomsHold = $conn->prepare('SELECT COALESCE(SUM(COALESCE(ip.customs_hold_cost, 0)), 0) AS customs_hold FROM inventory_pallets ip LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE ip.assigned_project_id = ? OR ip.current_project_id = ? OR m.project_id = ?');
+        if ($stmtCustomsHold) {
+            $stmtCustomsHold->bind_param('iii', $project_id, $project_id, $project_id);
+            $stmtCustomsHold->execute();
+            $customsRow = $stmtCustomsHold->get_result()->fetch_assoc();
+            $totalCustomsHoldCost = (float)($customsRow['customs_hold'] ?? 0);
+            $stmtCustomsHold->close();
+        }
+        $totalAccessorialCost += $totalCustomsHoldCost;
         $totalWarehousingCost = calculate_project_warehousing_cost($project_id, $conn);
 
         // Sustainability metrics (from sustainability report)
@@ -1538,6 +1553,35 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $stmtDelDP->bind_param('i', $project_id);
         $stmtDelDP->execute();
         $stmtDelDP->close();
+
+        // 5b. Delete container tracking records for this project so archived/closed projects leave no tracking trails.
+        $waypointsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_waypoints'");
+        $hasWaypointsTable = $waypointsTableCheck && $waypointsTableCheck->num_rows > 0;
+        if ($waypointsTableCheck) {
+            $waypointsTableCheck->close();
+        }
+        if ($hasWaypointsTable) {
+            $stmtDelTrackingWaypoints = $conn->prepare('DELETE FROM container_tracking_waypoints WHERE project_id = ?');
+            if ($stmtDelTrackingWaypoints) {
+                $stmtDelTrackingWaypoints->bind_param('i', $project_id);
+                $stmtDelTrackingWaypoints->execute();
+                $stmtDelTrackingWaypoints->close();
+            }
+        }
+
+        $positionsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
+        $hasPositionsTable = $positionsTableCheck && $positionsTableCheck->num_rows > 0;
+        if ($positionsTableCheck) {
+            $positionsTableCheck->close();
+        }
+        if ($hasPositionsTable) {
+            $stmtDelTrackingPositions = $conn->prepare('DELETE FROM container_tracking_positions WHERE project_id = ?');
+            if ($stmtDelTrackingPositions) {
+                $stmtDelTrackingPositions->bind_param('i', $project_id);
+                $stmtDelTrackingPositions->execute();
+                $stmtDelTrackingPositions->close();
+            }
+        }
 
         // 6. Delete inventory_pallets tied to modules for this project
         $stmtDelPallets = $conn->prepare('DELETE ip FROM inventory_pallets ip

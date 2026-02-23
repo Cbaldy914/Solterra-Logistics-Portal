@@ -453,6 +453,7 @@ document.addEventListener('keydown', function(e) {
                         $shipping_statuses_list = [
                             ["key" => "At Manufacturer", "class" => "at-manufacturer", "label" => "At Manufacturer"],
                             ["key" => "On Water", "class" => "on-water", "label" => "On Water"],
+                            ["key" => "Customs Hold", "class" => "customs-hold", "label" => "Customs Hold"],
                             ["key" => "Cleared Customs", "class" => "cleared-customs", "label" => "Cleared Customs"],
                             ["key" => "In Transit to Warehouse", "class" => "in-transit-warehouse", "label" => "In Transit to Warehouse"],
                             ["key" => "In Warehouse", "class" => "in-warehouse", "label" => "In Warehouse"],
@@ -1067,6 +1068,9 @@ document.addEventListener('keydown', function(e) {
                                     <?php if ($on_water_combined > 0): ?>
                                     <th data-full="On Water"><span class="th-short">Water</span></th>
                                     <?php endif; ?>
+                                    <?php if ($customs_hold_combined > 0): ?>
+                                    <th data-full="Customs Hold"><span class="th-short">Hold</span></th>
+                                    <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
                                     <th data-full="Cleared Customs"><span class="th-short">Customs</span></th>
                                     <?php endif; ?>
@@ -1090,6 +1094,9 @@ document.addEventListener('keydown', function(e) {
                                     <?php if ($on_water_combined > 0): ?>
                                     <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
+                                    <?php if ($customs_hold_combined > 0): ?>
+                                    <td><?php echo number_format($customs_hold_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
                                     <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
@@ -1111,6 +1118,9 @@ document.addEventListener('keydown', function(e) {
                                         <td><?php echo number_format(($srs['at_manufacturer'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php if ($on_water_combined > 0): ?>
                                         <td><?php echo number_format(($srs['on_water'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($customs_hold_combined > 0): ?>
+                                        <td><?php echo number_format(($srs['customs_hold'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
                                         <?php if ($cleared_customs_combined > 0): ?>
                                         <td><?php echo number_format(($srs['cleared_customs'] ?? 0),($view_mode=='mw')?2:0);?></td>

@@ -32,6 +32,7 @@ $errorMessage = '';
 $positions_table_exists = false;
 $waypoints_table_exists = false;
 $positions_table_ready_message = '';
+$project_waypoint_library = [];
 
 function has_container_tracking_positions_table(mysqli $conn): bool {
     $result = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
@@ -469,6 +470,35 @@ try {
     } else {
         throw new Exception('Failed to prepare container tracking query: ' . $conn->error);
     }
+
+    if ($waypoints_table_exists && $selected_project_id > 0) {
+        $stmtProjectWaypoints = $conn->prepare("
+            SELECT container_number, latitude, longitude, recorded_at
+            FROM container_tracking_waypoints
+            WHERE project_id = ?
+            ORDER BY container_number ASC, recorded_at ASC, id ASC
+        ");
+        if ($stmtProjectWaypoints) {
+            $stmtProjectWaypoints->bind_param("i", $selected_project_id);
+            $stmtProjectWaypoints->execute();
+            $resultProjectWaypoints = $stmtProjectWaypoints->get_result();
+            while ($waypointRow = $resultProjectWaypoints->fetch_assoc()) {
+                $containerNumberKey = trim((string)($waypointRow['container_number'] ?? ''));
+                if ($containerNumberKey === '') {
+                    continue;
+                }
+                if (!isset($project_waypoint_library[$containerNumberKey])) {
+                    $project_waypoint_library[$containerNumberKey] = [];
+                }
+                $project_waypoint_library[$containerNumberKey][] = [
+                    'latitude' => (float)$waypointRow['latitude'],
+                    'longitude' => (float)$waypointRow['longitude'],
+                    'recorded_at' => $waypointRow['recorded_at']
+                ];
+            }
+            $stmtProjectWaypoints->close();
+        }
+    }
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
 }
@@ -770,6 +800,32 @@ $conn->close();
             color: #334155;
             font-weight: 600;
         }
+        .position-picker-route-info {
+            margin-top: 4px;
+            font-size: 0.8rem;
+            color: #0c4a6e;
+            line-height: 1.35;
+        }
+        .position-picker-route-info.dim {
+            color: #64748b;
+        }
+        .position-picker-route-lock {
+            margin-top: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.78rem;
+            color: #334155;
+            font-weight: 600;
+        }
+        .position-picker-route-lock input[type="checkbox"] {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+        .position-picker-route-lock.disabled {
+            color: #94a3b8;
+        }
         .position-picker-actions {
             display: flex;
             align-items: center;
@@ -971,7 +1027,14 @@ $conn->close();
                 </div>
                 <div id="positionPickerMap" class="position-picker-map"></div>
                 <div class="position-picker-footer">
-                    <div class="position-picker-coords" id="positionPickerCoords">Click the map to select latitude/longitude.</div>
+                    <div>
+                        <div class="position-picker-coords" id="positionPickerCoords">Click the map to select latitude/longitude.</div>
+                        <div class="position-picker-route-info dim" id="positionPickerRouteInfo">Route assist: unavailable until project waypoint history exists.</div>
+                        <label class="position-picker-route-lock disabled" id="positionPickerRouteLockWrap">
+                            <input type="checkbox" id="positionPickerRouteLockToggle" checked disabled>
+                            Route Lock (snap to route)
+                        </label>
+                    </div>
                     <div class="position-picker-actions">
                         <button type="button" class="eta-save-btn" id="cancelPositionPickerBtn">Cancel</button>
                         <button type="button" class="eta-save-btn" id="applyPositionPickerBtn" disabled>Use This Point</button>
@@ -986,31 +1049,284 @@ $conn->close();
 <?php endif; ?>
 <?php if ($can_edit_eta && $positions_table_exists): ?>
 <script>
+const projectWaypointLibrary = <?php echo json_encode($project_waypoint_library ?? []); ?>;
 let positionPickerMap = null;
 let positionPickerMarker = null;
 let positionPickerSelected = null;
 let activeLatInput = null;
 let activeLngInput = null;
+let routeReferencePolyline = null;
+let routeReferenceMarkers = [];
+let routeWaypointMarkers = [];
+let routeVesselMarker = null;
+let routeReferencePath = [];
+let routeLockEnabled = false;
+let routeLockAvailable = false;
+
+function buildPickerBoatIcon(iconSize = 34) {
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+            '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg">' +
+            '<defs><filter id="shadow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/></filter></defs>' +
+            '<circle cx="22" cy="22" r="19" fill="url(#grad)" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
+            '<defs><linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1d4ed8"/><stop offset="100%" stop-color="#0ea5e9"/></linearGradient></defs>' +
+            '<text x="22" y="28" text-anchor="middle" fill="#FFFFFF" font-size="16" font-family="Arial">&#x26F4;</text>' +
+            '</svg>'
+        ),
+        scaledSize: new google.maps.Size(iconSize, iconSize),
+        anchor: new google.maps.Point(iconSize / 2, iconSize / 2)
+    };
+}
+
+function normalizeContainerNumber(value) {
+    return String(value || '').trim();
+}
+
+function getWaypointsForContainer(containerNumber) {
+    const key = normalizeContainerNumber(containerNumber);
+    if (!key || !projectWaypointLibrary || typeof projectWaypointLibrary !== 'object') {
+        return [];
+    }
+    const points = Array.isArray(projectWaypointLibrary[key]) ? projectWaypointLibrary[key] : [];
+    return points
+        .map((p) => {
+            const lat = Number(p.latitude);
+            const lng = Number(p.longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+            return {
+                lat,
+                lng,
+                recordedAt: String(p.recorded_at || '')
+            };
+        })
+        .filter(Boolean);
+}
+
+function getFallbackProjectRoutePoints() {
+    if (!projectWaypointLibrary || typeof projectWaypointLibrary !== 'object') {
+        return [];
+    }
+    let best = [];
+    Object.keys(projectWaypointLibrary).forEach((containerKey) => {
+        const points = getWaypointsForContainer(containerKey);
+        if (points.length > best.length) {
+            best = points;
+        }
+    });
+    return best;
+}
+
+function clearRouteReferenceVisuals() {
+    if (routeReferencePolyline) {
+        routeReferencePolyline.setMap(null);
+        routeReferencePolyline = null;
+    }
+    routeReferenceMarkers.forEach((marker) => marker.setMap(null));
+    routeReferenceMarkers = [];
+    routeWaypointMarkers.forEach((marker) => marker.setMap(null));
+    routeWaypointMarkers = [];
+    if (routeVesselMarker) {
+        routeVesselMarker.setMap(null);
+        routeVesselMarker = null;
+    }
+    routeReferencePath = [];
+    routeLockEnabled = false;
+    routeLockAvailable = false;
+    setRouteLockUI(false, false);
+}
+
+function setRouteInfo(text, isDim = false) {
+    const infoEl = document.getElementById('positionPickerRouteInfo');
+    if (!infoEl) return;
+    infoEl.textContent = text;
+    infoEl.classList.toggle('dim', Boolean(isDim));
+}
+
+function setRouteLockUI(available, enabled) {
+    const toggle = document.getElementById('positionPickerRouteLockToggle');
+    const wrap = document.getElementById('positionPickerRouteLockWrap');
+    if (!toggle || !wrap) return;
+    toggle.disabled = !available;
+    toggle.checked = Boolean(available && enabled);
+    wrap.classList.toggle('disabled', !available);
+}
+
+function latLngToObject(latLng) {
+    return { lat: Number(latLng.lat()), lng: Number(latLng.lng()) };
+}
+
+function snapLatLngToRoute(latLng) {
+    if (!latLng || routeReferencePath.length < 2) {
+        return latLng;
+    }
+    const point = latLngToObject(latLng);
+    let bestPoint = null;
+    let minDistanceSq = Infinity;
+
+    for (let i = 0; i < routeReferencePath.length - 1; i++) {
+        const a = routeReferencePath[i];
+        const b = routeReferencePath[i + 1];
+        const dx = b.lng - a.lng;
+        const dy = b.lat - a.lat;
+        const denominator = (dx * dx) + (dy * dy);
+
+        let t = 0;
+        if (denominator > 0) {
+            t = ((point.lng - a.lng) * dx + (point.lat - a.lat) * dy) / denominator;
+        }
+        t = Math.max(0, Math.min(1, t));
+
+        const projected = {
+            lat: a.lat + (dy * t),
+            lng: a.lng + (dx * t)
+        };
+        const distanceSq = Math.pow(projected.lat - point.lat, 2) + Math.pow(projected.lng - point.lng, 2);
+        if (distanceSq < minDistanceSq) {
+            minDistanceSq = distanceSq;
+            bestPoint = projected;
+        }
+    }
+
+    if (!bestPoint) {
+        return latLng;
+    }
+    return new google.maps.LatLng(bestPoint.lat, bestPoint.lng);
+}
+
+function setRouteReferenceForContainer(containerNumber, existingLatLng = null) {
+    clearRouteReferenceVisuals();
+
+    const ownRoute = getWaypointsForContainer(containerNumber);
+    const fallbackRoute = ownRoute.length >= 2 ? ownRoute : getFallbackProjectRoutePoints();
+    if (fallbackRoute.length < 2) {
+        setRouteInfo('Route assist: no existing multi-point route yet. Add at least 2 waypoints first.', true);
+        return;
+    }
+
+    routeReferencePath = fallbackRoute.map((p) => ({ lat: p.lat, lng: p.lng }));
+    routeLockAvailable = true;
+    routeLockEnabled = true;
+    setRouteLockUI(true, true);
+
+    routeReferencePolyline = new google.maps.Polyline({
+        path: routeReferencePath,
+        geodesic: true,
+        strokeColor: '#0369a1',
+        strokeOpacity: 0.88,
+        strokeWeight: 4,
+        map: positionPickerMap,
+        zIndex: 12
+    });
+
+    const startMarker = new google.maps.Marker({
+        position: routeReferencePath[0],
+        map: positionPickerMap,
+        title: 'Route Start',
+        icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 6,
+            fillColor: '#10b981',
+            fillOpacity: 1,
+            strokeColor: '#ffffff',
+            strokeOpacity: 0.95,
+            strokeWeight: 2
+        },
+        zIndex: 13
+    });
+    const endMarker = new google.maps.Marker({
+        position: routeReferencePath[routeReferencePath.length - 1],
+        map: positionPickerMap,
+        title: 'Route End',
+        icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 6,
+            fillColor: '#ef4444',
+            fillOpacity: 1,
+            strokeColor: '#ffffff',
+            strokeOpacity: 0.95,
+            strokeWeight: 2
+        },
+        zIndex: 13
+    });
+    routeReferenceMarkers.push(startMarker, endMarker);
+
+    const bounds = new google.maps.LatLngBounds();
+    routeReferencePath.forEach((point) => bounds.extend(point));
+
+    fallbackRoute.forEach((point, index) => {
+        const dot = new google.maps.Marker({
+            position: { lat: point.lat, lng: point.lng },
+            map: positionPickerMap,
+            title: `Route waypoint ${index + 1}`,
+            icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 4,
+                fillColor: '#0284c7',
+                fillOpacity: 0.95,
+                strokeColor: '#ffffff',
+                strokeOpacity: 0.95,
+                strokeWeight: 1.5
+            },
+            zIndex: 11
+        });
+        routeWaypointMarkers.push(dot);
+    });
+
+    const containerLastWaypoint = ownRoute.length > 0 ? ownRoute[ownRoute.length - 1] : null;
+    const vesselPosition = containerLastWaypoint
+        ? new google.maps.LatLng(containerLastWaypoint.lat, containerLastWaypoint.lng)
+        : (existingLatLng || null);
+    if (vesselPosition) {
+        routeVesselMarker = new google.maps.Marker({
+            position: vesselPosition,
+            map: positionPickerMap,
+            title: 'Container latest update',
+            icon: buildPickerBoatIcon(30),
+            zIndex: 14
+        });
+        bounds.extend(vesselPosition);
+    }
+
+    if (existingLatLng) {
+        bounds.extend(existingLatLng);
+    }
+    if (!bounds.isEmpty()) {
+        positionPickerMap.fitBounds(bounds);
+        google.maps.event.addListenerOnce(positionPickerMap, 'bounds_changed', () => {
+            if (positionPickerMap.getZoom() > 6) {
+                positionPickerMap.setZoom(6);
+            }
+        });
+    }
+
+    const usingOwnRoute = ownRoute.length >= 2;
+    setRouteInfo(usingOwnRoute
+        ? 'Route assist: using this container\'s existing route. Map clicks are locked to that line.'
+        : 'Route assist: using a project reference route. Map clicks are locked to that line.');
+}
 
 function setPickerSelected(latLng) {
     if (!latLng) return;
-    positionPickerSelected = latLng;
+    const effectiveLatLng = routeLockEnabled ? snapLatLngToRoute(latLng) : latLng;
+    positionPickerSelected = effectiveLatLng;
     if (!positionPickerMarker) {
         positionPickerMarker = new google.maps.Marker({
-            position: latLng,
+            position: effectiveLatLng,
             map: positionPickerMap,
             draggable: true,
-            title: 'Selected vessel position'
+            title: 'Selected vessel position',
+            icon: buildPickerBoatIcon(34)
         });
         positionPickerMarker.addListener('dragend', (event) => {
             setPickerSelected(event.latLng);
         });
     } else {
-        positionPickerMarker.setPosition(latLng);
+        positionPickerMarker.setPosition(effectiveLatLng);
     }
     const coordsEl = document.getElementById('positionPickerCoords');
     if (coordsEl) {
-        coordsEl.textContent = `Selected: ${latLng.lat().toFixed(6)}, ${latLng.lng().toFixed(6)}`;
+        coordsEl.textContent = `Selected: ${effectiveLatLng.lat().toFixed(6)}, ${effectiveLatLng.lng().toFixed(6)}`;
     }
     const applyBtn = document.getElementById('applyPositionPickerBtn');
     if (applyBtn) applyBtn.disabled = false;
@@ -1038,6 +1354,9 @@ function openPositionPicker(formEl) {
     const hasExisting = Number.isFinite(latVal) && Number.isFinite(lngVal);
     const initialCenter = hasExisting ? { lat: latVal, lng: lngVal } : { lat: 20, lng: 0 };
     const initialZoom = hasExisting ? 6 : 2;
+    const existingLatLng = hasExisting ? new google.maps.LatLng(latVal, lngVal) : null;
+    const containerNumberInput = formEl.querySelector('input[name="container_number"]');
+    const containerNumber = normalizeContainerNumber(containerNumberInput ? containerNumberInput.value : '');
 
     if (!positionPickerMap) {
         positionPickerMap = new google.maps.Map(document.getElementById('positionPickerMap'), {
@@ -1055,12 +1374,13 @@ function openPositionPicker(formEl) {
         positionPickerMap.setZoom(initialZoom);
     }
 
+    setRouteReferenceForContainer(containerNumber, existingLatLng);
+
     const applyBtn = document.getElementById('applyPositionPickerBtn');
     if (applyBtn) applyBtn.disabled = true;
     positionPickerSelected = null;
 
     if (hasExisting) {
-        const existingLatLng = new google.maps.LatLng(latVal, lngVal);
         setPickerSelected(existingLatLng);
     } else if (positionPickerMarker) {
         positionPickerMarker.setMap(null);
@@ -1075,6 +1395,7 @@ function closePositionPicker() {
     if (!modal) return;
     modal.style.display = 'none';
     modal.setAttribute('aria-hidden', 'true');
+    clearRouteReferenceVisuals();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1091,6 +1412,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.target.id === 'positionPickerModal') {
             closePositionPicker();
         }
+    });
+    document.getElementById('positionPickerRouteLockToggle')?.addEventListener('change', (event) => {
+        if (!routeLockAvailable) {
+            routeLockEnabled = false;
+            return;
+        }
+        routeLockEnabled = Boolean(event.target.checked);
     });
     document.getElementById('applyPositionPickerBtn')?.addEventListener('click', () => {
         if (!positionPickerSelected || !activeLatInput || !activeLngInput) {

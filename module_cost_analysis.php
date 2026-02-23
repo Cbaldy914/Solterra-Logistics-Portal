@@ -83,12 +83,30 @@ while ($p = $projects_res->fetch_assoc()) {
     $stmt_logistics->fetch();
     $stmt_logistics->close();
 
+    $project_customs_hold = 0.0;
+    $stmt_customs_hold = $conn->prepare("
+        SELECT COALESCE(SUM(COALESCE(ip.customs_hold_cost, 0)), 0)
+        FROM inventory_pallets ip
+        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE ip.assigned_project_id = ?
+           OR ip.current_project_id = ?
+           OR m.project_id = ?
+    ");
+    if ($stmt_customs_hold) {
+        $stmt_customs_hold->bind_param("iii", $p['id'], $p['id'], $p['id']);
+        $stmt_customs_hold->execute();
+        $stmt_customs_hold->bind_result($project_customs_hold);
+        $stmt_customs_hold->fetch();
+        $stmt_customs_hold->close();
+    }
+
     // Calculate warehousing costs using the helper function (includes fallback calculation)
     $project_warehousing = calculate_project_warehousing_cost($p['id'], $conn);
 
     $p['freight_cost'] = (float)$project_freight;
     $p['warehousing_cost'] = (float)$project_warehousing;
-    $p['accessorial_cost'] = (float)$project_accessorial;
+    $p['accessorial_cost'] = (float)$project_accessorial + (float)$project_customs_hold;
     $p['logistics_cost'] = $p['freight_cost'] + $p['warehousing_cost'] + $p['accessorial_cost'];
     $p['total_cost'] = $p['module_cost'] + $p['logistics_cost'];
 

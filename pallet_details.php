@@ -34,6 +34,7 @@ $errorMessage = '';
 $successMessage = '';
 $total_delivery_cost = 0.0;
 $total_warehouse_cost = 0.0;
+$total_customs_hold_cost = 0.0;
 $total_module_cost = 0.0;
 $total_pallet_cost = 0.0;
 $module_cost_per_watt = 0.0;
@@ -94,6 +95,8 @@ try {
                         ip.assigned_project_id AS assigned_project_id,
                         ip.status,
                         ip.arrival_date,
+                        COALESCE(ip.customs_hold_cost, 0) AS customs_hold_cost,
+                        ip.customs_hold_cost_notes,
                         -- Clean manufacturer name by removing project suffix
                         CASE
                             WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
@@ -636,9 +639,10 @@ try {
     }
 
     $total_module_cost = $has_milestones ? $accrued_module_cost : $full_module_cost;
+    $total_customs_hold_cost = isset($pallet_data['customs_hold_cost']) ? (float)$pallet_data['customs_hold_cost'] : 0.0;
 
-    // Calculate total pallet cost (deliveries + warehouse + module)
-    $total_pallet_cost = $total_delivery_cost + $total_warehouse_cost + $total_module_cost;
+    // Calculate total pallet cost (deliveries + warehouse + customs hold + module)
+    $total_pallet_cost = $total_delivery_cost + $total_warehouse_cost + $total_customs_hold_cost + $total_module_cost;
 
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
@@ -1160,7 +1164,7 @@ $conn->close();
                 </dl>
             </div>
 
-            <?php if ($total_pallet_cost > 0 || $total_delivery_cost > 0 || $total_warehouse_cost > 0 || $total_module_cost > 0): ?>
+            <?php if ($total_pallet_cost > 0 || $total_delivery_cost > 0 || $total_warehouse_cost > 0 || $total_customs_hold_cost > 0 || $total_module_cost > 0): ?>
             <div class="cost-summary">
                 <h3>Total Pallet Cost Breakdown</h3>
                 <div style="margin-bottom: 10px;">
@@ -1169,6 +1173,11 @@ $conn->close();
                 <div style="margin-bottom: 10px;">
                     <strong>Pallet Cost (Warehouse):</strong> $<?php echo number_format($total_warehouse_cost, 2); ?>
                 </div>
+                <?php if ($total_customs_hold_cost > 0): ?>
+                <div style="margin-bottom: 10px;">
+                    <strong>Pallet Cost (Customs Hold):</strong> $<?php echo number_format($total_customs_hold_cost, 2); ?>
+                </div>
+                <?php endif; ?>
                 <?php if ($has_module_cost): ?>
                 <div style="margin-bottom: 10px;">
                     <strong>Pallet Cost (Module<?php echo $has_milestones ? ' - Accrued' : ''; ?>):</strong>

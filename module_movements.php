@@ -520,6 +520,24 @@ try {
             $waypoints_table_exists = $waypoints_table_check->num_rows > 0;
             $waypoints_table_check->close();
         }
+        $vessel_routes_table_exists = false;
+        $vessel_routes_table_check = $conn->query("SHOW TABLES LIKE 'container_vessel_routes'");
+        if ($vessel_routes_table_check) {
+            $vessel_routes_table_exists = $vessel_routes_table_check->num_rows > 0;
+            $vessel_routes_table_check->close();
+        }
+        $vessel_assignments_table_exists = false;
+        $vessel_assignments_table_check = $conn->query("SHOW TABLES LIKE 'container_vessel_route_assignments'");
+        if ($vessel_assignments_table_check) {
+            $vessel_assignments_table_exists = $vessel_assignments_table_check->num_rows > 0;
+            $vessel_assignments_table_check->close();
+        }
+        $vessel_route_waypoints_table_exists = false;
+        $vessel_route_waypoints_table_check = $conn->query("SHOW TABLES LIKE 'container_vessel_route_waypoints'");
+        if ($vessel_route_waypoints_table_check) {
+            $vessel_route_waypoints_table_exists = $vessel_route_waypoints_table_check->num_rows > 0;
+            $vessel_route_waypoints_table_check->close();
+        }
 
         $positionSelectSql = $positions_table_exists
             ? "MAX(ctp.latitude) AS vessel_latitude,
@@ -540,6 +558,7 @@ try {
                 MAX(d.anticipated_delivery_date) AS eta_date,
                 MIN(COALESCE(d.left_warehouse_date, DATE(d.created_at))) AS departed_date,
                 MAX(d.status_of_delivery) AS status_of_delivery,
+                MAX(COALESCE(w.id, 0)) AS destination_port_id,
                 MAX(COALESCE(w.name, 'Unknown Port')) AS destination_port_name,
                 $positionSelectSql
                 MAX(COALESCE(w.street_address, '')) AS destination_port_street,
@@ -618,6 +637,12 @@ try {
                     'vessel_position_updated_at' => $container['vessel_position_updated_at'] ?? null,
                     'waypoints' => [],
                     'waypoint_count' => 0,
+                    'vessel_route_id' => null,
+                    'vessel_route_name' => null,
+                    'vessel_voyage_reference' => null,
+                    'vessel_route_waypoints' => [],
+                    'vessel_route_waypoint_count' => 0,
+                    'destination_port_id' => !empty($container['destination_port_id']) ? (int)$container['destination_port_id'] : null,
                     'destination_port_name' => $container['destination_port_name'],
                     'destination_port_full_address' => implode(', ', $destination_address_parts),
                     'origin_name' => $container['origin_name'],
@@ -676,6 +701,110 @@ try {
                         $history = $waypoints_by_container[$cn] ?? [];
                         $container_ref['waypoints'] = $history;
                         $container_ref['waypoint_count'] = count($history);
+                    }
+                    unset($container_ref);
+                }
+            }
+        }
+
+        if ($vessel_routes_table_exists && $vessel_assignments_table_exists && $vessel_route_waypoints_table_exists && !empty($on_water_containers)) {
+            $container_numbers = array_values(array_unique(array_map(function ($c) {
+                return trim((string)($c['container_number'] ?? ''));
+            }, $on_water_containers)));
+            $container_numbers = array_values(array_filter($container_numbers, function ($num) {
+                return $num !== '';
+            }));
+
+            if (!empty($container_numbers)) {
+                $placeholders = implode(',', array_fill(0, count($container_numbers), '?'));
+                $assignments_sql = "
+                    SELECT
+                        cvra.container_number,
+                        cvra.route_id,
+                        COALESCE(cvr.vessel_name, '') AS vessel_name,
+                        COALESCE(cvr.voyage_reference, '') AS voyage_reference
+                    FROM container_vessel_route_assignments cvra
+                    JOIN container_vessel_routes cvr
+                        ON cvr.id = cvra.route_id
+                    WHERE cvra.project_id = ?
+                      AND cvra.container_number IN ($placeholders)
+                      AND cvr.project_id = cvra.project_id
+                      AND cvr.is_active = 1
+                ";
+                $assignments_stmt = $conn->prepare($assignments_sql);
+                if ($assignments_stmt) {
+                    $assignment_types = 'i' . str_repeat('s', count($container_numbers));
+                    $assignment_params = array_merge([(int)$selected_project_id], $container_numbers);
+                    $assignments_stmt->bind_param($assignment_types, ...$assignment_params);
+                    $assignments_stmt->execute();
+                    $assignment_result = $assignments_stmt->get_result();
+
+                    $assignment_by_container = [];
+                    $route_ids = [];
+                    while ($assignment_row = $assignment_result->fetch_assoc()) {
+                        $cn = trim((string)($assignment_row['container_number'] ?? ''));
+                        if ($cn === '') {
+                            continue;
+                        }
+                        $route_id = (int)($assignment_row['route_id'] ?? 0);
+                        if ($route_id <= 0) {
+                            continue;
+                        }
+                        $assignment_by_container[$cn] = [
+                            'route_id' => $route_id,
+                            'vessel_name' => trim((string)($assignment_row['vessel_name'] ?? '')),
+                            'voyage_reference' => trim((string)($assignment_row['voyage_reference'] ?? ''))
+                        ];
+                        $route_ids[$route_id] = true;
+                    }
+                    $assignments_stmt->close();
+
+                    $route_waypoints_by_route = [];
+                    $route_id_list = array_keys($route_ids);
+                    if (!empty($route_id_list)) {
+                        $route_placeholders = implode(',', array_fill(0, count($route_id_list), '?'));
+                        $route_waypoints_sql = "
+                            SELECT route_id, latitude, longitude, recorded_at
+                            FROM container_vessel_route_waypoints
+                            WHERE route_id IN ($route_placeholders)
+                            ORDER BY route_id ASC, recorded_at ASC, id ASC
+                        ";
+                        $route_waypoints_stmt = $conn->prepare($route_waypoints_sql);
+                        if ($route_waypoints_stmt) {
+                            $route_waypoint_types = str_repeat('i', count($route_id_list));
+                            $route_waypoints_stmt->bind_param($route_waypoint_types, ...$route_id_list);
+                            $route_waypoints_stmt->execute();
+                            $route_waypoints_result = $route_waypoints_stmt->get_result();
+                            while ($route_waypoint_row = $route_waypoints_result->fetch_assoc()) {
+                                $route_id = (int)($route_waypoint_row['route_id'] ?? 0);
+                                if ($route_id <= 0) {
+                                    continue;
+                                }
+                                if (!isset($route_waypoints_by_route[$route_id])) {
+                                    $route_waypoints_by_route[$route_id] = [];
+                                }
+                                $route_waypoints_by_route[$route_id][] = [
+                                    'latitude' => (float)$route_waypoint_row['latitude'],
+                                    'longitude' => (float)$route_waypoint_row['longitude'],
+                                    'recorded_at' => $route_waypoint_row['recorded_at']
+                                ];
+                            }
+                            $route_waypoints_stmt->close();
+                        }
+                    }
+
+                    foreach ($on_water_containers as &$container_ref) {
+                        $cn = trim((string)($container_ref['container_number'] ?? ''));
+                        if (!isset($assignment_by_container[$cn])) {
+                            continue;
+                        }
+                        $assignment = $assignment_by_container[$cn];
+                        $route_id = (int)($assignment['route_id'] ?? 0);
+                        $container_ref['vessel_route_id'] = $route_id > 0 ? $route_id : null;
+                        $container_ref['vessel_route_name'] = $assignment['vessel_name'] !== '' ? $assignment['vessel_name'] : null;
+                        $container_ref['vessel_voyage_reference'] = $assignment['voyage_reference'] !== '' ? $assignment['voyage_reference'] : null;
+                        $container_ref['vessel_route_waypoints'] = $route_waypoints_by_route[$route_id] ?? [];
+                        $container_ref['vessel_route_waypoint_count'] = count($container_ref['vessel_route_waypoints']);
                     }
                     unset($container_ref);
                 }
@@ -849,7 +978,24 @@ $conn->close();
         }
         
         .manufacturer-marker { background-color: #3498db; }
-        .warehouse-marker { background-color: #f39c12; }
+        .warehouse-marker {
+            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .port-marker {
+            background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+        }
         .project-marker { background-color: #27ae60; }
         .container-marker {
             background: linear-gradient(135deg, #1d4ed8 0%, #0ea5e9 100%);
@@ -884,11 +1030,15 @@ $conn->close();
         }
         .status-flow-card {
             min-width: 190px;
+            min-height: 132px;
             border-radius: 12px;
             border: 2px solid transparent;
             padding: 12px;
             background: #fff;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
             cursor: default;
         }
@@ -935,6 +1085,11 @@ $conn->close();
         .status-flow-modules {
             font-size: 0.82em;
             color: #475569;
+            min-height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1.35;
         }
         .status-flow-arrow {
             display: flex;
@@ -1119,8 +1274,12 @@ $conn->close();
                         <span>Manufacturer (Starting Point)</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-marker warehouse-marker"></div>
+                        <div class="legend-marker warehouse-marker">🏢</div>
                         <span>Warehouse (Intermediate Stop)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-marker port-marker">⚓</div>
+                        <span>Destination Port</span>
                     </div>
                     <div class="legend-item">
                         <div class="legend-marker project-marker"></div>
@@ -1197,13 +1356,13 @@ $conn->close();
                             $warehouseHistoryName = $originWarehouse !== '' ? $originWarehouse : ($deliveryWarehouse !== '' ? $deliveryWarehouse : $currentWarehouse);
                         } else {
                             // Intermediate totals should only represent pallets physically at an intermediate stop.
-                            if (in_array($status, ['In Warehouse', 'Cleared Customs'], true)) {
+                            if (in_array($status, ['In Warehouse', 'Cleared Customs', 'Customs Hold'], true)) {
                                 $status_totals['intermediate']['pallets'] += $palletCount;
                                 $status_totals['intermediate']['modules'] += $moduleCount;
                             }
                             if ($status === 'In Warehouse') {
                                 $warehouseHistoryName = $currentWarehouse;
-                            } elseif ($status === 'Cleared Customs') {
+                            } elseif (in_array($status, ['Cleared Customs', 'Customs Hold'], true)) {
                                 $warehouseHistoryName = $deliveryWarehouse !== '' ? $deliveryWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $originWarehouse);
                             } elseif ($status === 'In Transit to Warehouse') {
                                 $warehouseHistoryName = $deliveryWarehouse !== '' ? $deliveryWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $originWarehouse);
@@ -1214,6 +1373,21 @@ $conn->close();
 
                         if ($warehouseHistoryName !== '') {
                             $addSummary($intermediate_summary['warehouses'], $warehouseHistoryName, $palletCount, $moduleCount);
+                        }
+                    }
+
+                    if (!empty($on_water_containers)) {
+                        foreach ($on_water_containers as $containerEntry) {
+                            $portName = trim((string)($containerEntry['destination_port_name'] ?? ''));
+                            if ($portName === '') {
+                                continue;
+                            }
+                            $addSummary(
+                                $intermediate_summary['ports'],
+                                $portName,
+                                (int)($containerEntry['pallet_count'] ?? 0),
+                                (int)($containerEntry['module_count'] ?? 0)
+                            );
                         }
                     }
 
@@ -1485,6 +1659,31 @@ function processMovementData() {
         });
     }
 
+    // Add destination ports for active on-water containers so destinations are explicit on map.
+    if (Array.isArray(onWaterContainers) && onWaterContainers.length > 0) {
+        onWaterContainers.forEach(container => {
+            const portName = (container.destination_port_name || '').trim();
+            const portAddress = (container.destination_port_full_address || '').trim();
+            if (!portName && !portAddress) return;
+            const key = `port_${container.destination_port_id || 'x'}_${portName}_${portAddress}`;
+            if (!locations.has(key)) {
+                locations.set(key, {
+                    type: 'port',
+                    id: container.destination_port_id || null,
+                    name: portName || 'Destination Port',
+                    address: portAddress || '',
+                    pallets: [],
+                    total_pallets: 0,
+                    total_modules: 0,
+                    marker: null
+                });
+            }
+            const portLoc = locations.get(key);
+            portLoc.total_pallets += Number(container.pallet_count) || 0;
+            portLoc.total_modules += Number(container.module_count) || 0;
+        });
+    }
+
     // Geocode and create markers for all locations
     const geocoder = new google.maps.Geocoder();
     const bounds = new google.maps.LatLngBounds();
@@ -1514,8 +1713,11 @@ function processMovementData() {
         if (!bounds.isEmpty()) {
             map.fitBounds(bounds);
             
-            // Ensure minimum zoom level
+            // Keep the default view readable (avoid zooming out to repeated globe views).
             google.maps.event.addListenerOnce(map, 'bounds_changed', function() {
+                if (map.getZoom() < 3) {
+                    map.setZoom(3);
+                }
                 if (map.getZoom() > 15) {
                     map.setZoom(15);
                 }
@@ -1563,41 +1765,6 @@ function daysUntil(dateValue) {
     return Math.ceil((targetUtc - todayUtc) / (1000 * 60 * 60 * 24));
 }
 
-function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-}
-
-function estimateContainerProgress(container) {
-    const eta = parseIsoDate(container.eta_date);
-    const departed = parseIsoDate(container.departed_date);
-    if (!eta) {
-        return 0.5;
-    }
-
-    if (departed && eta.getTime() > departed.getTime()) {
-        const now = Date.now();
-        const totalMs = eta.getTime() - departed.getTime();
-        const elapsedMs = now - departed.getTime();
-        return clamp(elapsedMs / totalMs, 0.08, 0.96);
-    }
-
-    const daysToEta = daysUntil(container.eta_date);
-    if (daysToEta === null) {
-        return 0.5;
-    }
-    if (daysToEta <= 0) {
-        return 0.96;
-    }
-    const assumedTransitDays = 45;
-    return clamp(1 - (Math.min(daysToEta, assumedTransitDays) / assumedTransitDays), 0.1, 0.9);
-}
-
-function interpolatePosition(origin, destination, progress) {
-    const lat = origin.lat() + (destination.lat() - origin.lat()) * progress;
-    const lng = origin.lng() + (destination.lng() - origin.lng()) * progress;
-    return new google.maps.LatLng(lat, lng);
-}
-
 function buildBoatMarkerIcon(iconSize = 36) {
     return {
         url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
@@ -1639,6 +1806,20 @@ function appendPointIfDistinct(points, point) {
     }
 }
 
+function sampleWaypointPoints(points, maxPoints = 10) {
+    if (!Array.isArray(points) || points.length <= maxPoints) {
+        return Array.isArray(points) ? points : [];
+    }
+    const sampled = [];
+    const lastIndex = points.length - 1;
+    const step = lastIndex / (maxPoints - 1);
+    for (let i = 0; i < maxPoints; i++) {
+        const index = Math.round(i * step);
+        sampled.push(points[index]);
+    }
+    return sampled;
+}
+
 async function createOnWaterContainerMarkers(geocoder, bounds) {
     if (!Array.isArray(onWaterContainers) || onWaterContainers.length === 0) {
         return;
@@ -1661,6 +1842,7 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             return null;
         }
     };
+    const renderedVesselRouteShapes = new Set();
 
     await Promise.all(onWaterContainers.map(async (container) => {
         const manualLat = Number(container.vessel_latitude);
@@ -1690,19 +1872,54 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                 });
             });
         }
+        const vesselRoutePoints = [];
+        if (Array.isArray(container.vessel_route_waypoints)) {
+            container.vessel_route_waypoints.forEach((wp) => {
+                const wpLat = Number(wp.latitude);
+                const wpLng = Number(wp.longitude);
+                if (!Number.isFinite(wpLat) || !Number.isFinite(wpLng)) {
+                    return;
+                }
+                if (wpLat < -90 || wpLat > 90 || wpLng < -180 || wpLng > 180) {
+                    return;
+                }
+                vesselRoutePoints.push({
+                    position: new google.maps.LatLng(wpLat, wpLng),
+                    recordedAt: wp.recorded_at ? String(wp.recorded_at) : 'N/A',
+                    latitude: wpLat,
+                    longitude: wpLng
+                });
+            });
+        }
 
         const originPosition = await resolveAddress(container.origin_full_address);
         const destinationPosition = await resolveAddress(container.destination_port_full_address);
+        const waypointSource = waypointPoints.length > 0
+            ? 'container'
+            : (vesselRoutePoints.length > 0 ? 'vessel_route' : 'none');
+        const activeWaypointPoints = waypointSource === 'container'
+            ? waypointPoints
+            : (waypointSource === 'vessel_route' ? vesselRoutePoints : []);
+        const sampledWaypointPoints = sampleWaypointPoints(activeWaypointPoints, 9);
+        const hasTransitProgress = hasManualPosition || activeWaypointPoints.length > 0;
+        const vesselRouteId = Number(container.vessel_route_id) || 0;
+        const usingVesselRoute = waypointSource === 'vessel_route' && vesselRouteId > 0;
+        const vesselRouteKey = usingVesselRoute ? `route_${vesselRouteId}` : '';
+        const shouldRenderRouteGeometry = !usingVesselRoute || !renderedVesselRouteShapes.has(vesselRouteKey);
 
         let markerPosition = null;
         if (hasManualPosition) {
             markerPosition = manualPosition;
+        } else if (activeWaypointPoints.length > 0) {
+            markerPosition = activeWaypointPoints[activeWaypointPoints.length - 1].position;
         } else {
-            if (!originPosition || !destinationPosition) return;
-            const progress = estimateContainerProgress(container);
-            markerPosition = interpolatePosition(originPosition, destinationPosition, progress);
+            // Without tracking updates yet, keep vessel at origin to avoid cross-land route lines.
+            markerPosition = originPosition || destinationPosition;
+            if (!markerPosition) return;
         }
         bounds.extend(markerPosition);
+        if (originPosition) bounds.extend(originPosition);
+        if (destinationPosition) bounds.extend(destinationPosition);
 
         const daysToEta = daysUntil(container.eta_date);
         const etaText = container.eta_date || 'N/A';
@@ -1711,49 +1928,64 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             : (daysToEta >= 0
                 ? `${daysToEta} day${daysToEta === 1 ? '' : 's'} to ETA`
                 : `${Math.abs(daysToEta)} day${Math.abs(daysToEta) === 1 ? '' : 's'} past ETA`);
-        const positionSourceText = hasManualPosition ? 'Manual vessel coordinates' : 'ETA-projected path';
-        const positionValueText = hasManualPosition ? `${manualLat.toFixed(4)}, ${manualLng.toFixed(4)}` : 'Projected';
+        const positionSourceText = hasManualPosition
+            ? 'Container tracking coordinates'
+            : (waypointSource === 'container'
+                ? 'Latest container waypoint'
+                : (waypointSource === 'vessel_route'
+                    ? 'Assigned vessel route waypoint'
+                    : 'Origin port (awaiting first waypoint)'));
+        const positionValueText = `${markerPosition.lat().toFixed(4)}, ${markerPosition.lng().toFixed(4)}`;
         const positionUpdatedText = hasManualPosition && container.vessel_position_updated_at
             ? String(container.vessel_position_updated_at)
-            : 'N/A';
-        const waypointCount = waypointPoints.length;
-        const lastWaypointAt = waypointCount > 0 && waypointPoints[waypointCount - 1]?.recordedAt
-            ? String(waypointPoints[waypointCount - 1].recordedAt)
+            : (activeWaypointPoints.length > 0 ? String(activeWaypointPoints[activeWaypointPoints.length - 1]?.recordedAt || 'N/A') : 'N/A');
+        const waypointCount = activeWaypointPoints.length;
+        const sampledWaypointCount = sampledWaypointPoints.length;
+        const lastWaypointAt = waypointCount > 0 && activeWaypointPoints[waypointCount - 1]?.recordedAt
+            ? String(activeWaypointPoints[waypointCount - 1].recordedAt)
             : 'N/A';
 
-        // Draw a transit line that follows saved waypoint updates.
+        // Draw transit only after tracking progress exists.
         const transitPathPoints = [];
-        if (originPosition) {
-            appendPointIfDistinct(transitPathPoints, originPosition);
+        if (hasTransitProgress && shouldRenderRouteGeometry) {
+            if (originPosition) {
+                appendPointIfDistinct(transitPathPoints, originPosition);
+            }
+            sampledWaypointPoints.forEach((wp) => appendPointIfDistinct(transitPathPoints, wp.position));
+            appendPointIfDistinct(transitPathPoints, markerPosition);
+            if (destinationPosition) {
+                appendPointIfDistinct(transitPathPoints, destinationPosition);
+            }
         }
-        waypointPoints.forEach((wp) => appendPointIfDistinct(transitPathPoints, wp.position));
-        appendPointIfDistinct(transitPathPoints, markerPosition);
 
-        waypointPoints.forEach((wp, index) => {
-            bounds.extend(wp.position);
-            const dot = new google.maps.Marker({
-                position: wp.position,
-                map: map,
-                title: `Waypoint ${index + 1} • ${container.container_number}`,
-                icon: buildWaypointDotIcon(),
-                zIndex: 30
-            });
-            dot.addListener('click', () => {
-                const infoWindow = new google.maps.InfoWindow({
-                    content: `
-                        <div style="font-family:'Poppins',Arial,sans-serif; min-width:200px;">
-                            <div style="font-weight:700; color:#0c4a6e; margin-bottom:6px;">Waypoint ${index + 1}</div>
-                            <div style="font-size:13px; color:#334155;">Container: ${container.container_number}</div>
-                            <div style="font-size:13px; color:#334155;">Recorded: ${wp.recordedAt}</div>
-                            <div style="font-size:13px; color:#334155;">${wp.latitude.toFixed(4)}, ${wp.longitude.toFixed(4)}</div>
-                        </div>
-                    `
+        if (hasTransitProgress && shouldRenderRouteGeometry) {
+            sampledWaypointPoints.forEach((wp, index) => {
+                bounds.extend(wp.position);
+                const dot = new google.maps.Marker({
+                    position: wp.position,
+                    map: map,
+                    title: `Waypoint ${index + 1} • ${container.container_number}`,
+                    icon: buildWaypointDotIcon(),
+                    zIndex: 30
                 });
-                infoWindow.open(map, dot);
+                dot.addListener('click', () => {
+                    const infoWindow = new google.maps.InfoWindow({
+                        content: `
+                            <div style="font-family:'Poppins',Arial,sans-serif; min-width:200px;">
+                                <div style="font-weight:700; color:#0c4a6e; margin-bottom:6px;">Waypoint ${index + 1}</div>
+                                <div style="font-size:13px; color:#334155;">Container: ${container.container_number}</div>
+                                <div style="font-size:13px; color:#334155;">Recorded: ${wp.recordedAt}</div>
+                                <div style="font-size:12px; color:#64748b;">Showing sampled waypoint (${sampledWaypointCount}/${waypointCount})</div>
+                                <div style="font-size:13px; color:#334155;">${wp.latitude.toFixed(4)}, ${wp.longitude.toFixed(4)}</div>
+                            </div>
+                        `
+                    });
+                    infoWindow.open(map, dot);
+                });
             });
-        });
+        }
 
-        if (transitPathPoints.length >= 2) {
+        if (transitPathPoints.length >= 2 && shouldRenderRouteGeometry) {
             const transitPolyline = new google.maps.Polyline({
                 path: transitPathPoints,
                 geodesic: true,
@@ -1770,6 +2002,7 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                             <div style="font-weight:700; color:#0c4a6e; margin-bottom:6px;">Transit Path</div>
                             <div style="font-size:13px; color:#334155;">Container: ${container.container_number}</div>
                             <div style="font-size:13px; color:#334155;">Waypoint points: ${waypointCount}</div>
+                            <div style="font-size:13px; color:#334155;">Displayed waypoints: ${sampledWaypointCount}</div>
                             <div style="font-size:13px; color:#334155;">Last waypoint: ${lastWaypointAt}</div>
                         </div>
                     `
@@ -1777,6 +2010,9 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                 infoWindow.setPosition(markerPosition);
                 infoWindow.open(map);
             });
+        }
+        if (usingVesselRoute && shouldRenderRouteGeometry) {
+            renderedVesselRouteShapes.add(vesselRouteKey);
         }
 
         const marker = new google.maps.Marker({
@@ -1786,6 +2022,14 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
             icon: buildBoatMarkerIcon(),
             zIndex: 35
         });
+        const vesselRouteName = String(container.vessel_route_name || '').trim();
+        const vesselVoyageRef = String(container.vessel_voyage_reference || '').trim();
+        const vesselRouteLabel = vesselRouteName
+            ? `${vesselRouteName}${vesselVoyageRef ? ` (${vesselVoyageRef})` : ''}`
+            : 'N/A';
+        const waypointSourceText = waypointSource === 'container'
+            ? 'Container-specific'
+            : (waypointSource === 'vessel_route' ? 'Assigned vessel route' : 'No waypoints');
 
         const infoContent = `
             <div style="font-family:'Poppins',Arial,sans-serif; min-width:250px;">
@@ -1799,6 +2043,8 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
                     <div style="margin-bottom:6px;"><strong>Position Source:</strong> ${positionSourceText}</div>
                     <div style="margin-bottom:6px;"><strong>Vessel Position:</strong> ${positionValueText}</div>
                     <div style="margin-bottom:6px;"><strong>Position Updated:</strong> ${positionUpdatedText}</div>
+                    <div style="margin-bottom:6px;"><strong>Vessel Route:</strong> ${vesselRouteLabel}</div>
+                    <div style="margin-bottom:6px;"><strong>Waypoint Source:</strong> ${waypointSourceText}</div>
                     <div style="margin-bottom:6px;"><strong>Waypoint Updates:</strong> ${waypointCount}</div>
                     <div style="margin-bottom:6px;"><strong>Last Waypoint:</strong> ${lastWaypointAt}</div>
                     <div style="margin-bottom:6px;"><strong>Destination Port:</strong> ${container.destination_port_name || 'Unknown Port'}</div>
@@ -1848,7 +2094,24 @@ function createMarker(location) {
                     '</filter>' +
                     '</defs>' +
                     '<circle cx="20" cy="20" r="18" fill="#f39c12" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
-                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">W</text>' +
+                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">🏢</text>' +
+                    '</svg>'
+                ),
+                scaledSize: new google.maps.Size(iconSize, iconSize),
+                anchor: new google.maps.Point(iconSize/2, iconSize/2)
+            };
+            break;
+        case 'port':
+            icon = {
+                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
+                    '<defs>' +
+                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
+                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
+                    '</filter>' +
+                    '</defs>' +
+                    '<circle cx="20" cy="20" r="18" fill="#0f766e" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
+                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">⚓</text>' +
                     '</svg>'
                 ),
                 scaledSize: new google.maps.Size(iconSize, iconSize),
@@ -1924,6 +2187,17 @@ function createMarker(location) {
                 ? `<a href="warehouse_info.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&from=module_movements" style="color: ${typeColor}; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`
                 : location.name;
             break;
+        case 'port':
+            typeColor = '#0f766e';
+            typeBgColor = '#e6fffb';
+            typeIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f766e" stroke-width="2"><path d="M12 2v16"/><path d="M5 9l7-4 7 4"/><path d="M4 18c2 2 4 2 6 0 2 2 4 2 6 0 2 2 4 2 4 2"/></svg>';
+            viewPalletsUrl = location.id
+                ? `manage_warehouse_inventory.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&tab=customsHold`
+                : `container_tracking.php?project_id=${selectedProjectId}`;
+            nameLink = location.id
+                ? `<a href="manage_warehouse_inventory.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&tab=customsHold" style="color: ${typeColor}; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`
+                : location.name;
+            break;
         case 'project':
             typeColor = '#1b5e20';
             typeBgColor = '#e8f5e9';
@@ -1939,6 +2213,7 @@ function createMarker(location) {
     const gradientColors = {
         'manufacturer': 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
         'warehouse': 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
+        'port': 'linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)',
         'project': 'linear-gradient(135deg, #27ae60 0%, #1e8449 100%)'
     };
 
@@ -1946,6 +2221,8 @@ function createMarker(location) {
     let clickableName;
     if (location.type === 'warehouse' && location.id) {
         clickableName = `<a href="warehouse_info.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&from=module_movements" style="color: white; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`;
+    } else if (location.type === 'port' && location.id) {
+        clickableName = `<a href="manage_warehouse_inventory.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&tab=customsHold" style="color: white; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`;
     } else if (location.type === 'project' && location.id) {
         clickableName = `<a href="project_overview.php?project_id=${location.id}&from=module_movements" style="color: white; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`;
     } else {

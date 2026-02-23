@@ -476,13 +476,16 @@ function get_delivery_milestone_events(
         $events[] = 'shipping';
     }
 
-    if (!empty($customs_cleared_date) || in_array($status, [
+    $status_implies_customs_cleared = in_array($status, [
         'Cleared Customs',
         'In Transit to Warehouse',
         'Delivered to Warehouse',
         'In Transit to Project',
         'Delivered to Project'
-    ], true)) {
+    ], true);
+
+    // Customs hold is an explicit blocking state and should never trigger customs-cleared milestones.
+    if ($status !== 'Customs Hold' && (!empty($customs_cleared_date) || $status_implies_customs_cleared)) {
         $events[] = 'customs_cleared';
     }
 
@@ -1289,7 +1292,9 @@ function backfill_delivery_milestones_for_batch($module_batch_id, $conn, $user_i
             if ($event === 'shipping') {
                 $should_trigger = $shipping_allowed;
             } elseif ($event === 'customs_cleared') {
-                if (!empty($delivery['customs_cleared_date'])) {
+                if ($status === 'Customs Hold') {
+                    $should_trigger = false;
+                } elseif (!empty($delivery['customs_cleared_date'])) {
                     $should_trigger = true;
                 } elseif (in_array($status, [
                     'Cleared Customs',
