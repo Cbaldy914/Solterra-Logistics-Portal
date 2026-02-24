@@ -1392,6 +1392,84 @@ foreach ($module_milestone_breakdown as $event => $amount) {
         : null;
 }
 
+$forecast_monthly_totals = [];
+$actual_monthly_totals = [];
+$forecast_actual_min_month = null;
+$forecast_actual_max_month = null;
+
+$register_month_key = static function (?string $raw_date) {
+    if (!$raw_date) {
+        return null;
+    }
+    $ts = strtotime($raw_date);
+    if ($ts === false) {
+        return null;
+    }
+    return date('Y-m-01', $ts);
+};
+
+foreach ($deliveries as $delivery_for_chart) {
+    $delivery_base_cost = (float)($delivery_for_chart['customer_cost'] ?? 0)
+        + (float)($delivery_for_chart['accessorial_costs'] ?? 0)
+        + (float)($delivery_for_chart['warehousing_cost'] ?? 0);
+
+    $estimated_solterra_cost = max(0, (float)($delivery_for_chart['wattage'] ?? 0))
+        * max(0, (float)($delivery_for_chart['quantity'] ?? 0))
+        * max(0, (float)$solterra_fee);
+    $actual_solterra_cost = max(0, (float)($delivery_for_chart['solterra_fee'] ?? 0));
+
+    $forecast_month_key = $register_month_key($delivery_for_chart['anticipated_delivery_date'] ?? null);
+    if ($forecast_month_key !== null) {
+        $forecast_monthly_totals[$forecast_month_key] = ($forecast_monthly_totals[$forecast_month_key] ?? 0)
+            + $delivery_base_cost
+            + $estimated_solterra_cost;
+        if ($forecast_actual_min_month === null || $forecast_month_key < $forecast_actual_min_month) {
+            $forecast_actual_min_month = $forecast_month_key;
+        }
+        if ($forecast_actual_max_month === null || $forecast_month_key > $forecast_actual_max_month) {
+            $forecast_actual_max_month = $forecast_month_key;
+        }
+    }
+
+    $actual_month_key = $register_month_key($delivery_for_chart['actual_delivery_date'] ?? null);
+    if ($actual_month_key !== null) {
+        $actual_monthly_totals[$actual_month_key] = ($actual_monthly_totals[$actual_month_key] ?? 0)
+            + $delivery_base_cost
+            + $actual_solterra_cost;
+        if ($forecast_actual_min_month === null || $actual_month_key < $forecast_actual_min_month) {
+            $forecast_actual_min_month = $actual_month_key;
+        }
+        if ($forecast_actual_max_month === null || $actual_month_key > $forecast_actual_max_month) {
+            $forecast_actual_max_month = $actual_month_key;
+        }
+    }
+}
+
+$forecast_actual_labels = [];
+$forecast_actual_forecast_cumulative = [];
+$forecast_actual_actual_cumulative = [];
+
+if ($forecast_actual_min_month !== null && $forecast_actual_max_month !== null) {
+    $cursor = new DateTimeImmutable($forecast_actual_min_month);
+    $end_month = new DateTimeImmutable($forecast_actual_max_month);
+    $running_forecast = 0.0;
+    $running_actual = 0.0;
+
+    while ($cursor <= $end_month) {
+        $month_key = $cursor->format('Y-m-01');
+        $running_forecast += (float)($forecast_monthly_totals[$month_key] ?? 0);
+        $running_actual += (float)($actual_monthly_totals[$month_key] ?? 0);
+
+        $forecast_actual_labels[] = $cursor->format('M Y');
+        $forecast_actual_forecast_cumulative[] = round($running_forecast, 2);
+        $forecast_actual_actual_cumulative[] = round($running_actual, 2);
+
+        $cursor = $cursor->modify('+1 month');
+    }
+}
+
+$has_forecast_actual_chart_data = !empty($forecast_actual_labels);
+
 // Warehouse name lookup for status display
 $warehouse_name_map = [];
 if (!empty($warehouse_ids_for_lookup)) {
@@ -1966,6 +2044,31 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         .chart-container {
             position: relative;
             height: 250px;
+        }
+
+        .chart-subtitle {
+            margin: -10px 0 16px 0;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        .forecast-chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        .chart-empty-state {
+            min-height: 140px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: #6c757d;
+            font-size: 0.9em;
+            border: 1px dashed rgba(72, 140, 154, 0.3);
+            border-radius: 12px;
+            background: rgba(72, 140, 154, 0.03);
+            padding: 18px;
         }
 
         @media (max-width: 992px) {
@@ -2933,6 +3036,19 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                     <canvas id="costBreakdownChart"></canvas>
                 </div>
             </div>
+            <div class="chart-card" style="margin-top: 20px;">
+                <h3><i class="fas fa-chart-line"></i> Forecasted vs Actual Cost</h3>
+                <p class="chart-subtitle">Cumulative logistics cost by month from planned delivery dates vs actual delivery dates.</p>
+                <?php if ($has_forecast_actual_chart_data): ?>
+                <div class="forecast-chart-container">
+                    <canvas id="forecastActualCostChart"></canvas>
+                </div>
+                <?php else: ?>
+                <div class="chart-empty-state">
+                    Add anticipated and/or actual delivery dates to view forecasted vs actual trend lines.
+                </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 
@@ -3802,8 +3918,17 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         hasWattage: <?php echo $project_total_watts > 0 ? 'true' : 'false'; ?>
     };
 
+    const forecastActualData = {
+        labels: <?php echo json_encode($forecast_actual_labels, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS); ?>,
+        forecast: <?php echo json_encode($forecast_actual_forecast_cumulative, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS); ?>,
+        actual: <?php echo json_encode($forecast_actual_actual_cumulative, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS); ?>,
+        totalWatts: <?php echo (float)$project_total_watts; ?>,
+        hasData: <?php echo $has_forecast_actual_chart_data ? 'true' : 'false'; ?>
+    };
+
     let costBreakdownChart = null;
     let logisticsChart = null;
+    let forecastActualChart = null;
 
     function buildBreakdownData(source, isPerWatt) {
         const labels = ['Freight', 'Warehousing', 'Accessorial'];
@@ -3830,8 +3955,6 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     }
 
     function renderCharts(mode) {
-        const isPerWatt = mode === 'per_watt';
-
         if (costBreakdownChart) {
             costBreakdownChart.destroy();
         }
@@ -3883,7 +4006,92 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                 cutout: '55%'
             });
         }
+        renderForecastActualChart(mode);
+    }
 
+    function renderForecastActualChart(mode) {
+        const canvas = document.getElementById('forecastActualCostChart');
+        if (!canvas || !forecastActualData.hasData) return;
+
+        if (forecastActualChart) {
+            forecastActualChart.destroy();
+        }
+
+        const isPerWatt = mode === 'per_watt' && forecastActualData.totalWatts > 0;
+        const divisor = isPerWatt ? forecastActualData.totalWatts : 1;
+        const forecastSeries = forecastActualData.forecast.map((value) => value / divisor);
+        const actualSeries = forecastActualData.actual.map((value) => value / divisor);
+
+        forecastActualChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: forecastActualData.labels,
+                datasets: [
+                    {
+                        label: isPerWatt ? 'Forecasted ($/W)' : 'Forecasted',
+                        data: forecastSeries,
+                        borderColor: '#488C9A',
+                        backgroundColor: 'rgba(72, 140, 154, 0.08)',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        tension: 0.2
+                    },
+                    {
+                        label: isPerWatt ? 'Actual ($/W)' : 'Actual',
+                        data: actualSeries,
+                        borderColor: '#293E4C',
+                        backgroundColor: 'rgba(41, 62, 76, 0.08)',
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        tension: 0.2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, padding: 14 }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed.y || 0;
+                                return isPerWatt
+                                    ? `${context.dataset.label}: ${formatPerWatt(value)}`
+                                    : `${context.dataset.label}: ${formatCurrency(value)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return isPerWatt ? formatPerWatt(Number(value)) : formatCurrency(Number(value));
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: isPerWatt ? 'Cumulative Cost ($/W)' : 'Cumulative Cost ($)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Month'
+                        }
+                    }
+                }
+            }
+        });
     }
 
     function initLogisticsChart(mode) {

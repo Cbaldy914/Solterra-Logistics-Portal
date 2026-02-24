@@ -882,9 +882,86 @@ try {
     // ===========================================================================================
     // CALCULATE COST ESTIMATES AND FETCH REFERENCE DATA
     // ===========================================================================================
-    
+
     // Monthly cost estimate calculation - using warehouse_fees from warehouse_cost_items
     $total_storage_cost_monthly_rate = $total_pallets * $warehouse_fees['monthly'];
+
+    // Detailed cost calculations (matching warehouse_info.php logic)
+    $in_fee_cost = 0;
+    $out_fee_cost = 0;
+    $current_monthly_accrual = $total_storage_cost_monthly_rate;
+    $total_storage_cost_actual = 0;
+    $total_cost_to_date = 0;
+    $average_days = 0;
+
+    // Count total inbound/outbound pallets from history
+    $total_inbound_pallets_count = 0;
+    $total_outbound_pallets_count = 0;
+    foreach ($inbound_history as $ih) {
+        $total_inbound_pallets_count += (int)($ih['total_pallets'] ?? 0);
+    }
+    foreach ($outbound_history as $oh) {
+        $total_outbound_pallets_count += (int)($oh['total_pallets'] ?? 0);
+    }
+
+    // In/out fee costs
+    if ($warehouse_fees['entry'] > 0) {
+        $in_fee_cost = $warehouse_fees['entry'] * $total_inbound_pallets_count;
+    }
+    if ($warehouse_fees['exit'] > 0) {
+        $out_fee_cost = $warehouse_fees['exit'] * $total_outbound_pallets_count;
+    }
+
+    // Storage cost from current pallets
+    $daily_rate = $warehouse_fees['monthly'] > 0 ? ($warehouse_fees['monthly'] / 30) : 0;
+    $current_storage_cost = 0;
+    $total_days_all_pallets = 0;
+    foreach ($pallets_in_storage as $p_calc) {
+        $days = 0;
+        if (!empty($p_calc['arrival_date'])) {
+            $days = max(0, (int)ceil((time() - strtotime($p_calc['arrival_date'])) / 86400));
+        }
+        $total_days_all_pallets += $days;
+        $current_storage_cost += $days * $daily_rate;
+    }
+
+    // Departed pallet storage cost
+    $departed_storage_cost = 0;
+    $departed_pallets_count = 0;
+    $stmt_dep = $conn->prepare("
+        SELECT dp.inventory_pallet_id AS pallet_id,
+               MIN(CASE WHEN d.warehouse_id = ? THEN d.warehouse_arrival_date END) AS arrival_date,
+               MIN(CASE WHEN d.origin_type = 'warehouse' AND d.origin_id = ? THEN d.left_warehouse_date END) AS departure_date
+        FROM deliveries d
+        JOIN delivery_pallets dp ON d.id = dp.delivery_id
+        WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
+        GROUP BY dp.inventory_pallet_id
+    ");
+    if ($stmt_dep) {
+        $stmt_dep->bind_param("iiii", $warehouse_id, $warehouse_id, $warehouse_id, $warehouse_id);
+        $stmt_dep->execute();
+        $result_dep = $stmt_dep->get_result();
+        while ($row_dep = $result_dep->fetch_assoc()) {
+            $arr = $row_dep['arrival_date'] ?? null;
+            $dep = $row_dep['departure_date'] ?? null;
+            if ($arr && $dep) {
+                $arr_ts = strtotime($arr);
+                $dep_ts = strtotime($dep);
+                if ($arr_ts !== false && $dep_ts !== false && $dep_ts >= $arr_ts) {
+                    $departed_pallets_count++;
+                    $days = max(0, (int)ceil(($dep_ts - $arr_ts) / 86400));
+                    $total_days_all_pallets += $days;
+                    $departed_storage_cost += $days * $daily_rate;
+                }
+            }
+        }
+        $stmt_dep->close();
+    }
+
+    $total_storage_cost_actual = $current_storage_cost + $departed_storage_cost;
+    $average_divisor = ($total_pallets + $departed_pallets_count);
+    $average_days = $average_divisor > 0 ? $total_days_all_pallets / $average_divisor : 0;
+    $total_cost_to_date = $in_fee_cost + $out_fee_cost + $total_storage_cost_actual;
 
     // Fetch all projects for dropdown options (build full addresses like create_shipment.php)
     $project_clause = $role === 'global_admin' ? '' : ' AND account_id = ?';
@@ -1120,6 +1197,98 @@ $conn->close();
             .facility-header-stats { flex-direction: column; gap: 8px; }
             .facility-stat { flex-direction: row; gap: 10px; padding: 10px 16px; }
         }
+        /* Cost Breakdown Modal */
+        .cost-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            animation: fadeInModal 0.2s ease;
+        }
+        .cost-modal-overlay.active {
+            display: flex;
+        }
+        .cost-modal-box {
+            background: #fff;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 440px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            overflow: hidden;
+            animation: modalSlideUp 0.25s ease-out;
+        }
+        @keyframes modalSlideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .cost-modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            padding: 18px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .cost-modal-header h3 {
+            margin: 0;
+            font-size: 1.05em;
+            font-weight: 600;
+        }
+        .cost-modal-close {
+            background: none;
+            border: none;
+            color: rgba(255,255,255,0.8);
+            font-size: 1.4em;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .cost-modal-close:hover {
+            color: #fff;
+        }
+        .cost-modal-body {
+            padding: 20px 24px;
+        }
+        .cost-modal-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .cost-modal-row:last-child {
+            border-bottom: none;
+        }
+        .cost-modal-label {
+            font-weight: 500;
+            color: #555;
+            font-size: 0.92em;
+        }
+        .cost-modal-amount {
+            font-weight: 600;
+            color: #488C9A;
+            font-size: 0.92em;
+        }
+        .cost-modal-divider {
+            border-top: 2px solid #488C9A;
+            margin: 12px 0 8px 0;
+        }
+        .cost-modal-row.total-row .cost-modal-label,
+        .cost-modal-row.total-row .cost-modal-amount {
+            font-weight: 700;
+            color: #293E4C;
+            font-size: 1em;
+        }
+        .cost-modal-footer {
+            padding: 12px 24px 18px;
+            background: #f8f9fa;
+            border-top: 1px solid #eee;
+            text-align: right;
+        }
+
         /* Fee Modal Styles */
         .fee-modal {
             display: none;
@@ -1780,10 +1949,12 @@ $conn->close();
         }
         th {
             background-color: #e9ecef;
+            text-align: left;
         }
         th, td {
             padding: 8px;
             border: 1px solid #ddd;
+            text-align: left;
         }
         tr:nth-child(even) {
             background-color: #f9f9f9;
@@ -2160,9 +2331,9 @@ $conn->close();
                         <span class="facility-stat-value"><?php echo number_format($total_modules_stored); ?></span>
                         <span class="facility-stat-label">Modules</span>
                     </div>
-                    <div class="facility-stat accent-teal">
-                        <span class="facility-stat-value">$<?php echo number_format($total_storage_cost_monthly_rate, 2); ?></span>
-                        <span class="facility-stat-label">Est. Monthly</span>
+                    <div class="facility-stat accent-teal" style="cursor:pointer;" onclick="openCostBreakdownModal()">
+                        <span class="facility-stat-value">$<?php echo number_format($total_cost_to_date, 2); ?></span>
+                        <span class="facility-stat-label">Est. Cost <i class="fas fa-expand-alt" style="font-size:0.7em; opacity:0.7;"></i></span>
                     </div>
                 </div>
             </div>
@@ -4549,6 +4720,58 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
+<!-- Cost Breakdown Modal -->
+<div class="cost-modal-overlay" id="costBreakdownModal">
+    <div class="cost-modal-box">
+        <div class="cost-modal-header">
+            <h3>Cost Breakdown - <?php echo htmlspecialchars($warehouse['name']); ?></h3>
+            <button class="cost-modal-close" onclick="closeCostBreakdownModal()">&times;</button>
+        </div>
+        <div class="cost-modal-body">
+            <div class="cost-modal-row">
+                <span class="cost-modal-label">Current Monthly Accrual</span>
+                <span class="cost-modal-amount">$<?php echo number_format($current_monthly_accrual, 2); ?> / mo</span>
+            </div>
+            <div class="cost-modal-row">
+                <span class="cost-modal-label">In Fee Cost</span>
+                <span class="cost-modal-amount">$<?php echo number_format($in_fee_cost, 2); ?></span>
+            </div>
+            <div class="cost-modal-row">
+                <span class="cost-modal-label">Out Fee Cost</span>
+                <span class="cost-modal-amount">$<?php echo number_format($out_fee_cost, 2); ?></span>
+            </div>
+            <div class="cost-modal-row">
+                <span class="cost-modal-label">Storage Cost To Date</span>
+                <span class="cost-modal-amount">$<?php echo number_format($total_storage_cost_actual, 2); ?> (<?php echo number_format($average_days, 1); ?> days avg)</span>
+            </div>
+            <div class="cost-modal-divider"></div>
+            <div class="cost-modal-row total-row">
+                <span class="cost-modal-label">Total Est. Cost</span>
+                <span class="cost-modal-amount">$<?php echo number_format($total_cost_to_date, 2); ?></span>
+            </div>
+        </div>
+        <?php if (!empty($warehouse_fees['all_items'])): ?>
+        <div class="cost-modal-footer">
+            <button type="button" class="action-button" style="font-size:0.85em; padding:8px 16px;" onclick="closeCostBreakdownModal(); openFeeModal();">
+                <i class="fas fa-file-invoice-dollar"></i> View Fee Structure
+            </button>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<script>
+function openCostBreakdownModal() {
+    document.getElementById('costBreakdownModal').classList.add('active');
+}
+function closeCostBreakdownModal() {
+    document.getElementById('costBreakdownModal').classList.remove('active');
+}
+document.getElementById('costBreakdownModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeCostBreakdownModal();
+});
+</script>
+
 <!-- Fee Structure Modal -->
 <?php if (!empty($warehouse_fees['all_items'])): ?>
 <div id="feeModal" class="fee-modal">
@@ -4610,14 +4833,17 @@ function closeFeeModal() {
     document.getElementById('feeModal').style.display = 'none';
 }
 
-// Close modal when clicking outside
+// Close modals when clicking outside
 document.getElementById('feeModal')?.addEventListener('click', function(e) {
     if (e.target === this) closeFeeModal();
 });
 
-// Close modal with Escape key
+// Close modals with Escape key
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeFeeModal();
+    if (e.key === 'Escape') {
+        closeFeeModal();
+        closeCostBreakdownModal();
+    }
 });
 </script>
 <?php endif; ?>

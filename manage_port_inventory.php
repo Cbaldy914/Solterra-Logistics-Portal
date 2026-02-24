@@ -952,11 +952,11 @@ $conn->close();
 
         /* ========== PALLET ACTION BAR ========== */
         .pallet-action-bar {
-            border-top: 2px solid #488C9A;
+            border-bottom: 2px solid #488C9A;
             background: #fff;
             padding: 14px 16px;
-            margin-top: 12px;
-            border-radius: 0 0 8px 8px;
+            margin-bottom: 12px;
+            border-radius: 8px 8px 0 0;
             animation: slideDown 0.2s ease-out;
         }
         @keyframes slideDown {
@@ -1596,6 +1596,11 @@ $conn->close();
                             <tr class="pallet-detail-row" id="pallets-<?php echo (int)$container['delivery_id']; ?>" style="display:none;">
                                 <td colspan="9">
                                     <div class="pallet-panel">
+                                        <!-- Contextual action bar (hidden by default, appears above table) -->
+                                        <div class="pallet-action-bar" id="action-bar-<?php echo (int)$container['delivery_id']; ?>" style="display:none;">
+                                            <!-- Will be populated by JS based on selection -->
+                                        </div>
+
                                         <table class="pallet-sub-table">
                                             <thead>
                                                 <tr>
@@ -1638,11 +1643,6 @@ $conn->close();
                                             <?php endforeach; ?>
                                             </tbody>
                                         </table>
-
-                                        <!-- Contextual action bar (hidden by default) -->
-                                        <div class="pallet-action-bar" id="action-bar-<?php echo (int)$container['delivery_id']; ?>" style="display:none;">
-                                            <!-- Will be populated by JS based on selection -->
-                                        </div>
                                     </div>
                                 </td>
                             </tr>
