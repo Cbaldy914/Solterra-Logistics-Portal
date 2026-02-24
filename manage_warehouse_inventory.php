@@ -1519,6 +1519,81 @@ $conn->close();
         .hold-badge-link:hover .hold-badge {
             background: #fee2e2;
         }
+        /* Drayage modal inline hold banner */
+        .drayage-modal-hold-banner {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            background: #fef3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-bottom: 14px;
+            font-size: 0.88em;
+            color: #664d03;
+            line-height: 1.5;
+        }
+        .drayage-modal-hold-icon {
+            font-size: 1.2em;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        /* Drayage customs hold warning */
+        .drayage-hold-warning-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            animation: fadeIn 0.15s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .drayage-hold-warning-box {
+            background: #fff;
+            border-radius: 14px;
+            padding: 28px 32px;
+            max-width: 520px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        .drayage-hold-warning-icon {
+            font-size: 2.5em;
+            color: #f59e0b;
+            margin-bottom: 4px;
+        }
+        .drayage-hold-warning-box h3 {
+            margin: 0 0 10px;
+            color: #1f2937;
+            font-size: 1.15em;
+        }
+        .drayage-hold-warning-box p {
+            margin: 0 0 10px;
+            color: #4b5563;
+            font-size: 0.92em;
+            line-height: 1.5;
+        }
+        .drayage-hold-warning-details {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 8px;
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 0.9em;
+            color: #991b1b;
+            line-height: 1.6;
+        }
+        .drayage-hold-warning-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 18px;
+        }
         .action-button-danger {
             background: #b91c1c;
         }
@@ -2152,7 +2227,7 @@ $conn->close();
                                 <?php foreach ($containers_cleared as $container): ?>
                                     <tr>
                                         <?php if (in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])): ?>
-                                            <td><input type="checkbox" class="container-checkbox" value="<?php echo $container['delivery_id']; ?>" onchange="toggleMoveContainerBtn()"></td>
+                                            <td><input type="checkbox" class="container-checkbox" value="<?php echo $container['delivery_id']; ?>" data-container-number="<?php echo htmlspecialchars($container['container_number'] ?? ''); ?>" data-hold-pallets="<?php echo (int)$container['hold_pallets']; ?>" data-hold-modules="<?php echo (int)$container['hold_modules']; ?>" onchange="toggleMoveContainerBtn()"></td>
                                         <?php endif; ?>
                                         <td><?php echo htmlspecialchars($container['container_number'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($container['projects']); ?></td>
@@ -2860,7 +2935,8 @@ $conn->close();
         <span class="close-move-container-modal">&times;</span>
         <div class="shipment-details-modal-content">
             <h2 class="section-title" style="margin-top:0; text-align:center;">Move Container (Drayage)</h2>
-            
+            <div id="drayageHoldBanner" style="display:none;"></div>
+
             <form id="moveContainerForm" method="POST" action="create_shipment.php">
                 <div class="form-row">
                     <div>
@@ -4019,7 +4095,31 @@ function openMoveContainerModal(containerIds) {
     // Populate initial destinations (projects by default)
     console.log('Calling updateMoveDestinations from modal open');
     updateMoveDestinations();
-    
+
+    // Show customs hold warning banner inside modal if applicable
+    const holdBanner = document.getElementById('drayageHoldBanner');
+    if (holdBanner) {
+        const checkedContainers = document.querySelectorAll('.container-checkbox:checked');
+        const holdItems = [];
+        checkedContainers.forEach(cb => {
+            const hp = parseInt(cb.dataset.holdPallets || '0', 10);
+            const hm = parseInt(cb.dataset.holdModules || '0', 10);
+            if (hp > 0) {
+                holdItems.push({ container: cb.dataset.containerNumber || 'Unknown', pallets: hp, modules: hm });
+            }
+        });
+        if (holdItems.length > 0) {
+            const lines = holdItems.map(h =>
+                `<strong>${h.container}</strong>: ${h.pallets} pallet${h.pallets !== 1 ? 's' : ''} (${h.modules.toLocaleString()} modules)`
+            ).join(' &middot; ');
+            holdBanner.innerHTML = `<div class="drayage-modal-hold-banner"><span class="drayage-modal-hold-icon">&#9888;</span> <span>${lines} on <strong>Customs Hold</strong> &mdash; will not be shipped</span></div>`;
+            holdBanner.style.display = '';
+        } else {
+            holdBanner.innerHTML = '';
+            holdBanner.style.display = 'none';
+        }
+    }
+
     modal.style.display = 'block';
 }
 
@@ -4235,22 +4335,23 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Handle Move Container form submission - populate hidden fields before form submits
     const form = document.getElementById('moveContainerForm');
+    let drayageHoldWarningConfirmed = false;
     if (form) {
         form.addEventListener('submit', function(e) {
             e.preventDefault(); // Temporarily prevent submission to populate hidden fields
-            
+
             const modal = document.getElementById('moveContainerModal');
             const containerIds = JSON.parse(modal.dataset.containerIds || '[]');
-            
+
             if (containerIds.length === 0) {
                 alert('No containers selected.');
                 return;
             }
-            
+
             // Get container number from first checked container for BOL naming
             let containerNumber = '';
             const checkedContainers = document.querySelectorAll('.container-checkbox:checked');
-            
+
             if (checkedContainers.length > 0) {
                 const firstCheckedRow = checkedContainers[0].closest('tr');
                 if (firstCheckedRow) {
@@ -4260,20 +4361,42 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             }
-            
+
             if (!containerNumber) {
                 alert('Error: Could not determine container number. Please try again.');
                 return;
             }
-            
+
+            // Check for pallets on customs hold before proceeding
+            if (!drayageHoldWarningConfirmed) {
+                const holdWarnings = [];
+                checkedContainers.forEach(cb => {
+                    const holdPallets = parseInt(cb.dataset.holdPallets || '0', 10);
+                    const holdModules = parseInt(cb.dataset.holdModules || '0', 10);
+                    const contNum = cb.dataset.containerNumber || 'Unknown';
+                    if (holdPallets > 0) {
+                        holdWarnings.push({ container: contNum, pallets: holdPallets, modules: holdModules });
+                    }
+                });
+
+                if (holdWarnings.length > 0) {
+                    showDrayageHoldWarning(holdWarnings, function() {
+                        drayageHoldWarningConfirmed = true;
+                        form.dispatchEvent(new Event('submit', { cancelable: true }));
+                    });
+                    return;
+                }
+            }
+            drayageHoldWarningConfirmed = false;
+
             // Set BOL number as container number + drayage suffix
             const drayageBolNumber = containerNumber + '-DRAY';
-            
+
             // Populate hidden fields with container data
             document.getElementById('container_ids_input').value = JSON.stringify(containerIds);
             document.getElementById('bol_number_input').value = drayageBolNumber;
             document.getElementById('container_number_input').value = containerNumber;
-            
+
             // Get pallet IDs and then submit the form
             fetch('get_container_pallets.php', {
                 method: 'POST',
@@ -4289,7 +4412,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!data.success) {
                     throw new Error(data.message || 'Failed to get pallet IDs');
                 }
-                
+
                 // Populate pallet IDs in proper format for create_shipment.php
                 const palletContainer = document.getElementById('pallet_ids_container');
                 data.pallet_ids.forEach((palletId, index) => {
@@ -4299,7 +4422,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     input.value = palletId;
                     form.appendChild(input);
                 });
-                
+
                 // Now submit the form normally - server handles everything including BOL redirect
                 form.submit();
             })
@@ -4307,6 +4430,46 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Error getting pallet IDs:', error);
                 alert('Error: ' + error.message);
             });
+        });
+    }
+
+    // Drayage customs hold warning modal
+    function showDrayageHoldWarning(holdWarnings, onConfirm) {
+        // Remove any existing warning overlay
+        document.getElementById('drayageHoldWarning')?.remove();
+
+        let warningLines = holdWarnings.map(w =>
+            `<strong>${w.container}</strong>: ${w.pallets} pallet${w.pallets !== 1 ? 's' : ''} (${w.modules.toLocaleString()} modules) on Customs Hold`
+        ).join('<br>');
+
+        const overlay = document.createElement('div');
+        overlay.id = 'drayageHoldWarning';
+        overlay.className = 'drayage-hold-warning-overlay';
+        overlay.innerHTML = `
+            <div class="drayage-hold-warning-box">
+                <div class="drayage-hold-warning-icon">&#9888;</div>
+                <h3>Customs Hold Warning</h3>
+                <p>The following container(s) have pallets on Customs Hold that <strong>will not be included</strong> in this drayage shipment:</p>
+                <div class="drayage-hold-warning-details">${warningLines}</div>
+                <p style="margin-top:12px; color:#6b7280; font-size:0.9em;">These pallets will remain at the port and must be shipped separately after release from customs.</p>
+                <div class="drayage-hold-warning-actions">
+                    <button type="button" class="action-button action-button-secondary" id="drayageHoldCancel">Cancel</button>
+                    <button type="button" class="action-button action-button-danger" id="drayageHoldProceed">Proceed Without Held Pallets</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        document.getElementById('drayageHoldCancel').addEventListener('click', function() {
+            overlay.remove();
+        });
+        document.getElementById('drayageHoldProceed').addEventListener('click', function() {
+            overlay.remove();
+            onConfirm();
+        });
+        // Close on backdrop click
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) overlay.remove();
         });
     }
 });
