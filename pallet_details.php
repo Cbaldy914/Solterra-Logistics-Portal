@@ -881,6 +881,14 @@ $conn->close();
             background-color: #f8d7da;
             color: #721c24;
         }
+        .status-customs-hold {
+            background-color: #fef2f2;
+            color: #dc2626;
+        }
+        .status-cleared-customs {
+            background-color: #ecfdf5;
+            color: #059669;
+        }
         /* Clickable cost link */
         .cost-link {
             color: #488C9A;
@@ -1142,10 +1150,14 @@ $conn->close();
 
                     <dt>Current Status:</dt>
                     <dd>
-                        <?php 
+                        <?php
                         $status = $pallet_data['status'];
                         $badge_class = 'status-badge ';
-                        if (strpos($status, 'Delivered') !== false) {
+                        if ($status === 'Customs Hold') {
+                            $badge_class .= 'status-customs-hold';
+                        } elseif ($status === 'Cleared Customs') {
+                            $badge_class .= 'status-cleared-customs';
+                        } elseif (strpos($status, 'Delivered') !== false) {
                             $badge_class .= 'status-delivered';
                         } elseif (strpos($status, 'Transit') !== false) {
                             $badge_class .= 'status-transit';
@@ -1293,7 +1305,11 @@ $conn->close();
                                             <?php 
                                             $delivery_status = $delivery['status_of_delivery'] ?? '';
                                             $badge_class = 'status-badge ';
-                                            if (strpos($delivery_status, 'Delivered') !== false) {
+                                            if ($delivery_status === 'Customs Hold') {
+                                                $badge_class .= 'status-customs-hold';
+                                            } elseif ($delivery_status === 'Cleared Customs') {
+                                                $badge_class .= 'status-cleared-customs';
+                                            } elseif (strpos($delivery_status, 'Delivered') !== false) {
                                                 $badge_class .= 'status-delivered';
                                             } elseif (strpos($delivery_status, 'Transit') !== false) {
                                                 $badge_class .= 'status-transit';

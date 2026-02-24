@@ -67,6 +67,8 @@ if (!$is_global_admin) {
 $allowed_statuses = [
     'At Manufacturer',
     'In Warehouse',
+    'Cleared Customs',
+    'Customs Hold',
     'Delivered to Project',
     'Allocated to Project',
     'In Transit to Warehouse',
