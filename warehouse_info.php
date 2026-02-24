@@ -628,21 +628,182 @@ if ($conn) {
             margin: 0 8px;
             color: #6c757d;
         }
-        .warehouse-info-container { 
+        /* ========== FACILITY HERO HEADER (matches project_overview pattern) ========== */
+        .facility-header-hero {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin: 0 20px 24px 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: visible;
+        }
+        .facility-header-hero::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+            border-radius: 24px 24px 0 0;
+        }
+        .facility-header-content {
             display: flex;
-            align-items: flex-start; 
+            align-items: center;
+            justify-content: space-between;
             flex-wrap: wrap;
-            margin-bottom: 20px;
-            background-color: #f9f9f9;
-            padding: 15px;
-            border-radius: 5px;
-            border: 1px solid #e0e0e0;
+            gap: 20px;
         }
-        .warehouse-image img {
-            display: block;
-            border-radius: 4px;
-            margin-right: 20px;
+        .facility-header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            min-width: 0;
+            flex: 1;
         }
+        .facility-header-icon {
+            position: relative;
+            width: 150px;
+            height: 120px;
+            border-radius: 20px;
+            overflow: hidden;
+            flex-shrink: 0;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+        .facility-header-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .facility-header-icon-placeholder {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .facility-header-icon-placeholder i {
+            font-size: 3rem;
+            color: rgba(255,255,255,0.85);
+        }
+        .facility-header-info {
+            min-width: 0;
+            flex: 1;
+        }
+        .facility-title-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+        .facility-header-info h1 {
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0;
+            line-height: 1.2;
+        }
+        .facility-header-subtitle {
+            font-size: 1.05em;
+            color: #6c757d;
+            margin: 0 0 4px;
+            font-weight: 500;
+        }
+        .facility-header-context {
+            font-size: 0.92em;
+            color: #555;
+            margin: 0 0 8px;
+        }
+        .facility-header-meta {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .facility-meta-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .facility-meta-badge.fees-badge {
+            background: rgba(72, 140, 154, 0.08);
+            color: #3A6E7F;
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            cursor: pointer;
+        }
+        .facility-meta-badge.fees-badge:hover {
+            background: rgba(72, 140, 154, 0.15);
+        }
+        .facility-meta-badge.edit-badge {
+            background: #fff;
+            color: #495057;
+            border: 1px solid #dee2e6;
+        }
+        .facility-meta-badge.edit-badge:hover {
+            background: #488C9A;
+            border-color: #488C9A;
+            color: #fff;
+        }
+        .facility-header-stats {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: stretch;
+        }
+        .facility-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(72, 140, 154, 0.07);
+            padding: 12px 20px;
+            border-radius: 12px;
+            min-width: 100px;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+        .facility-stat:hover {
+            background: rgba(72, 140, 154, 0.12);
+            border-color: rgba(72, 140, 154, 0.15);
+        }
+        .facility-stat.clickable {
+            cursor: pointer;
+        }
+        .facility-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #293E4C;
+            line-height: 1;
+        }
+        .facility-stat-label {
+            font-size: 0.72rem;
+            color: #6c757d;
+            text-transform: uppercase;
+            margin-top: 4px;
+            text-align: center;
+            letter-spacing: 0.02em;
+        }
+        .facility-stat.accent-green .facility-stat-value { color: #059669; }
+        .facility-stat.accent-green { background: rgba(5,150,105,0.06); border-color: rgba(5,150,105,0.12); }
+        .facility-stat.accent-teal {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+        }
+        .facility-stat.accent-teal .facility-stat-value,
+        .facility-stat.accent-teal .facility-stat-label {
+            color: rgba(255,255,255,0.9);
+        }
+        /* Keep old classes for warehouse card listing */
         .warehouse-image-placeholder {
             width: 200px;
             height: 150px;
@@ -672,71 +833,17 @@ if ($conn) {
             color: #488C9A;
             opacity: 0.7;
         }
-        .warehouse-details {
-            flex: 1;
-            min-width: 300px;
-            position: relative;
+        /* Responsive for facility header */
+        @media (max-width: 992px) {
+            .facility-header-content { flex-direction: column; align-items: flex-start; gap: 16px; }
+            .facility-header-stats { width: 100%; }
+            .facility-header-hero { margin: 0 10px 20px 10px; padding: 20px; }
         }
-        .warehouse-details h1 {
-            margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 1.6em;
-            color: #293E4C;
-        }
-         .warehouse-details p {
-             margin: 5px 0;
-             line-height: 1.5;
-         }
-        /* Fee Summary Link Styles */
-        .fee-summary-container {
-            margin-top: 10px;
-        }
-        .fee-summary-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 0;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 1em;
-            color: #488C9A;
-            font-weight: 600;
-            transition: all 0.2s ease;
-            text-decoration: none;
-        }
-        .fee-summary-link:hover {
-            color: #3A6E7F;
-            text-decoration: underline;
-        }
-        .fee-summary-link i {
-            font-size: 0.9em;
-        }
-        /* Warehouse Edit Button */
-        .warehouse-edit-btn {
-            position: absolute;
-            top: 0;
-            right: 0;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            background: #fff;
-            border: 1px solid #dee2e6;
-            border-radius: 6px;
-            color: #495057;
-            font-size: 0.85em;
-            font-weight: 500;
-            text-decoration: none;
-            transition: all 0.2s ease;
-        }
-        .warehouse-edit-btn:hover {
-            background: #f8f9fa;
-            border-color: #488C9A;
-            color: #488C9A;
-        }
-        .warehouse-edit-btn i {
-            font-size: 0.85em;
+        @media (max-width: 768px) {
+            .facility-header-icon { width: 100px; height: 80px; border-radius: 14px; }
+            .facility-header-info h1 { font-size: 1.5em; }
+            .facility-header-stats { flex-direction: column; gap: 8px; }
+            .facility-stat { flex-direction: row; gap: 10px; padding: 10px 16px; }
         }
         /* Fee Modal Styles */
         .fee-modal {
@@ -1575,8 +1682,6 @@ if ($conn) {
         }
     ?>
 
-    <h1><?php echo $page_title; ?></h1>
-
     <?php if (!empty($errorMessage)): ?>
         <p class="message error-message"><?php echo htmlspecialchars($errorMessage); ?></p>
 
@@ -1628,97 +1733,97 @@ if ($conn) {
 
     <?php elseif ($warehouse_data): ?>
         <!-- === START Standard Warehouse View === -->
-
-        <div class="warehouse-info-container">
-            <div class="warehouse-image">
-                <?php
-                $image_path = "";
-                $has_main_image = false;
-                if (!empty($warehouse_data['image_url'])) {
-                    // Check if the image_url is a full URL or a relative path
-                    if (filter_var($warehouse_data['image_url'], FILTER_VALIDATE_URL)) {
-                        $image_path = $warehouse_data['image_url'];
-                        $has_main_image = true;
-                    } else {
-                        $image_path = htmlspecialchars($warehouse_data['image_url']);
-                        $has_main_image = file_exists(__DIR__ . '/' . $image_path);
+        <?php
+            // Resolve warehouse image
+            $wh_image_path = '';
+            $has_wh_main_image = false;
+            if (!empty($warehouse_data['image_url'])) {
+                if (filter_var($warehouse_data['image_url'], FILTER_VALIDATE_URL)) {
+                    $wh_image_path = $warehouse_data['image_url'];
+                    $has_wh_main_image = true;
+                } else {
+                    $wh_image_path = htmlspecialchars($warehouse_data['image_url']);
+                    if (strpos($wh_image_path, 'uploads/') !== 0 && strpos($wh_image_path, 'pictures/') !== 0) {
+                        $wh_image_path = 'uploads/warehouse_images/' . ltrim($wh_image_path, '/');
                     }
+                    $has_wh_main_image = file_exists(__DIR__ . '/' . $wh_image_path);
                 }
-                ?>
-                <?php if ($has_main_image): ?>
-                    <img src="<?php echo $image_path; ?>" alt="<?php echo htmlspecialchars($warehouse_data['name']); ?> Warehouse">
-                <?php else: ?>
-                    <div class="warehouse-image-placeholder">
-                        <i class="fas fa-warehouse"></i>
+            }
+            $is_port_facility = !empty($warehouse_data['is_port']) && $warehouse_data['is_port'] == 1;
+        ?>
+        <div class="facility-header-hero">
+            <div class="facility-header-content">
+                <div class="facility-header-left">
+                    <div class="facility-header-icon">
+                        <?php if ($has_wh_main_image): ?>
+                            <img src="<?php echo $wh_image_path; ?>" alt="<?php echo htmlspecialchars($warehouse_data['name']); ?>">
+                        <?php else: ?>
+                            <div class="facility-header-icon-placeholder">
+                                <i class="fas fa-<?php echo $is_port_facility ? 'anchor' : 'warehouse'; ?>"></i>
+                            </div>
+                        <?php endif; ?>
                     </div>
-                <?php endif; ?>
-            </div>
-            <div class="warehouse-details">
-                <?php if (($_SESSION['role'] ?? '') === 'global_admin'): ?>
-                    <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="warehouse-edit-btn">
-                        <i class="fas fa-edit"></i> Edit
-                    </a>
-                <?php endif; ?>
-                <h1><?php echo htmlspecialchars($warehouse_data['name']); ?></h1>
-                 <?php if ($project_name_for_title): ?>
-                    <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory for Project: <?php echo htmlspecialchars($project_name_for_title); ?></h2>
-                 <?php elseif ($module_batch_id && $origin_batch_vendor_name): ?>
-                    <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory from Batch: <?php echo htmlspecialchars($origin_batch_vendor_name); ?> (ID: <?php echo $module_batch_id; ?>)</h2>
-                 <?php endif; ?>
-                <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse_data['address']); ?></p>
-                <?php if (!empty($warehouse_costs_all)): ?>
-                    <?php $fee_count = count($warehouse_costs_all); ?>
-                    <div class="fee-summary-container">
-                        <button type="button" class="fee-summary-link" onclick="openFeeModal()">
-                            <i class="fas fa-file-invoice-dollar"></i>
-                            Cost Structure (<?php echo $fee_count; ?> fee<?php echo $fee_count !== 1 ? 's' : ''; ?>)
-                            <i class="fas fa-chevron-right" style="font-size: 0.8em; opacity: 0.7;"></i>
-                        </button>
+                    <div class="facility-header-info">
+                        <div class="facility-title-row">
+                            <h1><?php echo htmlspecialchars($warehouse_data['name']); ?></h1>
+                        </div>
+                        <?php if ($project_name_for_title): ?>
+                            <p class="facility-header-context">Viewing inventory for Project: <strong><?php echo htmlspecialchars($project_name_for_title); ?></strong></p>
+                        <?php elseif ($module_batch_id && $origin_batch_vendor_name): ?>
+                            <p class="facility-header-context">Viewing inventory from Batch: <strong><?php echo htmlspecialchars($origin_batch_vendor_name); ?></strong></p>
+                        <?php endif; ?>
+                        <p class="facility-header-subtitle"><?php echo htmlspecialchars($warehouse_data['address']); ?></p>
+                        <div class="facility-header-meta">
+                            <?php if (!empty($warehouse_costs_all)): ?>
+                                <?php $fee_count = count($warehouse_costs_all); ?>
+                                <button type="button" class="facility-meta-badge fees-badge" onclick="openFeeModal()">
+                                    <i class="fas fa-file-invoice-dollar"></i>
+                                    Cost Structure (<?php echo $fee_count; ?> fee<?php echo $fee_count !== 1 ? 's' : ''; ?>)
+                                </button>
+                            <?php endif; ?>
+                            <?php if (($_SESSION['role'] ?? '') === 'global_admin'): ?>
+                                <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="facility-meta-badge edit-badge">
+                                    <i class="fas fa-pencil-alt"></i> Edit <?php echo $is_port_facility ? 'Port' : 'Warehouse'; ?>
+                                </a>
+                            <?php endif; ?>
+                        </div>
                     </div>
-                <?php else: ?>
-                    <p><em>No cost structure defined for this warehouse.</em></p>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- Cost Summary -->
-        <div class="cost-overview-container">
-            <div class="cost-card">
-                <div class="cost-icon">📦</div>
-                <div class="cost-value"><?php echo number_format($total_pallets_count ?? 0); ?></div>
-                <div class="cost-label">Total Pallets Stored</div>
-            </div>
-            <div class="cost-card">
-                <div class="cost-icon">⚡</div>
-                <div class="cost-value"><?php echo number_format($total_modules ?? 0); ?></div>
-                <div class="cost-label">Total Modules Stored</div>
-            </div>
-            <div class="cost-card total-cost clickable-cost-card" onclick="toggleCostDropdown()">
-                <div class="cost-icon">💰</div>
-                <div class="cost-value">$<?php echo number_format($total_cost_to_date, 2); ?></div>
-                <div class="cost-label">Est. Total Cost To Date</div>
-                <div class="cost-dropdown-arrow">▼</div>
-                <div class="cost-card-dropdown" id="costCardDropdown">
-                    <div class="cost-dropdown-item">
-                        <span class="cost-dropdown-label">Current Monthly Accrual:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($current_monthly_accrual, 2); ?> / mo</span>
+                </div>
+                <div class="facility-header-stats">
+                    <div class="facility-stat">
+                        <span class="facility-stat-value"><?php echo number_format($total_pallets_count ?? 0); ?></span>
+                        <span class="facility-stat-label">Pallets Stored</span>
                     </div>
-                    <div class="cost-dropdown-item">
-                        <span class="cost-dropdown-label">In Fee Cost:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($in_fee_cost, 2); ?></span>
+                    <div class="facility-stat">
+                        <span class="facility-stat-value"><?php echo number_format($total_modules ?? 0); ?></span>
+                        <span class="facility-stat-label">Modules</span>
                     </div>
-                    <div class="cost-dropdown-item">
-                        <span class="cost-dropdown-label">Out Fee Cost:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($out_fee_cost, 2); ?></span>
-                    </div>
-                    <div class="cost-dropdown-item">
-                        <span class="cost-dropdown-label">Storage Cost To Date:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($total_storage_cost_actual, 2); ?> (<?php echo number_format($average_days, 1); ?> days avg × $<?php echo number_format($monthly_rate_per_pallet, 2); ?>/mo per pallet)</span>
-                    </div>
-                    <div class="cost-dropdown-divider"></div>
-                    <div class="cost-dropdown-item total-item">
-                        <span class="cost-dropdown-label">Total Est. Cost:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($total_cost_to_date, 2); ?></span>
+                    <div class="facility-stat accent-teal clickable" onclick="toggleCostDropdown()">
+                        <span class="facility-stat-value">$<?php echo number_format($total_cost_to_date, 2); ?></span>
+                        <span class="facility-stat-label">Est. Cost</span>
+                        <div class="cost-card-dropdown" id="costCardDropdown">
+                            <div class="cost-dropdown-item">
+                                <span class="cost-dropdown-label">Current Monthly Accrual:</span>
+                                <span class="cost-dropdown-amount">$<?php echo number_format($current_monthly_accrual, 2); ?> / mo</span>
+                            </div>
+                            <div class="cost-dropdown-item">
+                                <span class="cost-dropdown-label">In Fee Cost:</span>
+                                <span class="cost-dropdown-amount">$<?php echo number_format($in_fee_cost, 2); ?></span>
+                            </div>
+                            <div class="cost-dropdown-item">
+                                <span class="cost-dropdown-label">Out Fee Cost:</span>
+                                <span class="cost-dropdown-amount">$<?php echo number_format($out_fee_cost, 2); ?></span>
+                            </div>
+                            <div class="cost-dropdown-item">
+                                <span class="cost-dropdown-label">Storage Cost To Date:</span>
+                                <span class="cost-dropdown-amount">$<?php echo number_format($total_storage_cost_actual, 2); ?> (<?php echo number_format($average_days, 1); ?> days avg)</span>
+                            </div>
+                            <div class="cost-dropdown-divider"></div>
+                            <div class="cost-dropdown-item total-item">
+                                <span class="cost-dropdown-label">Total Est. Cost:</span>
+                                <span class="cost-dropdown-amount">$<?php echo number_format($total_cost_to_date, 2); ?></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

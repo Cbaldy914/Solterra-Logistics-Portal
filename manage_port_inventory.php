@@ -544,98 +544,214 @@ $conn->close();
     <style>
         /* ========== PORT PAGE LAYOUT ========== */
         .port-page {
-            max-width: 1320px;
-            margin: 0 auto;
             padding: 0 20px 40px;
         }
 
-        /* ========== PORT HEADER ========== */
-        .port-header {
+        /* ========== FACILITY HERO HEADER (matches project_overview pattern) ========== */
+        .facility-header-hero {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin: 0 20px 24px 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: visible;
+        }
+        .facility-header-hero::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+            border-radius: 24px 24px 0 0;
+        }
+        .facility-header-content {
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 24px;
-            padding: 20px 0 0;
+            flex-wrap: wrap;
+            gap: 20px;
         }
-        .port-header h1 {
-            margin: 0 0 4px;
-            font-size: 1.7em;
+        .facility-header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            min-width: 0;
+            flex: 1;
+        }
+        .facility-header-icon {
+            position: relative;
+            width: 150px;
+            height: 120px;
+            border-radius: 20px;
+            overflow: hidden;
+            flex-shrink: 0;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+        .facility-header-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .facility-header-icon-placeholder {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .facility-header-icon-placeholder i {
+            font-size: 3rem;
+            color: rgba(255,255,255,0.85);
+        }
+        .facility-header-info {
+            min-width: 0;
+            flex: 1;
+        }
+        .facility-title-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+        .facility-header-info h1 {
+            font-size: 2.2em;
             font-weight: 700;
-            color: #293E4C;
-        }
-        .port-address {
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin: 0;
-            color: #6c757d;
-            font-size: 0.95em;
+            line-height: 1.2;
         }
-        .port-header-actions {
+        .facility-header-subtitle {
+            font-size: 1.05em;
+            color: #6c757d;
+            margin: 0 0 8px;
+            font-weight: 500;
+        }
+        .facility-header-meta {
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
             align-items: center;
         }
-        .port-edit-btn {
+        .facility-meta-badge {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 8px 14px;
-            background: #fff;
-            border: 1px solid #dee2e6;
+            padding: 5px 12px;
             border-radius: 8px;
-            color: #495057;
-            font-size: 0.85em;
-            font-weight: 500;
+            font-size: 0.82rem;
+            font-weight: 600;
             text-decoration: none;
-            transition: all 0.2s ease;
+            transition: all 0.2s;
         }
-        .port-edit-btn:hover {
+        .facility-meta-badge.fees-badge {
+            background: rgba(72, 140, 154, 0.08);
+            color: #3A6E7F;
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            cursor: pointer;
+        }
+        .facility-meta-badge.fees-badge:hover {
+            background: rgba(72, 140, 154, 0.15);
+        }
+        .facility-meta-badge.edit-badge {
+            background: #fff;
+            color: #495057;
+            border: 1px solid #dee2e6;
+        }
+        .facility-meta-badge.edit-badge:hover {
             background: #488C9A;
             border-color: #488C9A;
             color: #fff;
         }
-
-        /* ========== STAT CARDS ========== */
-        .port-stats {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-            margin-bottom: 28px;
+        /* Header stat cards (right side) */
+        .facility-header-stats {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: stretch;
         }
-        .port-stat-card {
-            background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+        .facility-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(72, 140, 154, 0.07);
+            padding: 12px 20px;
             border-radius: 12px;
-            padding: 20px 16px;
-            text-align: center;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.06);
-            border: 1px solid #e9ecef;
-            transition: transform 0.25s ease, box-shadow 0.25s ease;
+            min-width: 100px;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
         }
-        .port-stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(72, 140, 154, 0.12);
+        .facility-stat:hover {
+            background: rgba(72, 140, 154, 0.12);
+            border-color: rgba(72, 140, 154, 0.15);
         }
-        .port-stat-icon {
-            font-size: 26px;
-            margin-bottom: 6px;
-        }
-        .port-stat-value {
-            font-size: 28px;
+        .facility-stat-value {
+            font-size: 1.5rem;
             font-weight: 700;
-            color: #488C9A;
-            margin-bottom: 2px;
+            color: #293E4C;
+            line-height: 1;
         }
-        .port-stat-label {
-            font-size: 0.82em;
+        .facility-stat-label {
+            font-size: 0.72rem;
             color: #6c757d;
-            font-weight: 500;
             text-transform: uppercase;
+            margin-top: 4px;
+            text-align: center;
             letter-spacing: 0.02em;
         }
-        .port-stat-card.accent-red .port-stat-value {
+        .facility-stat.accent-red {
+            background: rgba(220, 38, 38, 0.06);
+            border-color: rgba(220, 38, 38, 0.12);
+        }
+        .facility-stat.accent-red .facility-stat-value {
             color: #dc2626;
         }
-        .port-stat-card.accent-red {
-            border-color: #fecaca;
-            background: linear-gradient(135deg, #fff 0%, #fef2f2 100%);
+        .facility-stat.accent-red:hover {
+            background: rgba(220, 38, 38, 0.1);
+        }
+        .facility-stat.accent-green {
+            background: rgba(5, 150, 105, 0.06);
+            border-color: rgba(5, 150, 105, 0.12);
+        }
+        .facility-stat.accent-green .facility-stat-value {
+            color: #059669;
+        }
+
+        /* ========== UX HINT ========== */
+        .ux-hint {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: linear-gradient(135deg, #f0f7fa 0%, #e8f4f8 100%);
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            border-radius: 10px;
+            margin-bottom: 16px;
+            font-size: 0.88em;
+            color: #3A6E7F;
+        }
+        .ux-hint i {
+            font-size: 1.1em;
+            flex-shrink: 0;
+        }
+        .ux-hint-dismiss {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: #6c757d;
+            cursor: pointer;
+            font-size: 1.1em;
+            padding: 0 2px;
+        }
+        .ux-hint-dismiss:hover {
+            color: #293E4C;
         }
 
         /* ========== TABS ========== */
@@ -1227,19 +1343,40 @@ $conn->close();
         .verification-mismatch { color: #b91c1c; font-weight: 700; }
 
         /* ========== RESPONSIVE ========== */
-        @media (max-width: 900px) {
-            .port-stats {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            .port-header {
+        @media (max-width: 992px) {
+            .facility-header-content {
                 flex-direction: column;
-                gap: 12px;
+                align-items: flex-start;
+                gap: 16px;
+            }
+            .facility-header-stats {
+                width: 100%;
+            }
+            .facility-header-hero {
+                margin: 0 10px 20px 10px;
+                padding: 20px;
+            }
+        }
+        @media (max-width: 768px) {
+            .facility-header-icon {
+                width: 100px;
+                height: 80px;
+                border-radius: 14px;
+            }
+            .facility-header-info h1 {
+                font-size: 1.5em;
+            }
+            .facility-header-stats {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .facility-stat {
+                flex-direction: row;
+                gap: 10px;
+                padding: 10px 16px;
             }
         }
         @media (max-width: 600px) {
-            .port-stats {
-                grid-template-columns: 1fr;
-            }
             .port-toolbar {
                 flex-direction: column;
                 align-items: stretch;
@@ -1302,53 +1439,82 @@ $conn->close();
         <div class="flash-error">Port not found or could not be loaded.</div>
     <?php else: ?>
 
+    <!-- FACILITY HERO HEADER -->
+    <?php
+        // Resolve port image
+        $port_image_path = '';
+        $has_port_image = false;
+        if (!empty($warehouse['image_url'])) {
+            if (filter_var($warehouse['image_url'], FILTER_VALIDATE_URL)) {
+                $port_image_path = $warehouse['image_url'];
+                $has_port_image = true;
+            } else {
+                $port_image_path = htmlspecialchars($warehouse['image_url']);
+                if (strpos($port_image_path, 'uploads/') !== 0 && strpos($port_image_path, 'pictures/') !== 0) {
+                    $port_image_path = 'uploads/warehouse_images/' . ltrim($port_image_path, '/');
+                }
+                $has_port_image = file_exists(__DIR__ . '/' . $port_image_path);
+            }
+        }
+        $address_parts = array_filter([
+            $warehouse['street_address'] ?? '',
+            $warehouse['city'] ?? '',
+            $warehouse['state'] ?? '',
+            $warehouse['zip_code'] ?? ''
+        ]);
+    ?>
+    <div class="facility-header-hero">
+        <div class="facility-header-content">
+            <div class="facility-header-left">
+                <div class="facility-header-icon">
+                    <?php if ($has_port_image): ?>
+                        <img src="<?php echo $port_image_path; ?>" alt="<?php echo htmlspecialchars($warehouse['name']); ?>">
+                    <?php else: ?>
+                        <div class="facility-header-icon-placeholder">
+                            <i class="fas fa-anchor"></i>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <div class="facility-header-info">
+                    <div class="facility-title-row">
+                        <h1><?php echo htmlspecialchars($warehouse['name']); ?></h1>
+                    </div>
+                    <p class="facility-header-subtitle"><?php echo htmlspecialchars(implode(', ', $address_parts)); ?></p>
+                    <div class="facility-header-meta">
+                        <?php if (!empty($warehouse_fees['all_items'])): ?>
+                            <button type="button" class="facility-meta-badge fees-badge" onclick="openFeeModal()">
+                                <i class="fas fa-file-invoice-dollar"></i>
+                                Cost Structure (<?php echo count($warehouse_fees['all_items']); ?> fee<?php echo count($warehouse_fees['all_items']) !== 1 ? 's' : ''; ?>)
+                            </button>
+                        <?php endif; ?>
+                        <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="facility-meta-badge edit-badge">
+                            <i class="fas fa-pencil-alt"></i> Edit Port
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="facility-header-stats">
+                <div class="facility-stat">
+                    <span class="facility-stat-value"><?php echo $stat_containers; ?></span>
+                    <span class="facility-stat-label">Containers</span>
+                </div>
+                <div class="facility-stat accent-green">
+                    <span class="facility-stat-value"><?php echo $stat_pallets_cleared; ?></span>
+                    <span class="facility-stat-label">Cleared</span>
+                </div>
+                <div class="facility-stat accent-red">
+                    <span class="facility-stat-value"><?php echo $stat_pallets_held; ?></span>
+                    <span class="facility-stat-label">On Hold</span>
+                </div>
+                <div class="facility-stat">
+                    <span class="facility-stat-value"><?php echo $stat_inbound; ?></span>
+                    <span class="facility-stat-label">Inbound</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="port-page">
-        <!-- PORT HEADER -->
-        <div class="port-header">
-            <div class="port-info">
-                <h1><i class="fas fa-anchor" style="color:#488C9A; margin-right:8px; font-size:0.85em;"></i><?php echo htmlspecialchars($warehouse['name']); ?></h1>
-                <?php
-                    $address_parts = array_filter([
-                        $warehouse['street_address'] ?? '',
-                        $warehouse['city'] ?? '',
-                        $warehouse['state'] ?? '',
-                        $warehouse['zip_code'] ?? ''
-                    ]);
-                ?>
-                <p class="port-address"><?php echo htmlspecialchars(implode(', ', $address_parts)); ?></p>
-            </div>
-            <div class="port-header-actions">
-                <?php if (!empty($warehouse_fees['all_items'])): ?>
-                    <button class="port-edit-btn" onclick="openFeeModal()"><i class="fas fa-dollar-sign"></i> Fees</button>
-                <?php endif; ?>
-                <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="port-edit-btn"><i class="fas fa-pencil-alt"></i> Edit</a>
-            </div>
-        </div>
-
-        <!-- STAT CARDS -->
-        <div class="port-stats">
-            <div class="port-stat-card">
-                <div class="port-stat-icon"><i class="fas fa-ship" style="color:#488C9A;"></i></div>
-                <div class="port-stat-value"><?php echo $stat_containers; ?></div>
-                <div class="port-stat-label">Containers at Port</div>
-            </div>
-            <div class="port-stat-card">
-                <div class="port-stat-icon"><i class="fas fa-check-circle" style="color:#059669;"></i></div>
-                <div class="port-stat-value"><?php echo $stat_pallets_cleared; ?></div>
-                <div class="port-stat-label">Pallets Cleared</div>
-            </div>
-            <div class="port-stat-card accent-red">
-                <div class="port-stat-icon"><i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i></div>
-                <div class="port-stat-value"><?php echo $stat_pallets_held; ?></div>
-                <div class="port-stat-label">On Customs Hold</div>
-            </div>
-            <div class="port-stat-card">
-                <div class="port-stat-icon"><i class="fas fa-truck-loading" style="color:#488C9A;"></i></div>
-                <div class="port-stat-value"><?php echo $stat_inbound; ?></div>
-                <div class="port-stat-label">Inbound Shipments</div>
-            </div>
-        </div>
-
         <!-- TABS -->
         <div class="port-tabs">
             <button class="port-tab active" data-tab="atPort" onclick="showPortTab('atPort')">At Port (<?php echo $stat_containers; ?>)</button>
@@ -1358,6 +1524,14 @@ $conn->close();
 
         <!-- ==================== TAB: AT PORT ==================== -->
         <div class="port-tab-content active" id="tab-atPort">
+            <?php if (!empty($containers_at_port)): ?>
+            <div class="ux-hint" id="hintAtPort">
+                <i class="fas fa-info-circle"></i>
+                <span>Click any container row to expand it and see individual pallets. Select pallets to place on <strong>Customs Hold</strong> or <strong>Release</strong>. Use checkboxes + "Move (Drayage)" to ship containers out.</span>
+                <button class="ux-hint-dismiss" onclick="this.closest('.ux-hint').remove()" title="Dismiss">&times;</button>
+            </div>
+            <?php endif; ?>
+
             <div class="port-toolbar">
                 <input type="text" class="port-search" id="containerSearch" placeholder="Search containers..." oninput="filterContainerTable()">
                 <div class="port-toolbar-actions">
@@ -1371,7 +1545,7 @@ $conn->close();
             <?php if (empty($containers_at_port)): ?>
                 <div class="empty-state">
                     <i class="fas fa-box-open"></i>
-                    <p>No containers at port. Receive inbound shipments to see them here.</p>
+                    <p>No containers at port. Switch to the <strong>Inbound</strong> tab to receive incoming shipments.</p>
                 </div>
             <?php else: ?>
                 <div class="port-table-container">
@@ -1481,6 +1655,14 @@ $conn->close();
 
         <!-- ==================== TAB: INBOUND ==================== -->
         <div class="port-tab-content" id="tab-inbound">
+            <?php if (!empty($inbound_truckloads)): ?>
+            <div class="ux-hint" id="hintInbound">
+                <i class="fas fa-info-circle"></i>
+                <span>Select one or more inbound containers, then click <strong>"Receive Selected"</strong> to mark them as arrived and cleared. They will then appear in the <strong>At Port</strong> tab.</span>
+                <button class="ux-hint-dismiss" onclick="this.closest('.ux-hint').remove()" title="Dismiss">&times;</button>
+            </div>
+            <?php endif; ?>
+
             <div class="port-toolbar">
                 <input type="text" class="port-search" id="inboundSearch" placeholder="Search inbound..." oninput="filterInboundTable()">
                 <div class="port-toolbar-actions">
