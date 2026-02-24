@@ -728,6 +728,38 @@ $conn->close();
             font-size: 0.82em;
             font-weight: 600;
         }
+        .status-pill.customs-hold {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+        .status-pill.cleared-customs {
+            background: #ecfdf5;
+            color: #059669;
+        }
+        .status-pill.on-water {
+            background: #eff6ff;
+            color: #2563eb;
+        }
+        .status-pill.in-transit {
+            background: #fff7ed;
+            color: #c2410c;
+        }
+        .status-pill.delivered {
+            background: #ecfdf5;
+            color: #059669;
+        }
+        .status-pill.departed-port {
+            background: #f5f3ff;
+            color: #7c3aed;
+        }
+        .status-pill.pending {
+            background: #f9fafb;
+            color: #6b7280;
+        }
+        .status-pill.canceled {
+            background: #f3f4f6;
+            color: #9ca3af;
+        }
         .flash-banner {
             border-radius: 12px;
             padding: 12px 14px;
@@ -1151,7 +1183,18 @@ $conn->close();
                                     ?>
                                     <td><strong><?php echo htmlspecialchars($container['container_number']); ?></strong></td>
                                     <td><?php echo htmlspecialchars($container['project_name'] ?? 'N/A'); ?></td>
-                                    <td><span class="status-pill"><?php echo htmlspecialchars($container['status_of_delivery'] ?? 'N/A'); ?></span></td>
+                                    <td><?php
+                                        $deliveryStatus = $container['status_of_delivery'] ?? 'N/A';
+                                        $pillClass = 'status-pill';
+                                        if ($deliveryStatus === 'Customs Hold') $pillClass .= ' customs-hold';
+                                        elseif ($deliveryStatus === 'Cleared Customs') $pillClass .= ' cleared-customs';
+                                        elseif ($deliveryStatus === 'On Water') $pillClass .= ' on-water';
+                                        elseif (strpos($deliveryStatus, 'In Transit') !== false) $pillClass .= ' in-transit';
+                                        elseif (strpos($deliveryStatus, 'Delivered') !== false) $pillClass .= ' delivered';
+                                        elseif ($deliveryStatus === 'Departed Port') $pillClass .= ' departed-port';
+                                        elseif ($deliveryStatus === 'Pending') $pillClass .= ' pending';
+                                        elseif ($deliveryStatus === 'Canceled') $pillClass .= ' canceled';
+                                    ?><span class="<?php echo $pillClass; ?>"><?php echo htmlspecialchars($deliveryStatus); ?></span></td>
                                     <td>
                                         <?php
                                             $etaValue = trim((string)($container['eta_date'] ?? ''));

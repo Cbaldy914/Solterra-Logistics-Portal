@@ -13,6 +13,197 @@ require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'delivery_notification_helpers.php';
 
+function slp_table_exists(mysqli $conn, string $table): bool {
+    $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    if ($safeTable === '') {
+        return false;
+    }
+    $result = $conn->query("SHOW TABLES LIKE '" . $conn->real_escape_string($safeTable) . "'");
+    if (!$result) {
+        return false;
+    }
+    $exists = $result->num_rows > 0;
+    $result->close();
+    return $exists;
+}
+
+function slp_find_existing_column(mysqli $conn, string $table, array $candidates): ?string {
+    $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    if ($safeTable === '') {
+        return null;
+    }
+    foreach ($candidates as $candidate) {
+        $column = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$candidate);
+        if ($column === '') {
+            continue;
+        }
+        $result = $conn->query("SHOW COLUMNS FROM `{$safeTable}` LIKE '" . $conn->real_escape_string($column) . "'");
+        if ($result) {
+            $exists = $result->num_rows > 0;
+            $result->close();
+            if ($exists) {
+                return $column;
+            }
+        }
+    }
+    return null;
+}
+
+function slp_get_warehouse_coordinates(mysqli $conn, int $warehouseId): ?array {
+    if ($warehouseId <= 0) {
+        return null;
+    }
+    $latColumn = slp_find_existing_column($conn, 'warehouses', ['latitude', 'lat']);
+    $lngColumn = slp_find_existing_column($conn, 'warehouses', ['longitude', 'lng', 'lon']);
+    if ($latColumn === null || $lngColumn === null) {
+        return null;
+    }
+
+    $sql = "SELECT `{$latColumn}` AS latitude, `{$lngColumn}` AS longitude FROM warehouses WHERE id = ? LIMIT 1";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param("i", $warehouseId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
+    if (!$row) {
+        return null;
+    }
+    $lat = isset($row['latitude']) ? (float)$row['latitude'] : null;
+    $lng = isset($row['longitude']) ? (float)$row['longitude'] : null;
+    if ($lat === null || $lng === null || $lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
+        return null;
+    }
+    return ['lat' => $lat, 'lng' => $lng];
+}
+
+function slp_append_port_arrival_waypoint(mysqli $conn, array $deliveryIds, int $warehouseId, int $userId): void {
+    if (empty($deliveryIds) || $warehouseId <= 0) {
+        return;
+    }
+    $positionsTableExists = slp_table_exists($conn, 'container_tracking_positions');
+    $waypointsTableExists = slp_table_exists($conn, 'container_tracking_waypoints');
+    if (!$positionsTableExists && !$waypointsTableExists) {
+        return;
+    }
+
+    $coords = slp_get_warehouse_coordinates($conn, $warehouseId);
+    if (!$coords) {
+        return;
+    }
+
+    $cleanDeliveryIds = array_values(array_unique(array_filter(array_map('intval', $deliveryIds), static function ($id) {
+        return $id > 0;
+    })));
+    if (empty($cleanDeliveryIds)) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($cleanDeliveryIds), '?'));
+    $types = str_repeat('i', count($cleanDeliveryIds));
+    $sql = "
+        SELECT id, container_number, project_id
+        FROM deliveries
+        WHERE id IN ($placeholders)
+          AND project_id IS NOT NULL
+          AND project_id > 0
+          AND container_number IS NOT NULL
+          AND TRIM(container_number) <> ''
+    ";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return;
+    }
+    $stmt->bind_param($types, ...$cleanDeliveryIds);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $pairs = [];
+    while ($row = $result->fetch_assoc()) {
+        $containerNumber = trim((string)($row['container_number'] ?? ''));
+        $projectId = (int)($row['project_id'] ?? 0);
+        if ($containerNumber === '' || $projectId <= 0) {
+            continue;
+        }
+        $pairs[$containerNumber . '|' . $projectId] = [
+            'container_number' => $containerNumber,
+            'project_id' => $projectId
+        ];
+    }
+    $stmt->close();
+    if (empty($pairs)) {
+        return;
+    }
+
+    $lat = (float)$coords['lat'];
+    $lng = (float)$coords['lng'];
+    $stmtUpsertPosition = null;
+    if ($positionsTableExists) {
+        $stmtUpsertPosition = $conn->prepare("
+            INSERT INTO container_tracking_positions
+                (container_number, project_id, latitude, longitude, updated_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                latitude = VALUES(latitude),
+                longitude = VALUES(longitude),
+                updated_by = VALUES(updated_by),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+    }
+    $stmtInsertWaypoint = null;
+    if ($waypointsTableExists) {
+        $stmtInsertWaypoint = $conn->prepare("
+            INSERT INTO container_tracking_waypoints
+                (container_number, project_id, latitude, longitude, recorded_by)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+    }
+
+    foreach ($pairs as $pair) {
+        $containerNumber = $pair['container_number'];
+        $projectId = (int)$pair['project_id'];
+
+        if ($stmtUpsertPosition) {
+            $stmtUpsertPosition->bind_param("siddi", $containerNumber, $projectId, $lat, $lng, $userId);
+            $stmtUpsertPosition->execute();
+        }
+
+        if ($stmtInsertWaypoint) {
+            $skipInsert = false;
+            $stmtLastWaypoint = $conn->prepare("
+                SELECT latitude, longitude
+                FROM container_tracking_waypoints
+                WHERE container_number = ? AND project_id = ?
+                ORDER BY recorded_at DESC, id DESC
+                LIMIT 1
+            ");
+            if ($stmtLastWaypoint) {
+                $stmtLastWaypoint->bind_param("si", $containerNumber, $projectId);
+                $stmtLastWaypoint->execute();
+                $stmtLastWaypoint->bind_result($lastLatRaw, $lastLngRaw);
+                if ($stmtLastWaypoint->fetch()) {
+                    $lastLat = (float)$lastLatRaw;
+                    $lastLng = (float)$lastLngRaw;
+                    if (abs($lastLat - $lat) < 0.000001 && abs($lastLng - $lng) < 0.000001) {
+                        $skipInsert = true;
+                    }
+                }
+                $stmtLastWaypoint->close();
+            }
+            if (!$skipInsert) {
+                $stmtInsertWaypoint->bind_param("siddi", $containerNumber, $projectId, $lat, $lng, $userId);
+                $stmtInsertWaypoint->execute();
+            }
+        }
+    }
+
+    if ($stmtUpsertPosition) { $stmtUpsertPosition->close(); }
+    if ($stmtInsertWaypoint) { $stmtInsertWaypoint->close(); }
+}
+
 // Check the action to determine what type of receiving we're doing
 $action = $_POST['action'] ?? '';
 
@@ -24,6 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !in_array($action, ['receive_pallet
 
 $receiving_warehouse_id = isset($_POST['warehouse_id']) ? intval($_POST['warehouse_id']) : 0;
 $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id;
+unset($_SESSION['customs_hold_next_step']);
 
 // Validate warehouse ID
 if ($receiving_warehouse_id <= 0) {
@@ -45,6 +237,9 @@ if ($stmt_check_port) {
         $is_port = ($port_flag == 1);
     }
     $stmt_check_port->close();
+}
+if ($is_port) {
+    $redirect_url .= "&tab=inboundTransit";
 }
 
 // Set status based on facility type
@@ -215,6 +410,7 @@ if ($action === 'receive_truckload') {
                 }
                 $stmt_update_customs->close();
             }
+            slp_append_port_arrival_waypoint($conn, [$delivery_id], $receiving_warehouse_id, (int)($_SESSION['user_id'] ?? 0));
         }
         
         $conn->commit();
@@ -225,6 +421,10 @@ if ($action === 'receive_truckload') {
         }
         
         $_SESSION['move_pallet_message'] = "Successfully received truckload with $updated_count pallets. Delivery updated with arrival date: $actual_arrival_date.";
+        if ($is_port) {
+            $_SESSION['customs_hold_next_step'] = ['source' => 'receive_truckload'];
+            $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id . "&tab=storedInventory";
+        }
         
     } catch (Exception $e) {
         $conn->rollback();
@@ -304,6 +504,7 @@ if ($action === 'receive_truckload') {
         
         $total_pallets_updated = 0;
         $successful_deliveries = [];
+        $port_waypoint_delivery_ids = [];
         $errors = [];
         $old_delivery_statuses = []; // Store old statuses for notifications
         
@@ -421,6 +622,7 @@ if ($action === 'receive_truckload') {
                         }
                         $stmt_update_customs->close();
                     }
+                    $port_waypoint_delivery_ids[] = $delivery_id;
                 }
                 
                 // Save POD to project_documents table if uploaded
@@ -452,6 +654,9 @@ if ($action === 'receive_truckload') {
         }
         
         if (!empty($successful_deliveries)) {
+            if ($is_port && !empty($port_waypoint_delivery_ids)) {
+                slp_append_port_arrival_waypoint($conn, $port_waypoint_delivery_ids, $receiving_warehouse_id, (int)($_SESSION['user_id'] ?? 0));
+            }
             $conn->commit();
             
             // Send notifications for each successfully updated delivery
@@ -470,6 +675,10 @@ if ($action === 'receive_truckload') {
             }
             
             $_SESSION['move_pallet_message'] = $success_message;
+            if ($is_port) {
+                $_SESSION['customs_hold_next_step'] = ['source' => 'receive_multiple_truckloads'];
+                $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id . "&tab=storedInventory";
+            }
         } else {
             throw new Exception("No deliveries were successfully processed. Errors: " . implode(", ", $errors));
         }
@@ -504,6 +713,7 @@ if ($action === 'receive_truckload') {
     $new_delivery_status = $delivery_status;
     $old_delivery_statuses_pallets = []; // Track old statuses for notifications
     $updated_deliveries = []; // Track which deliveries were updated
+    $port_waypoint_delivery_ids = [];
     
     try {
         foreach ($pallet_ids as $pallet_id) {
@@ -578,8 +788,12 @@ if ($action === 'receive_truckload') {
                     }
                     $stmt_update_customs->close();
                 }
+                $port_waypoint_delivery_ids[] = $delivery_id;
             }
             $successes[] = $pallet_id;
+        }
+        if ($is_port && !empty($port_waypoint_delivery_ids)) {
+            slp_append_port_arrival_waypoint($conn, $port_waypoint_delivery_ids, $receiving_warehouse_id, (int)($_SESSION['user_id'] ?? 0));
         }
         $conn->commit();
         
@@ -598,6 +812,10 @@ if ($action === 'receive_truckload') {
             $msg .= "Errors: " . implode(" ", $errors);
         }
         $_SESSION['move_pallet_message'] = $msg;
+        if ($is_port && !empty($successes)) {
+            $_SESSION['customs_hold_next_step'] = ['source' => 'receive_pallets'];
+            $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id . "&tab=storedInventory";
+        }
     } catch (Exception $e) {
         $conn->rollback();
         $_SESSION['move_pallet_message'] = "Error receiving pallets: " . $e->getMessage();
