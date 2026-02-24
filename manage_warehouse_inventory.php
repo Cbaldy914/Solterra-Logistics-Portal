@@ -829,11 +829,19 @@ try {
     // FACILITY TYPE DETECTION AND UI CONFIGURATION
     // ===========================================================================================
     $is_port = ($warehouse['is_port'] == 1);
+
+    // Auto-redirect GET requests for ports to the dedicated port page
+    if ($is_port && $_SERVER['REQUEST_METHOD'] === 'GET') {
+        $qs = $_SERVER['QUERY_STRING'];
+        header("Location: manage_port_inventory.php?" . $qs);
+        exit();
+    }
+
     if ($is_port) {
         $receivedHintFromMessage = stripos((string)$successMessage, 'Successfully received') !== false;
         $show_customs_next_step_banner = !empty($customs_hold_next_step) || $receivedHintFromMessage;
     }
-    
+
     // Configure UI text and behavior based on facility type
     $facility_type = $is_port ? 'Port' : 'Warehouse';
     $page_title = $is_port ? 'Port Operations' : 'Warehouse Inventory';
