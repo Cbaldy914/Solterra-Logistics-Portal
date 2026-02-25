@@ -2570,7 +2570,7 @@ if ($conn) {
                 </div>
                 <div class="page-actions">
                     <?php if (!$is_port): ?>
-                        <a href="create_shipment.php?source_type=warehouse&source_id=<?php echo $warehouse_id; ?>&status_filter=<?php echo urlencode($received_status); ?>" class="action-button">Create Shipment</a>
+                        <a href="create_shipment.php?warehouse_id=<?php echo $warehouse_id; ?>&status_filter=<?php echo urlencode($received_status); ?><?php echo !empty($from_project_id) ? '&project_id=' . (int)$from_project_id : ''; ?>" class="action-button">Create Shipment</a>
                     <?php endif; ?>
                     <?php if ($is_port): ?>
                         <button id="moveContainerBtn" class="action-button" disabled>Move Container (Drayage)</button>

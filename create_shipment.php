@@ -28,6 +28,9 @@ $project_id_from_url = isset($_GET['project_id']) ? intval($_GET['project_id']) 
 // Get status_filter from URL parameter for auto-filtering pallets
 $status_filter_from_url = isset($_GET['status_filter']) ? htmlspecialchars($_GET['status_filter']) : '';
 
+// Get warehouse_id from URL parameter for auto-filtering to a specific warehouse
+$warehouse_id_from_url = isset($_GET['warehouse_id']) ? intval($_GET['warehouse_id']) : 0;
+
 // Optional deep-link filter: only show specific pallet IDs
 $pallet_ids_filter = [];
 if (!empty($_GET['pallet_ids'])) {
@@ -4058,16 +4061,24 @@ function toggleWarehouseSubFilter() {
 }
 
 function populateFilterDropdowns(options) {
+    let needsRefilter = false;
+
     // Populate project filter
     const projectSelect = document.getElementById('cs_project') || document.getElementById('projectFilter');
     if (projectSelect && options.projects) {
-        const currentVal = projectSelect.value;
+        const currentVal = projectSelect.value || projectSelect.dataset.persistedValue || '';
         projectSelect.innerHTML = '<option value="">All Projects</option><option value="Unassigned">Unassigned</option>';
         options.projects.forEach(p => {
             if (p === 'Unassigned') return;
             projectSelect.innerHTML += `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`;
         });
-        projectSelect.value = currentVal;
+        if (currentVal) {
+            projectSelect.value = currentVal;
+            // Also sync the legacy select
+            const legacyProject = document.getElementById('projectFilter');
+            if (legacyProject && legacyProject !== projectSelect) legacyProject.value = currentVal;
+        }
+        delete projectSelect.dataset.persistedValue;
     }
 
     // Populate wattage filter
@@ -4084,13 +4095,27 @@ function populateFilterDropdowns(options) {
     // Populate status filter
     const statusSelect = document.getElementById('cs_status') || document.getElementById('statusFilter');
     if (statusSelect && options.statuses) {
-        const currentVal = statusSelect.value;
+        const hadPersistedStatus = !!statusSelect.dataset.persistedValue;
+        const currentVal = statusSelect.value || statusSelect.dataset.persistedValue || '';
         statusSelect.innerHTML = '<option value="">All Statuses</option>';
         options.statuses.forEach(s => {
             if (s === 'Allocated to Project') return;
             statusSelect.innerHTML += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
         });
-        statusSelect.value = currentVal;
+        if (currentVal) {
+            statusSelect.value = currentVal;
+            // Also sync the legacy select
+            const legacyStatus = document.getElementById('statusFilter');
+            if (legacyStatus && legacyStatus !== statusSelect) {
+                legacyStatus.value = currentVal;
+            }
+            // Only re-filter if we consumed a persistedValue (i.e. URL param that
+            // couldn't be set earlier because the option didn't exist yet)
+            if (hadPersistedStatus) {
+                needsRefilter = true;
+            }
+        }
+        delete statusSelect.dataset.persistedValue;
     }
 
     // Populate warehouse sub-filter (shown when status=In Warehouse)
@@ -4111,6 +4136,14 @@ function populateFilterDropdowns(options) {
     }
 
     toggleWarehouseSubFilter();
+
+    // If a persisted status/warehouse was restored after options were populated,
+    // re-filter to apply the now-valid selections. Use setTimeout because this
+    // runs inside loadPallets() which holds the isLoading lock — a synchronous
+    // filterPallets() call would be blocked by the guard.
+    if (needsRefilter) {
+        setTimeout(() => filterPallets(), 0);
+    }
 }
 
 function updatePaginationInfo() {
@@ -6066,12 +6099,15 @@ function loadPersistedFilters() {
     const urlParams = new URLSearchParams(window.location.search);
     const statusFromUrl = urlParams.get('status_filter');
     const projectFromUrl = urlParams.get('project_id');
-    
+    const warehouseFromUrl = urlParams.get('warehouse_id');
+
     // Check if we're coming from project_overview.php (has project_id parameter)
     const isFromProjectOverview = projectFromUrl && projectFromUrl !== '0';
-    
-    if (isFromProjectOverview) {
-        // Coming from project_overview.php - start with clean slate
+    // Check if we're coming from warehouse.php (has warehouse_id but maybe no project_id)
+    const isFromWarehouse = warehouseFromUrl && warehouseFromUrl !== '0';
+
+    if (isFromProjectOverview || isFromWarehouse) {
+        // Coming from project_overview or warehouse - start with clean slate
         // Clear search and non-URL filters to defaults
         document.getElementById('palletSearch').value = '';
         document.getElementById('cs_search').value = '';
@@ -6083,21 +6119,37 @@ function loadPersistedFilters() {
         document.getElementById('itemsPerPage').value = '100'; // Default to 100
         itemsPerPage = 100;
         currentPage = 1;
-        
-        // Don't clear projectFilter and statusFilter - they should already be set by PHP
-        // Apply only the URL parameters that might not be set by PHP
+
+        // Determine the desired status value
+        let desiredStatus = '';
         if (statusFromUrl) {
-            document.getElementById('statusFilter').value = statusFromUrl;
-            document.getElementById('cs_status').value = statusFromUrl;
+            desiredStatus = statusFromUrl;
+        } else if (isFromWarehouse) {
+            desiredStatus = 'In Warehouse';
+        }
+
+        // Set status on both selects; also persist via dataset so populateFilterDropdowns
+        // can restore after AJAX populates the <option> elements
+        if (desiredStatus) {
+            document.getElementById('statusFilter').value = desiredStatus;
+            document.getElementById('statusFilter').dataset.persistedValue = desiredStatus;
+            document.getElementById('cs_status').value = desiredStatus;
+            document.getElementById('cs_status').dataset.persistedValue = desiredStatus;
         } else {
-            // Clear status filters to show all statuses
             document.getElementById('statusFilter').value = '';
             document.getElementById('cs_status').value = '';
         }
         toggleWarehouseSubFilter();
-        
-        // Project filter should already be correctly set by PHP via the selected attribute
-        // No need to manipulate it further
+
+        // If warehouse_id is provided, pre-select the warehouse sub-filter
+        if (isFromWarehouse && document.getElementById('cs_warehouse')) {
+            // Use dataset.persistedValue so it gets applied after AJAX populates options
+            document.getElementById('cs_warehouse').dataset.persistedValue = warehouseFromUrl;
+            document.getElementById('cs_warehouse').value = warehouseFromUrl;
+        }
+
+        // Project filter is already correctly set by PHP via the selected attribute
+        // No need to persist it — populateFilterDropdowns will read currentVal from the select
     } else {
         // Not from project_overview.php - use localStorage as before
         const search = localStorage.getItem('createShipment_palletSearch');
