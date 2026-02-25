@@ -64,6 +64,7 @@ if (!$connection_ok) {
 // Set defaults
 $section_title = $section_title ?? 'Module Payment Milestones';
 $collapsible = $collapsible ?? false;
+$compact_batch_header = $compact_batch_header ?? false;
 
 // Get completion status which includes batch info
 require_once __DIR__ . '/../milestone_helpers.php';
@@ -249,6 +250,15 @@ foreach ($completion_status['batches'] as $batch) {
             ">
                 <!-- Batch Header -->
                 <div style="margin-bottom: 12px;">
+                    <?php if ($compact_batch_header): ?>
+                    <div style="font-weight: 600; color: #293E4C; font-size: 13px;">
+                        <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?>
+                        <span style="font-weight: 500; color: #6c757d;">
+                            - Contract Value: $<?php echo number_format($batch['batch_value'], 2); ?>
+                            • <?php echo number_format($batch['total_quantity']); ?> modules
+                        </span>
+                    </div>
+                    <?php else: ?>
                     <div style="font-weight: 600; color: #293E4C; font-size: 14px;">
                         <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?>
                     </div>
@@ -256,6 +266,7 @@ foreach ($completion_status['batches'] as $batch) {
                         Contract Value: $<?php echo number_format($batch['batch_value'], 2); ?>
                         • <?php echo number_format($batch['total_quantity']); ?> modules
                     </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Milestones Table -->
