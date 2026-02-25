@@ -433,9 +433,12 @@ $left_warehouse_date_values = [];
 $total_cost_to_date = 0;
 $in_fee_cost = 0;
 $out_fee_cost = 0;
-$monthly_storage_cost = 0; 
-$total_modules = 0; 
-$total_pallets_count = 0; // Added for clarity in cost summary
+$monthly_storage_cost = 0;
+$total_modules = 0;
+$total_pallets_count = 0;
+$cost_line_items = [];
+$total_storage_cost_actual = 0;
+$average_days = 0;
 
 if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
     // This ensures $warehouse_id is set if $warehouse_data is available
@@ -601,9 +604,9 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             WHERE d.left_warehouse_date IS NOT NULL
             AND (
                 (d.origin_type = 'warehouse' AND d.origin_id = ?)
-                OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL)
+                OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL AND d.left_warehouse_date > d.warehouse_arrival_date)
             )
-        "; 
+        ";
         $left_params = [$warehouse_id, $warehouse_id];
         $left_types = "ii";
         if ($project_id) {
@@ -701,15 +704,24 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $total_inbound_bols = count($inbound_grouped);
         $total_outbound_bols = count($outbound_grouped);
 
+        // Track individual fee line items for the cost breakdown modal
+        $cost_line_items = [];
+
         if (!empty($warehouse_costs['entry'])) {
             foreach ($warehouse_costs['entry'] as $cost) {
                 $unit = $cost['unit_type'] ?? 'per_pallet';
                 $amt = floatval($cost['amount']);
                 if ($unit === 'per_truck' || $unit === 'per_bol') {
-                    $in_fee_cost += $amt * $total_inbound_bols;
+                    $line_total = $amt * $total_inbound_bols;
+                    $line_qty = $total_inbound_bols;
+                    $line_unit_label = $total_inbound_bols === 1 ? 'truck' : 'trucks';
                 } else {
-                    $in_fee_cost += $amt * $total_inbound_pallets_count;
+                    $line_total = $amt * $total_inbound_pallets_count;
+                    $line_qty = $total_inbound_pallets_count;
+                    $line_unit_label = $total_inbound_pallets_count === 1 ? 'pallet' : 'pallets';
                 }
+                $in_fee_cost += $line_total;
+                $cost_line_items[] = ['label' => $cost['label'], 'total' => $line_total, 'rate' => $amt, 'qty' => $line_qty, 'unit_label' => $line_unit_label, 'trigger' => 'entry'];
             }
         }
         if (!empty($warehouse_costs['exit'])) {
@@ -717,10 +729,16 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 $unit = $cost['unit_type'] ?? 'per_pallet';
                 $amt = floatval($cost['amount']);
                 if ($unit === 'per_truck' || $unit === 'per_bol') {
-                    $out_fee_cost += $amt * $total_outbound_bols;
+                    $line_total = $amt * $total_outbound_bols;
+                    $line_qty = $total_outbound_bols;
+                    $line_unit_label = $total_outbound_bols === 1 ? 'truck' : 'trucks';
                 } else {
-                    $out_fee_cost += $amt * $total_outbound_pallets_count;
+                    $line_total = $amt * $total_outbound_pallets_count;
+                    $line_qty = $total_outbound_pallets_count;
+                    $line_unit_label = $total_outbound_pallets_count === 1 ? 'pallet' : 'pallets';
                 }
+                $out_fee_cost += $line_total;
+                $cost_line_items[] = ['label' => $cost['label'], 'total' => $line_total, 'rate' => $amt, 'qty' => $line_qty, 'unit_label' => $line_unit_label, 'trigger' => 'exit'];
             }
         }
         if ($monthly_rate_per_pallet > 0) {
@@ -1993,13 +2011,53 @@ if ($conn) {
         .cost-modal-box .cost-modal-close { background:none; border:none; font-size:1.5em; cursor:pointer; color:#fff; opacity:0.85; }
         .cost-modal-box .cost-modal-close:hover { opacity:1; }
         .cost-modal-box .cost-modal-body { padding:20px 24px; }
-        .cost-scope-note { margin:0 0 12px; padding:10px 12px; border:1px solid #d3e6ef; border-radius:8px; background:#eef7fb; color:#345768; font-size:0.88em; line-height:1.4; }
-        .cost-modal-row { display:flex; justify-content:space-between; padding:8px 0; }
-        .cost-modal-row.total-row { font-weight:700; font-size:1.05em; color:#293E4C; }
-        .cost-modal-label { color:#6b7280; }
-        .cost-modal-amount { font-weight:600; }
-        .cost-modal-divider { border-top:1px solid #e5e7eb; margin:8px 0; }
+        .cost-scope-note { margin:0 0 16px; padding:10px 12px; border:1px solid #d3e6ef; border-radius:8px; background:#eef7fb; color:#345768; font-size:0.88em; line-height:1.4; }
+        .cost-modal-row { display:flex; justify-content:space-between; padding:7px 0; }
+        .cost-modal-row.total-row { font-weight:700; font-size:1.08em; color:#293E4C; padding:10px 0 0; }
+        .cost-modal-label { color:#6b7280; font-size:0.92em; }
+        .cost-modal-amount { font-weight:600; font-size:0.92em; }
+        .cost-modal-divider { border-top:1.5px solid #e5e7eb; margin:10px 0 6px; }
         .cost-modal-footer { padding:12px 24px 18px; border-top:1px solid #e5e7eb; text-align:center; }
+        .cost-accrual-callout {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e8f4f8 100%);
+            border: 1px solid #bae6fd;
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .cost-accrual-callout .accrual-label {
+            font-size: 0.88em;
+            color: #0369a1;
+            font-weight: 500;
+        }
+        .cost-accrual-callout .accrual-label i { margin-right: 6px; opacity: 0.7; }
+        .cost-accrual-callout .accrual-value {
+            font-size: 1.15em;
+            font-weight: 700;
+            color: #0c4a6e;
+        }
+        .cost-fees-section {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 6px;
+        }
+        .cost-fees-section-title {
+            font-size: 0.78em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #9ca3af;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .cost-line-detail {
+            font-size: 0.78em;
+            color: #9ca3af;
+            margin-left: 4px;
+        }
 
         /* ============================================== */
         /* ADMIN-SPECIFIC STYLES */
@@ -3427,12 +3485,44 @@ if ($conn) {
         </div>
         <div class="cost-modal-body">
             <p class="cost-scope-note"><strong>Scope:</strong> <?php echo htmlspecialchars($cost_scope_summary); ?></p>
-            <div class="cost-modal-row"><span class="cost-modal-label">Current Monthly Accrual</span><span class="cost-modal-amount">$<?php echo number_format($current_monthly_accrual ?? 0, 2); ?> / mo</span></div>
-            <div class="cost-modal-row"><span class="cost-modal-label">In Fee Cost</span><span class="cost-modal-amount">$<?php echo number_format($in_fee_cost, 2); ?></span></div>
-            <div class="cost-modal-row"><span class="cost-modal-label">Out Fee Cost</span><span class="cost-modal-amount">$<?php echo number_format($out_fee_cost, 2); ?></span></div>
-            <div class="cost-modal-row"><span class="cost-modal-label">Storage Cost To Date</span><span class="cost-modal-amount">$<?php echo number_format($total_storage_cost_actual, 2); ?> (<?php echo number_format($average_days, 1); ?> days avg)</span></div>
-            <div class="cost-modal-divider"></div>
-            <div class="cost-modal-row total-row"><span class="cost-modal-label">Total Est. Cost</span><span class="cost-modal-amount">$<?php echo number_format($total_cost_to_date, 2); ?></span></div>
+
+            <div class="cost-accrual-callout">
+                <span class="accrual-label"><i class="fas fa-sync-alt"></i> Current Monthly Accrual</span>
+                <span class="accrual-value">$<?php echo number_format($current_monthly_accrual ?? 0, 2); ?> / mo</span>
+            </div>
+
+            <div class="cost-fees-section">
+                <div class="cost-fees-section-title">Fee Charges</div>
+                <?php
+                $has_any_line = false;
+                foreach ($cost_line_items as $item):
+                    $has_any_line = true;
+                ?>
+                <div class="cost-modal-row">
+                    <span class="cost-modal-label">
+                        <?php echo htmlspecialchars($item['label']); ?>
+                        <?php if ($item['qty'] > 0): ?>
+                            <span class="cost-line-detail">$<?php echo number_format($item['rate'], 2); ?> &times; <?php echo $item['qty']; ?> <?php echo $item['unit_label']; ?></span>
+                        <?php endif; ?>
+                    </span>
+                    <span class="cost-modal-amount">$<?php echo number_format($item['total'], 2); ?></span>
+                </div>
+                <?php endforeach; ?>
+                <div class="cost-modal-row">
+                    <span class="cost-modal-label">
+                        Storage Cost To Date
+                        <?php if ($average_days > 0): ?>
+                            <span class="cost-line-detail"><?php echo number_format($average_days, 1); ?> days avg</span>
+                        <?php endif; ?>
+                    </span>
+                    <span class="cost-modal-amount">$<?php echo number_format($total_storage_cost_actual, 2); ?></span>
+                </div>
+                <?php if (!$has_any_line && $total_storage_cost_actual == 0): ?>
+                <div class="cost-modal-row"><span class="cost-modal-label" style="color:#9ca3af; font-style:italic;">No charges yet</span></div>
+                <?php endif; ?>
+                <div class="cost-modal-divider"></div>
+                <div class="cost-modal-row total-row"><span class="cost-modal-label">Total Est. Cost</span><span class="cost-modal-amount">$<?php echo number_format($total_cost_to_date, 2); ?></span></div>
+            </div>
         </div>
         <?php if (!empty($warehouse_costs_all) || !empty($warehouse_fees['all_items'])): ?>
         <div class="cost-modal-footer">
