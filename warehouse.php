@@ -1245,40 +1245,103 @@ if ($conn) {
             font-size: 0.9em;
         }
         .tabs-container {
-            text-align: center; /* Center the tabs */
             width: 100%;
-            margin-bottom: 20px; /* Space below tabs */
-            border-bottom: 1px solid #ccc; /* Separator line */
+            margin-bottom: 14px;
         }
         .tabs {
-            display: inline-flex; /* Make buttons sit side-by-side */
-            gap: 1px; /* Small gap between buttons */
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
         }
         .tabs button {
-            background: #e9ecef; /* Light grey background */
-            color: #333; /* Dark text */
-            padding: 10px 15px;
-            cursor: pointer;
-            font-weight: 600;
+            padding: 10px 22px;
             border: none;
-            border-top-left-radius: 5px;
-            border-top-right-radius: 5px;
-            font-size: 1em;
-            border: 1px solid #ccc; /* Add border */
-            border-bottom: none; /* Remove bottom border */
-            margin-bottom: -1px; /* Overlap the container's bottom border */
+            border-radius: 999px;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 0.92em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .tabs button:hover {
+            background: #e2e8f0;
         }
         .tabs button.active {
-            background: #fff;
-            color: #293E4C;
-            border-bottom: 1px solid #fff; /* Make bottom border white to blend */
+            background: #488C9A;
+            color: #fff;
+            box-shadow: 0 3px 8px rgba(72, 140, 154, 0.24);
         }
-        .tab-content { /* Combined style for both sections */
-            display: none; /* Hide sections by default */
-            margin-top: 10px; /* Space above section content */
+        .tab-content {
+            display: none;
+            margin-top: 12px;
         }
         .tab-content.active {
             display: block;
+        }
+        .tab-heading-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+        .tab-heading-row h2 {
+            margin: 0;
+        }
+        .action-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 9px 18px;
+            border: none;
+            border-radius: 8px;
+            background: #488C9A;
+            color: #fff;
+            font-size: 0.88em;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            line-height: 1.25;
+        }
+        .action-button:hover {
+            background: #3A6E7F;
+            color: #fff;
+            text-decoration: none;
+        }
+        .action-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .action-button-secondary {
+            background: #f1f5f9;
+            color: #475569;
+            border: 1px solid #d1d5db;
+        }
+        .action-button-secondary:hover {
+            background: #e2e8f0;
+            color: #293E4C;
+        }
+        .table-responsive a:not(.action-button):not(.view-details-btn) {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            border: 1px solid #d3e6ef;
+            background: #eef7fb;
+            color: #2f6471;
+            font-size: 0.86em;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .table-responsive a:not(.action-button):not(.view-details-btn):hover {
+            background: #deedf4;
+            border-color: #b7d4e1;
+            color: #244d58;
         }
          .table-responsive {
              width: 100%;
@@ -1712,27 +1775,34 @@ if ($conn) {
              color: #488C9A;
          }
         .sub-tabs-container {
-            /* Add any container styling if needed */
-            /* Example: margin-bottom: 10px; */
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-bottom: 16px;
+            padding: 3px;
+            border-radius: 8px;
+            background: #f1f5f9;
+            flex-wrap: wrap;
         }
         .sub-tab-button {
-            padding: 8px 12px;
+            padding: 7px 16px;
             cursor: pointer;
-            background-color: #f0f0f0;
-            border: 1px solid #ccc;
-            /* border-bottom: none; */ /* Keep bottom border for unselected or adjust as preferred */
-            margin-right: 5px;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            font-size: 0.9em; /* Slightly smaller font for sub-tabs */
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: #475569;
+            font-size: 0.88em;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        .sub-tab-button:hover {
+            background: #e2e8f0;
         }
         .sub-tab-button.active {
-            background-color: #fff;
-            border-bottom: 1px solid #fff; /* To make it look like it merges with content */
-            font-weight: bold;
-            color: #293E4C; /* Match active main tab text color */
+            background: #fff;
+            color: #293E4C;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-
         /* New styles for warehouse cards */
         .warehouse-cards-container {
             display: flex;
@@ -1806,6 +1876,24 @@ if ($conn) {
         }
 
         @media (max-width: 768px) {
+             .tabs {
+                 gap: 6px;
+             }
+             .tabs button {
+                 width: 100%;
+                 text-align: center;
+             }
+             .sub-tabs-container {
+                 display: flex;
+                 width: 100%;
+             }
+             .sub-tab-button {
+                 flex: 1;
+                 text-align: center;
+             }
+             .tab-heading-row {
+                 align-items: flex-start;
+             }
              .filter-controls {
                  flex-direction: column;
                  align-items: stretch;
@@ -1874,13 +1962,15 @@ if ($conn) {
          }
 
         /* Cost Breakdown Modal (all users) */
-        .cost-modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center; }
+        .cost-modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:3000; justify-content:center; align-items:center; }
         .cost-modal-overlay.active { display:flex; }
-        .cost-modal-box { background:#fff; border-radius:12px; max-width:420px; width:90%; padding:0; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+        .cost-modal-box { background:#fff; border-radius:12px; max-width:550px; width:90%; padding:0; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
         .cost-modal-box .cost-modal-header { display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid #e5e7eb; }
         .cost-modal-box .cost-modal-header h3 { margin:0; font-size:1.1em; }
-        .cost-modal-box .cost-modal-close { background:none; border:none; font-size:1.5em; cursor:pointer; color:#6b7280; }
+        .cost-modal-box .cost-modal-close { background:none; border:none; font-size:1.5em; cursor:pointer; color:#fff; opacity:0.85; }
+        .cost-modal-box .cost-modal-close:hover { opacity:1; }
         .cost-modal-box .cost-modal-body { padding:20px 24px; }
+        .cost-scope-note { margin:0 0 12px; padding:10px 12px; border:1px solid #d3e6ef; border-radius:8px; background:#eef7fb; color:#345768; font-size:0.88em; line-height:1.4; }
         .cost-modal-row { display:flex; justify-content:space-between; padding:8px 0; }
         .cost-modal-row.total-row { font-weight:700; font-size:1.05em; color:#293E4C; }
         .cost-modal-label { color:#6b7280; }
@@ -2116,6 +2206,14 @@ if ($conn) {
                 }
             }
             $is_port_facility = !empty($warehouse_data['is_port']) && $warehouse_data['is_port'] == 1;
+            $cost_scope_summary = 'Facility-wide costs across all projects in this location.';
+            if (!$isAdmin && $project_id) {
+                $project_scope_name = $project_name_for_title ?: ('Project #' . (int)$project_id);
+                $cost_scope_summary = 'Project-only costs for ' . $project_scope_name . '.';
+            } elseif (!$isAdmin && $module_batch_id) {
+                $batch_scope_name = $origin_batch_vendor_name ?: ('Batch #' . (int)$module_batch_id);
+                $cost_scope_summary = 'Filtered costs for ' . $batch_scope_name . '.';
+            }
         ?>
         <div class="facility-header-hero">
             <div class="facility-header-content">
@@ -2244,7 +2342,6 @@ if ($conn) {
                 <button id="truckloadHistoryTab"><?php echo $history_title; ?> (<?php echo count($admin_inbound_history) + count($admin_outbound_history); ?>)</button>
             </div>
         </div>
-
         <!-- ADMIN TAB: STORED INVENTORY -->
         <div id="storedInventoryContent" class="tab-content active">
             <h2><?php echo $inventory_title; ?></h2>
@@ -2628,10 +2725,11 @@ if ($conn) {
                 ?>)</button>
             </div>
         </div>
-
         <!-- Tab Content: Inventory View (DEFAULT ACTIVE) -->
         <div id="InventoryView" class="tab-content active">
-             <h2>Stored Inventory Details</h2>
+             <div class="tab-heading-row">
+                <h2>Stored Inventory Details</h2>
+             </div>
               <div class="filter-controls">
                   <label for="inventorySearch">Search:</label>
                   <input type="text" id="inventorySearch" placeholder="Filter by Identifier, Vendor...">
@@ -2765,7 +2863,10 @@ if ($conn) {
         
         <!-- Tab Content: Truckload View -->
          <div id="TruckloadView" class="tab-content">
-            <div class="sub-tabs-container" style="text-align: left; margin-bottom: 15px;">
+            <div class="tab-heading-row">
+                <h2>Truckload History</h2>
+            </div>
+            <div class="sub-tabs-container">
                 <button class="sub-tab-button active" onclick="showTruckloadSubView('arrivals')">View Arrivals (<?php echo !empty($inbound_deliveries_for_table) ? count($inbound_deliveries_for_table) : 0; ?>)</button>
                 <button class="sub-tab-button" onclick="showTruckloadSubView('departures')">View Departures (<?php echo !empty($outbound_deliveries_for_table) ? count($outbound_deliveries_for_table) : 0; ?>)</button>
             </div>
@@ -3091,6 +3192,7 @@ if ($conn) {
             <button class="cost-modal-close" onclick="closeCostBreakdownModal()">&times;</button>
         </div>
         <div class="cost-modal-body">
+            <p class="cost-scope-note"><strong>Scope:</strong> <?php echo htmlspecialchars($cost_scope_summary); ?></p>
             <div class="cost-modal-row"><span class="cost-modal-label">Current Monthly Accrual</span><span class="cost-modal-amount">$<?php echo number_format($current_monthly_accrual ?? 0, 2); ?> / mo</span></div>
             <div class="cost-modal-row"><span class="cost-modal-label">In Fee Cost</span><span class="cost-modal-amount">$<?php echo number_format($in_fee_cost, 2); ?></span></div>
             <div class="cost-modal-row"><span class="cost-modal-label">Out Fee Cost</span><span class="cost-modal-amount">$<?php echo number_format($out_fee_cost, 2); ?></span></div>
@@ -3318,10 +3420,16 @@ if ($conn) {
      
      // Cost Breakdown Modal Functions
      function openCostBreakdownModal() {
-         document.getElementById('costBreakdownModal')?.classList.add('active');
+         const modal = document.getElementById('costBreakdownModal');
+         if (!modal) return;
+         modal.style.display = 'flex';
+         modal.classList.add('active');
      }
      function closeCostBreakdownModal() {
-         document.getElementById('costBreakdownModal')?.classList.remove('active');
+         const modal = document.getElementById('costBreakdownModal');
+         if (!modal) return;
+         modal.classList.remove('active');
+         modal.style.display = 'none';
      }
      document.getElementById('costBreakdownModal')?.addEventListener('click', function(e) {
          if (e.target === this) closeCostBreakdownModal();
@@ -3892,8 +4000,18 @@ window.updateMoveDestinations = function() {
 function updateMoveDestinations() { window.updateMoveDestinations(); }
 
 // ========== COST BREAKDOWN MODAL ==========
-function openCostBreakdownModal() { document.getElementById('costBreakdownModal')?.classList.add('active'); }
-function closeCostBreakdownModal() { document.getElementById('costBreakdownModal')?.classList.remove('active'); }
+function openCostBreakdownModal() {
+    const modal = document.getElementById('costBreakdownModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+}
+function closeCostBreakdownModal() {
+    const modal = document.getElementById('costBreakdownModal');
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.style.display = 'none';
+}
 document.getElementById('costBreakdownModal')?.addEventListener('click', function(e) { if (e.target === this) closeCostBreakdownModal(); });
 
 // ========== ADMIN DOM READY ==========
