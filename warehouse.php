@@ -2092,10 +2092,48 @@ if ($conn) {
             if ($project_id && !$warehouse_id && !$module_batch_id) {
                 echo slp_render_breadcrumbs(['current_label' => 'Warehouse Locations', 'project_id' => (int)$project_id]);
             } elseif ($warehouse_id && $project_id) {
-                // Only show "Warehouse Locations" breadcrumb if there's more than one warehouse
+                // Only show "Warehouse Locations" crumb when the project truly spans multiple warehouses.
                 $single_wh = isset($_GET['single_wh']) && $_GET['single_wh'] == '1';
-                if ($single_wh) {
-                    // Single warehouse - don't show "Warehouse Locations" as it would just redirect back here
+                $project_warehouse_count = null;
+                if (function_exists('getDBConnection')) {
+                    $breadcrumb_conn = getDBConnection();
+                    if ($breadcrumb_conn) {
+                        $stmtWhCount = $breadcrumb_conn->prepare("
+                        SELECT COUNT(DISTINCT wh.id) AS warehouse_count
+                        FROM warehouses wh
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM inventory_pallets ip
+                            WHERE ip.assigned_project_id = ?
+                              AND ip.current_warehouse_id = wh.id
+                              AND ip.status = 'In Warehouse'
+                        )
+                        OR EXISTS (
+                            SELECT 1
+                            FROM deliveries d
+                            WHERE d.project_id = ?
+                              AND d.warehouse_id = wh.id
+                        )
+                    ");
+                        if ($stmtWhCount) {
+                            $stmtWhCount->bind_param("ii", $project_id, $project_id);
+                            $stmtWhCount->execute();
+                            $stmtWhCount->bind_result($project_warehouse_count_result);
+                            if ($stmtWhCount->fetch()) {
+                                $project_warehouse_count = (int)$project_warehouse_count_result;
+                            }
+                            $stmtWhCount->close();
+                        }
+                        $breadcrumb_conn->close();
+                    }
+                }
+
+                $show_locations_crumb = !$single_wh;
+                if ($project_warehouse_count !== null && $project_warehouse_count <= 1) {
+                    $show_locations_crumb = false;
+                }
+
+                if (!$show_locations_crumb) {
                     echo slp_render_breadcrumbs([
                         'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
                         'project_id' => (int)$project_id
@@ -2262,7 +2300,7 @@ if ($conn) {
                         <span class="facility-stat-value"><?php echo number_format($total_modules ?? 0); ?></span>
                         <span class="facility-stat-label">Modules</span>
                     </div>
-                    <div class="facility-stat accent-teal clickable clickable-cost-card" onclick="openCostBreakdownModal()" style="cursor:pointer;">
+                    <div id="facilityCostCard" class="facility-stat accent-teal clickable clickable-cost-card" role="button" tabindex="0" style="cursor:pointer;">
                         <span class="facility-stat-value">$<?php echo number_format($total_cost_to_date, 2); ?></span>
                         <span class="facility-stat-label">Est. Cost <i class="fas fa-expand-alt" style="font-size:0.7em; opacity:0.7;"></i></span>
                     </div>
@@ -2640,7 +2678,17 @@ if ($conn) {
                                         <td><?php echo number_format($delivery['total_modules']) . ' (' . number_format($delivery['total_pallets']) . ')'; ?></td>
                                         <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                         <td><?php if (!empty($delivery['proof_of_delivery']) || ($delivery['has_warehouse_pod'] ?? 0) > 0): ?><a href="view_pod.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>" target="_blank" style="color: #488C9A;">View POD</a><?php else: ?><button class="action-button" style="padding: 8px 15px;" onclick="uploadWarehousePOD(<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>, <?php echo explode(',', $delivery['project_ids'])[0]; ?>)">Upload POD</button><?php endif; ?></td>
-                                        <td><?php if ($delivery['is_mixed_wattage']): ?><button class="action-button" style="padding:3px 8px; font-size:0.9em;" onclick="event.stopPropagation(); window.location.href='manage_deliveries.php?search=<?php echo urlencode($delivery['bol_number']); ?>'">Manage</button><?php else: ?><a href="edit_delivery.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>&warehouse_id=<?php echo $warehouse_id; ?>" class="action-button" style="padding:3px 8px; font-size:0.9em;">Edit</a><?php endif; ?></td>
+                                        <td>
+                                            <?php
+                                                $inbound_view_delivery_id = (int)(explode(',', (string)($delivery['delivery_ids'] ?? '0'))[0] ?? 0);
+                                                $inbound_view_project_id = (int)(explode(',', (string)($delivery['project_ids'] ?? '0'))[0] ?? 0);
+                                            ?>
+                                            <?php if ($inbound_view_delivery_id > 0 && $inbound_view_project_id > 0): ?>
+                                                <a href="view_project.php?project_id=<?php echo $inbound_view_project_id; ?>&delivery_id=<?php echo $inbound_view_delivery_id; ?>" class="action-button" style="padding:3px 8px; font-size:0.9em;">View</a>
+                                            <?php else: ?>
+                                                <span style="color:#9ca3af;">N/A</span>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                     <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
                                         <?php foreach ($delivery['details'] as $detail_index => $detail): ?>
@@ -2652,7 +2700,17 @@ if ($conn) {
                                                 <td><?php echo number_format($detail['quantity']) . ' (' . number_format($detail['pallet_count']) . ')'; ?></td>
                                                 <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                                 <td>-</td>
-                                                <td><a href="edit_delivery.php?delivery_id=<?php echo $detail['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?>" class="action-button" style="padding:2px 6px; font-size:0.8em;">Edit</a></td>
+                                                <td>
+                                                    <?php
+                                                        $inbound_detail_project_id = (int)($detail['project_id'] ?? 0);
+                                                        $inbound_detail_delivery_id = (int)($detail['id'] ?? 0);
+                                                    ?>
+                                                    <?php if ($inbound_detail_project_id > 0 && $inbound_detail_delivery_id > 0): ?>
+                                                        <a href="view_project.php?project_id=<?php echo $inbound_detail_project_id; ?>&delivery_id=<?php echo $inbound_detail_delivery_id; ?>" class="action-button" style="padding:2px 6px; font-size:0.8em;">View</a>
+                                                    <?php else: ?>
+                                                        <span style="color:#9ca3af;">N/A</span>
+                                                    <?php endif; ?>
+                                                </td>
                                             </tr>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
@@ -2682,7 +2740,17 @@ if ($conn) {
                                         <td><?php echo number_format($delivery['total_modules']) . ' (' . number_format($delivery['total_pallets']) . ')'; ?></td>
                                         <td><?php echo htmlspecialchars($delivery['departure_date'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? 'N/A'); ?></td>
-                                        <td><?php if ($delivery['is_mixed_wattage']): ?><button class="action-button" style="padding:3px 8px; font-size:0.9em;" onclick="event.stopPropagation(); window.location.href='manage_deliveries.php?search=<?php echo urlencode($delivery['bol_number']); ?>'">Manage</button><?php else: ?><a href="edit_delivery.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>&warehouse_id=<?php echo $warehouse_id; ?>" class="action-button" style="padding:3px 8px; font-size:0.9em;">Edit</a><?php endif; ?></td>
+                                        <td>
+                                            <?php
+                                                $outbound_view_delivery_id = (int)(explode(',', (string)($delivery['delivery_ids'] ?? '0'))[0] ?? 0);
+                                                $outbound_view_project_id = (int)(explode(',', (string)($delivery['project_ids'] ?? '0'))[0] ?? 0);
+                                            ?>
+                                            <?php if ($outbound_view_delivery_id > 0 && $outbound_view_project_id > 0): ?>
+                                                <a href="view_project.php?project_id=<?php echo $outbound_view_project_id; ?>&delivery_id=<?php echo $outbound_view_delivery_id; ?>" class="action-button" style="padding:3px 8px; font-size:0.9em;">View</a>
+                                            <?php else: ?>
+                                                <span style="color:#9ca3af;">N/A</span>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                     <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
                                         <?php foreach ($delivery['details'] as $detail_index => $detail): ?>
@@ -2695,7 +2763,17 @@ if ($conn) {
                                                 <td><?php echo number_format($detail['quantity']) . ' (' . number_format($detail['pallet_count']) . ')'; ?></td>
                                                 <td><?php echo htmlspecialchars($delivery['departure_date'] ?? 'N/A'); ?></td>
                                                 <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? 'N/A'); ?></td>
-                                                <td><a href="edit_delivery.php?delivery_id=<?php echo $detail['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?>" class="action-button" style="padding:2px 6px; font-size:0.8em;">Edit</a></td>
+                                                <td>
+                                                    <?php
+                                                        $outbound_detail_project_id = (int)($detail['project_id'] ?? 0);
+                                                        $outbound_detail_delivery_id = (int)($detail['id'] ?? 0);
+                                                    ?>
+                                                    <?php if ($outbound_detail_project_id > 0 && $outbound_detail_delivery_id > 0): ?>
+                                                        <a href="view_project.php?project_id=<?php echo $outbound_detail_project_id; ?>&delivery_id=<?php echo $outbound_detail_delivery_id; ?>" class="action-button" style="padding:2px 6px; font-size:0.8em;">View</a>
+                                                    <?php else: ?>
+                                                        <span style="color:#9ca3af;">N/A</span>
+                                                    <?php endif; ?>
+                                                </td>
                                             </tr>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
@@ -3358,6 +3436,25 @@ if ($conn) {
      }
 
      document.addEventListener('DOMContentLoaded', function() {
+         const costBreakdownModalEl = document.getElementById('costBreakdownModal');
+         if (costBreakdownModalEl && costBreakdownModalEl.parentElement !== document.body) {
+             document.body.appendChild(costBreakdownModalEl);
+         }
+         const facilityCostCard = document.getElementById('facilityCostCard');
+         if (facilityCostCard) {
+             facilityCostCard.addEventListener('click', function(e) {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 openCostBreakdownModal();
+             });
+             facilityCostCard.addEventListener('keydown', function(e) {
+                 if (e.key === 'Enter' || e.key === ' ') {
+                     e.preventDefault();
+                     openCostBreakdownModal();
+                 }
+             });
+         }
+
          // Set Inventory View as default active tab (regular user only)
          const inventoryViewEl = document.getElementById('InventoryView');
          if (inventoryViewEl) {

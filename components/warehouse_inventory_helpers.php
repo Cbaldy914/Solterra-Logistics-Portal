@@ -364,13 +364,13 @@ function fetchInboundHistory($conn, $warehouse_id) {
 
                 foreach ($delivery_ids as $del_id) {
                     $stmtDetail = $conn->prepare("
-                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                        SELECT d.id, d.project_id, d.wattage, d.quantity, p.project_name,
                                COUNT(dp.inventory_pallet_id) AS pallet_count
                         FROM deliveries d
                         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
                         LEFT JOIN projects p ON d.project_id = p.id
                         WHERE d.id = ?
-                        GROUP BY d.id, d.wattage, d.quantity, p.project_name
+                        GROUP BY d.id, d.project_id, d.wattage, d.quantity, p.project_name
                     ");
                     if ($stmtDetail) {
                         $stmtDetail->bind_param("i", $del_id);
@@ -415,6 +415,7 @@ function fetchOutboundHistory($conn, $warehouse_id) {
             GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
             GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
             GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+            GROUP_CONCAT(DISTINCT d.project_id ORDER BY d.project_id SEPARATOR ',') AS project_ids,
             CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage,
             GROUP_CONCAT(DISTINCT
                 CASE
@@ -451,7 +452,7 @@ function fetchOutboundHistory($conn, $warehouse_id) {
 
                 foreach ($delivery_ids as $del_id) {
                     $stmtDetail = $conn->prepare("
-                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                        SELECT d.id, d.project_id, d.wattage, d.quantity, p.project_name,
                                COUNT(dp.inventory_pallet_id) AS pallet_count,
                                CASE
                                    WHEN d.project_id IS NOT NULL THEN CONCAT('Project: ', p.project_name)
@@ -463,7 +464,7 @@ function fetchOutboundHistory($conn, $warehouse_id) {
                         LEFT JOIN projects p ON d.project_id = p.id
                         LEFT JOIN warehouses w2 ON d.warehouse_id = w2.id
                         WHERE d.id = ?
-                        GROUP BY d.id, d.wattage, d.quantity, p.project_name, destination
+                        GROUP BY d.id, d.project_id, d.wattage, d.quantity, p.project_name, destination
                     ");
                     if ($stmtDetail) {
                         $stmtDetail->bind_param("ii", $warehouse_id, $del_id);
