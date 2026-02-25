@@ -21,6 +21,7 @@ $project_id = intval($_GET['project_id']);
 require_once '../config.php';
 require_once 'cost_helpers.php';
 require_once 'milestone_helpers.php';
+require_once 'projection_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -1392,82 +1393,444 @@ foreach ($module_milestone_breakdown as $event => $amount) {
         : null;
 }
 
-$forecast_monthly_totals = [];
-$actual_monthly_totals = [];
-$forecast_actual_min_month = null;
-$forecast_actual_max_month = null;
+$primary_projection = get_primary_projection($conn, $project_id);
+$primary_projection_id = (int)($primary_projection['id'] ?? 0);
+$projection_allocations = is_array($primary_projection['module_allocations'] ?? null) ? $primary_projection['module_allocations'] : [];
+$projection_stops = is_array($primary_projection['stops'] ?? null) ? $primary_projection['stops'] : [];
+$projection_legs = is_array($primary_projection['legs'] ?? null) ? $primary_projection['legs'] : [];
 
-$register_month_key = static function (?string $raw_date) {
-    if (!$raw_date) {
+$to_date = static function ($value): ?DateTimeImmutable {
+    if ($value === null || $value === '') {
         return null;
     }
-    $ts = strtotime($raw_date);
+    $ts = strtotime((string)$value);
     if ($ts === false) {
         return null;
     }
-    return date('Y-m-01', $ts);
+    return (new DateTimeImmutable())->setTimestamp($ts)->setTime(0, 0, 0);
 };
 
-foreach ($deliveries as $delivery_for_chart) {
-    $delivery_base_cost = (float)($delivery_for_chart['customer_cost'] ?? 0)
-        + (float)($delivery_for_chart['accessorial_costs'] ?? 0)
-        + (float)($delivery_for_chart['warehousing_cost'] ?? 0);
+$get_week_start_key = static function ($value) use ($to_date): ?string {
+    $date = $to_date($value);
+    if (!$date) {
+        return null;
+    }
+    $day_of_week = (int)$date->format('w'); // Sunday = 0
+    return $date->modify("-{$day_of_week} days")->format('Y-m-d');
+};
 
-    $estimated_solterra_cost = max(0, (float)($delivery_for_chart['wattage'] ?? 0))
-        * max(0, (float)($delivery_for_chart['quantity'] ?? 0))
-        * max(0, (float)$solterra_fee);
-    $actual_solterra_cost = max(0, (float)($delivery_for_chart['solterra_fee'] ?? 0));
+$ensure_bucket = static function (&$buckets, string $week_key): void {
+    if (!isset($buckets[$week_key])) {
+        $buckets[$week_key] = ['freight' => 0.0, 'warehousing' => 0.0, 'milestones' => 0.0];
+    }
+};
 
-    $forecast_month_key = $register_month_key($delivery_for_chart['anticipated_delivery_date'] ?? null);
-    if ($forecast_month_key !== null) {
-        $forecast_monthly_totals[$forecast_month_key] = ($forecast_monthly_totals[$forecast_month_key] ?? 0)
-            + $delivery_base_cost
-            + $estimated_solterra_cost;
-        if ($forecast_actual_min_month === null || $forecast_month_key < $forecast_actual_min_month) {
-            $forecast_actual_min_month = $forecast_month_key;
+$get_leg_weekly_trucks = static function (array $leg) use ($to_date, $get_week_start_key): array {
+    $schedule = [];
+    $start_date = $to_date($leg['start_date'] ?? $leg['end_date'] ?? null);
+    if (!$start_date) {
+        return $schedule;
+    }
+
+    $total_trucks = max(0.0, (float)($leg['trucks_required'] ?? 0));
+    if ($total_trucks <= 0) {
+        return $schedule;
+    }
+
+    $rate = (float)($leg['delivery_rate'] ?? 0);
+    $rate_unit = (string)($leg['delivery_rate_unit'] ?? 'per_week');
+
+    $add_to_week = static function (&$weekly, DateTimeImmutable $date, float $trucks) use ($get_week_start_key): void {
+        if ($trucks <= 0) {
+            return;
         }
-        if ($forecast_actual_max_month === null || $forecast_month_key > $forecast_actual_max_month) {
-            $forecast_actual_max_month = $forecast_month_key;
+        $key = $get_week_start_key($date->format('Y-m-d'));
+        if (!$key) {
+            return;
+        }
+        $weekly[$key] = ($weekly[$key] ?? 0.0) + $trucks;
+    };
+
+    if ($rate <= 0) {
+        $add_to_week($schedule, $start_date, $total_trucks);
+        return $schedule;
+    }
+
+    $remaining = $total_trucks;
+    $cursor = $start_date;
+
+    while ($remaining > 0) {
+        $deliveries = min($remaining, $rate);
+        $add_to_week($schedule, $cursor, $deliveries);
+        $remaining -= $deliveries;
+
+        if ($remaining <= 0) {
+            break;
+        }
+
+        if ($rate_unit === 'per_day') {
+            $cursor = $cursor->modify('+1 day');
+        } elseif ($rate_unit === 'per_month') {
+            $cursor = $cursor->modify('first day of next month');
+        } else {
+            $cursor = $cursor->modify('+1 week');
         }
     }
 
-    $actual_month_key = $register_month_key($delivery_for_chart['actual_delivery_date'] ?? null);
-    if ($actual_month_key !== null) {
-        $actual_monthly_totals[$actual_month_key] = ($actual_monthly_totals[$actual_month_key] ?? 0)
-            + $delivery_base_cost
-            + $actual_solterra_cost;
-        if ($forecast_actual_min_month === null || $actual_month_key < $forecast_actual_min_month) {
-            $forecast_actual_min_month = $actual_month_key;
-        }
-        if ($forecast_actual_max_month === null || $actual_month_key > $forecast_actual_max_month) {
-            $forecast_actual_max_month = $actual_month_key;
-        }
+    return $schedule;
+};
+
+$get_leg_cost_per_truck = static function (array $leg): float {
+    $freight_per_truck = (float)($leg['freight_cost_per_truck'] ?? 0);
+    $accessorial_per_truck = (float)($leg['accessorial_cost_per_truck'] ?? 0);
+    if ($freight_per_truck > 0 || $accessorial_per_truck > 0) {
+        return $freight_per_truck + $accessorial_per_truck;
+    }
+
+    $trucks = max(0.0, (float)($leg['trucks_required'] ?? 0));
+    $total = (float)($leg['total_freight_cost'] ?? 0);
+    return $trucks > 0 ? ($total / $trucks) : 0.0;
+};
+
+$forecast_weekly_buckets = [];
+
+foreach ($projection_legs as $leg) {
+    $trucks_required = max(0.0, (float)($leg['trucks_required'] ?? 0));
+    if ($trucks_required <= 0) {
+        continue;
+    }
+    $per_truck_cost = $get_leg_cost_per_truck($leg);
+    if ($per_truck_cost <= 0) {
+        continue;
+    }
+
+    $weekly_trucks = $get_leg_weekly_trucks($leg);
+    foreach ($weekly_trucks as $week_key => $trucks) {
+        $ensure_bucket($forecast_weekly_buckets, $week_key);
+        $forecast_weekly_buckets[$week_key]['freight'] += $trucks * $per_truck_cost;
     }
 }
+
+$milestone_events = [];
+foreach ($projection_allocations as $alloc) {
+    $contract_value = (float)($alloc['contract_value'] ?? 0);
+    if ($contract_value <= 0) {
+        continue;
+    }
+
+    $milestones = is_array($alloc['milestones'] ?? null) ? $alloc['milestones'] : [];
+    $has_milestones = false;
+    foreach ($milestones as $milestone) {
+        $trigger_event = (string)($milestone['trigger_event'] ?? '');
+        $percentage = (float)($milestone['percentage'] ?? 0);
+        if ($trigger_event !== '' && $percentage > 0) {
+            $has_milestones = true;
+            break;
+        }
+    }
+
+    if (!$has_milestones) {
+        $milestone_events[] = ['trigger' => 'project_delivery', 'amount' => $contract_value, 'date' => null];
+        continue;
+    }
+
+    foreach ($milestones as $milestone) {
+        $trigger_event = (string)($milestone['trigger_event'] ?? '');
+        $percentage = (float)($milestone['percentage'] ?? 0);
+        if ($trigger_event === '' || $percentage <= 0) {
+            continue;
+        }
+
+        $po_date = $alloc['po_execution_date'] ?? $alloc['poExecutionDate'] ?? null;
+        $milestone_events[] = [
+            'trigger' => $trigger_event,
+            'amount' => $contract_value * ($percentage / 100),
+            'date' => $trigger_event === 'po_execution' ? $po_date : null
+        ];
+    }
+}
+
+$milestone_totals = [];
+foreach ($milestone_events as $event) {
+    $trigger = (string)($event['trigger'] ?? '');
+    if ($trigger === '') {
+        continue;
+    }
+    $milestone_totals[$trigger] = ($milestone_totals[$trigger] ?? 0.0) + (float)($event['amount'] ?? 0);
+}
+
+$stop_lookup = [];
+foreach ($projection_stops as $stop) {
+    $stop_lookup[(string)($stop['id'] ?? '')] = $stop;
+}
+$get_stop = static function ($stop_id) use (&$stop_lookup) {
+    return $stop_lookup[(string)$stop_id] ?? null;
+};
+
+$origin_legs = [];
+$destination_legs = [];
+$customs_legs = [];
+foreach ($projection_legs as $leg) {
+    $from_stop = $get_stop($leg['from_stop_id'] ?? null);
+    $to_stop = $get_stop($leg['to_stop_id'] ?? null);
+    if (($from_stop['stop_type'] ?? '') === 'origin') {
+        $origin_legs[] = $leg;
+    }
+    if (($to_stop['stop_type'] ?? '') === 'destination') {
+        $destination_legs[] = $leg;
+    }
+    if (!empty($to_stop['is_customs_clearance']) || (($to_stop['stop_type'] ?? '') === 'customs')) {
+        $customs_legs[] = $leg;
+    }
+}
+
+$resolve_milestone_legs = static function (string $trigger) use ($origin_legs, $destination_legs, $customs_legs, $projection_legs): array {
+    $matching_legs = array_values(array_filter($projection_legs, static function ($leg) use ($trigger) {
+        return (string)($leg['triggers_milestone'] ?? '') === $trigger;
+    }));
+
+    if ($trigger === 'shipping') {
+        if (!empty($origin_legs)) {
+            return $origin_legs;
+        }
+        if (!empty($matching_legs)) {
+            return $matching_legs;
+        }
+        return !empty($projection_legs) ? [$projection_legs[0]] : [];
+    }
+
+    if ($trigger === 'project_delivery') {
+        if (!empty($destination_legs)) {
+            return $destination_legs;
+        }
+        if (!empty($matching_legs)) {
+            return $matching_legs;
+        }
+        return !empty($projection_legs) ? [end($projection_legs)] : [];
+    }
+
+    if ($trigger === 'customs_cleared') {
+        return !empty($customs_legs) ? $customs_legs : $matching_legs;
+    }
+
+    return $matching_legs;
+};
+
+$allocate_milestone = function (string $trigger, float $amount) use (&$forecast_weekly_buckets, $ensure_bucket, $get_leg_weekly_trucks, $resolve_milestone_legs): void {
+    if ($amount <= 0) {
+        return;
+    }
+    $legs = $resolve_milestone_legs($trigger);
+    if (empty($legs)) {
+        return;
+    }
+
+    $weekly_trucks = [];
+    $total_trucks = 0.0;
+    foreach ($legs as $leg) {
+        $schedule = $get_leg_weekly_trucks($leg);
+        foreach ($schedule as $week_key => $trucks) {
+            if ($trucks <= 0) {
+                continue;
+            }
+            $weekly_trucks[$week_key] = ($weekly_trucks[$week_key] ?? 0.0) + $trucks;
+            $total_trucks += $trucks;
+        }
+    }
+
+    if ($total_trucks <= 0) {
+        return;
+    }
+
+    $amount_per_truck = $amount / $total_trucks;
+    foreach ($weekly_trucks as $week_key => $trucks) {
+        $ensure_bucket($forecast_weekly_buckets, $week_key);
+        $forecast_weekly_buckets[$week_key]['milestones'] += $amount_per_truck * $trucks;
+    }
+};
+
+foreach ($milestone_totals as $trigger => $amount) {
+    if ($trigger === 'po_execution') {
+        continue;
+    }
+    $allocate_milestone($trigger, (float)$amount);
+}
+
+foreach ($milestone_events as $event) {
+    if (($event['trigger'] ?? '') !== 'po_execution') {
+        continue;
+    }
+    $event_date = !empty($event['date']) ? $event['date'] : date('Y-m-d');
+    $week_key = $get_week_start_key($event_date);
+    if (!$week_key) {
+        continue;
+    }
+    $ensure_bucket($forecast_weekly_buckets, $week_key);
+    $forecast_weekly_buckets[$week_key]['milestones'] += (float)($event['amount'] ?? 0);
+}
+
+$outgoing_leg_by_stop = [];
+foreach ($projection_legs as $leg) {
+    $stop_id = (string)($leg['from_stop_id'] ?? '');
+    if ($stop_id !== '' && !isset($outgoing_leg_by_stop[$stop_id])) {
+        $outgoing_leg_by_stop[$stop_id] = $leg;
+    }
+}
+
+foreach ($projection_stops as $stop_index => $stop) {
+    $arrival_date = $to_date($stop['estimated_arrival_date'] ?? null);
+    $fees = is_array($stop['fees'] ?? null) ? $stop['fees'] : [];
+    if (!$arrival_date || empty($fees)) {
+        continue;
+    }
+
+    foreach ($fees as $fee) {
+        $cost = (float)($fee['estimated_cost'] ?? 0);
+        if ($cost <= 0) {
+            continue;
+        }
+
+        $fee_type = strtolower(trim((string)($fee['fee_type'] ?? '')));
+        $fee_trigger = strtolower(trim((string)($fee['trigger'] ?? '')));
+        if ($fee_type === 'storage' || $fee_trigger === 'monthly') {
+            $planned_departure = $to_date($stop['estimated_departure_date'] ?? null);
+            $next_stop = $projection_stops[$stop_index + 1] ?? null;
+            $next_arrival = $to_date($next_stop['estimated_arrival_date'] ?? null);
+
+            if ($planned_departure && $planned_departure > $arrival_date) {
+                $departure_date = $planned_departure;
+            } elseif ($next_arrival && $next_arrival > $arrival_date) {
+                $departure_date = $next_arrival;
+            } else {
+                $departure_date = $arrival_date->modify('+90 days');
+            }
+
+            $months_in_storage = max(1, (int)ceil(($departure_date->getTimestamp() - $arrival_date->getTimestamp()) / (30 * 24 * 60 * 60)));
+            $monthly_fee = $cost / $months_in_storage;
+            $month_cursor = $arrival_date->modify('first day of this month');
+
+            for ($i = 0; $i < $months_in_storage; $i++) {
+                $month_first = $month_cursor->modify("+{$i} month");
+                $week_key = $get_week_start_key($month_first->format('Y-m-d'));
+                if (!$week_key) {
+                    continue;
+                }
+                $ensure_bucket($forecast_weekly_buckets, $week_key);
+                $forecast_weekly_buckets[$week_key]['warehousing'] += $monthly_fee;
+            }
+            continue;
+        }
+
+        $fee_date = $arrival_date;
+        if ($fee_type === 'outbound' || $fee_type === 'out') {
+            $departure_date = $to_date($stop['estimated_departure_date'] ?? null);
+            if (!$departure_date) {
+                $outgoing_leg = $outgoing_leg_by_stop[(string)($stop['id'] ?? '')] ?? null;
+                $departure_date = $to_date($outgoing_leg['start_date'] ?? null);
+            }
+            if (!$departure_date) {
+                $next_stop = $projection_stops[$stop_index + 1] ?? null;
+                $departure_date = $to_date($next_stop['estimated_arrival_date'] ?? null);
+            }
+            if ($departure_date && $departure_date > $arrival_date) {
+                $fee_date = $departure_date;
+            }
+        }
+
+        $week_key = $get_week_start_key($fee_date->format('Y-m-d'));
+        if (!$week_key) {
+            continue;
+        }
+        $ensure_bucket($forecast_weekly_buckets, $week_key);
+        $forecast_weekly_buckets[$week_key]['warehousing'] += $cost;
+    }
+}
+
+ksort($forecast_weekly_buckets);
+
+$weekly_projection_rows = [];
+$weekly_projection_totals = ['freight' => 0.0, 'warehousing' => 0.0, 'milestones' => 0.0, 'weekly_total' => 0.0];
+$weekly_projection_total_range = '-';
+$forecast_weekly_totals = [];
+$week_index = 0;
+$running_forecast = 0.0;
+$first_week_key = null;
+$last_week_key = null;
+
+foreach ($forecast_weekly_buckets as $week_key => $bucket) {
+    $week_start = new DateTimeImmutable($week_key);
+    $week_end = $week_start->modify('+6 days');
+    $weekly_total = (float)$bucket['freight'] + (float)$bucket['warehousing'] + (float)$bucket['milestones'];
+    $running_forecast += $weekly_total;
+    $week_index++;
+
+    $first_week_key = $first_week_key ?? $week_key;
+    $last_week_key = $week_key;
+    $forecast_weekly_totals[$week_key] = $weekly_total;
+
+    $weekly_projection_rows[] = [
+        'week_label' => 'Week ' . $week_index,
+        'date_range' => $week_start->format('M j') . ' - ' . $week_end->format('M j, Y'),
+        'freight' => round((float)$bucket['freight'], 2),
+        'warehousing' => round((float)$bucket['warehousing'], 2),
+        'milestones' => round((float)$bucket['milestones'], 2),
+        'weekly_total' => round($weekly_total, 2),
+        'cumulative' => round($running_forecast, 2)
+    ];
+
+    $weekly_projection_totals['freight'] += (float)$bucket['freight'];
+    $weekly_projection_totals['warehousing'] += (float)$bucket['warehousing'];
+    $weekly_projection_totals['milestones'] += (float)$bucket['milestones'];
+    $weekly_projection_totals['weekly_total'] += $weekly_total;
+}
+
+if ($first_week_key !== null && $last_week_key !== null) {
+    $range_start = new DateTimeImmutable($first_week_key);
+    $range_end = (new DateTimeImmutable($last_week_key))->modify('+6 days');
+    $weekly_projection_total_range = $range_start->format('M j, Y') . ' - ' . $range_end->format('M j, Y');
+}
+
+$actual_weekly_totals = [];
+foreach ($deliveries as $delivery_for_chart) {
+    $actual_week_key = $get_week_start_key($delivery_for_chart['actual_delivery_date'] ?? null);
+    if (!$actual_week_key) {
+        continue;
+    }
+    $actual_total = max(0.0,
+        (float)($delivery_for_chart['customer_cost'] ?? 0)
+        + (float)($delivery_for_chart['accessorial_costs'] ?? 0)
+        + (float)($delivery_for_chart['warehousing_cost'] ?? 0)
+        + (float)($delivery_for_chart['module_cost'] ?? 0)
+    );
+    $actual_weekly_totals[$actual_week_key] = ($actual_weekly_totals[$actual_week_key] ?? 0.0) + $actual_total;
+}
+ksort($actual_weekly_totals);
+
+$all_week_keys = array_values(array_unique(array_merge(array_keys($forecast_weekly_totals), array_keys($actual_weekly_totals))));
+sort($all_week_keys);
 
 $forecast_actual_labels = [];
 $forecast_actual_forecast_cumulative = [];
 $forecast_actual_actual_cumulative = [];
+$running_forecast = 0.0;
+$running_actual = 0.0;
 
-if ($forecast_actual_min_month !== null && $forecast_actual_max_month !== null) {
-    $cursor = new DateTimeImmutable($forecast_actual_min_month);
-    $end_month = new DateTimeImmutable($forecast_actual_max_month);
-    $running_forecast = 0.0;
-    $running_actual = 0.0;
+foreach ($all_week_keys as $week_key) {
+    $running_forecast += (float)($forecast_weekly_totals[$week_key] ?? 0);
+    $running_actual += (float)($actual_weekly_totals[$week_key] ?? 0);
 
-    while ($cursor <= $end_month) {
-        $month_key = $cursor->format('Y-m-01');
-        $running_forecast += (float)($forecast_monthly_totals[$month_key] ?? 0);
-        $running_actual += (float)($actual_monthly_totals[$month_key] ?? 0);
-
-        $forecast_actual_labels[] = $cursor->format('M Y');
-        $forecast_actual_forecast_cumulative[] = round($running_forecast, 2);
-        $forecast_actual_actual_cumulative[] = round($running_actual, 2);
-
-        $cursor = $cursor->modify('+1 month');
-    }
+    $week_start = new DateTimeImmutable($week_key);
+    $forecast_actual_labels[] = $week_start->format('M j');
+    $forecast_actual_forecast_cumulative[] = round($running_forecast, 2);
+    $forecast_actual_actual_cumulative[] = round($running_actual, 2);
 }
 
+$weekly_projection_preview = array_slice($weekly_projection_rows, 0, 5);
+$has_more_weekly_rows = count($weekly_projection_rows) > count($weekly_projection_preview);
+$weekly_projection_view_all_url = 'anticipated_deliveries.php?project_id=' . (int)$project_id . '&view=weekly-projections';
+if ($primary_projection_id > 0) {
+    $weekly_projection_view_all_url .= '&projection_id=' . $primary_projection_id;
+}
 $has_forecast_actual_chart_data = !empty($forecast_actual_labels);
 
 // Warehouse name lookup for status display
@@ -2041,6 +2404,31 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             color: #488C9A;
         }
 
+        .cashflow-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .cashflow-header h3 {
+            margin: 0;
+        }
+
+        .view-all-link {
+            font-size: 0.85em;
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .view-all-link:hover {
+            color: #2f6673;
+            text-decoration: underline;
+        }
+
         .chart-container {
             position: relative;
             height: 250px;
@@ -2071,12 +2459,143 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             padding: 18px;
         }
 
+        .summary-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            align-items: start;
+            margin-bottom: 20px;
+        }
+
+        .summary-column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            min-width: 0;
+        }
+
+        .summary-card {
+            height: 430px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .summary-card .chart-container,
+        .summary-card .forecast-chart-container {
+            flex: 1;
+            min-height: 0;
+        }
+
+        .summary-milestones-wrap {
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .summary-milestones-wrap .milestone-detail-section {
+            margin: 0 !important;
+            height: 100%;
+        }
+
+        .summary-milestones-wrap .milestone-detail-section > div {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            border-radius: 20px !important;
+            border: 1px solid rgba(72, 140, 154, 0.08) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        }
+
+        .summary-milestones-wrap .milestone-detail-section > div > div:first-child {
+            background: transparent !important;
+            color: #293E4C !important;
+            border-bottom: 1px solid #e8ecef;
+            padding: 16px 20px 12px 20px !important;
+        }
+
+        .summary-milestones-wrap .milestone-detail-section > div > div:first-child h4 {
+            color: #293E4C !important;
+            font-size: 1.2em !important;
+            font-weight: 600 !important;
+        }
+
+        .summary-milestones-wrap .milestone-detail-section > div > div:first-child h4 span:first-child {
+            display: none;
+        }
+
+        .summary-milestones-wrap .milestone-detail-section > div > div:first-child > div > span {
+            color: #488C9A !important;
+            font-weight: 600 !important;
+        }
+
+        .summary-milestones-wrap #milestone-detail-body {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 14px 18px !important;
+        }
+
+        .weekly-table-wrapper {
+            overflow: auto;
+            border: 1px solid rgba(72, 140, 154, 0.14);
+            border-radius: 12px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .weekly-projections-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 760px;
+            font-size: 0.85em;
+        }
+
+        .weekly-projections-table th {
+            background: #293E4C;
+            color: #ffffff;
+            text-align: left;
+            padding: 10px 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .weekly-projections-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #edf1f3;
+            color: #435160;
+            white-space: nowrap;
+        }
+
+        .weekly-projections-table tbody tr:nth-child(even) {
+            background: rgba(72, 140, 154, 0.03);
+        }
+
+        .weekly-projections-table .weekly-totals-row td {
+            background: #f3f7f9;
+            border-top: 1px solid #dde7ec;
+            border-bottom: none;
+            font-weight: 600;
+        }
+
+        .weekly-preview-note {
+            margin: 10px 0 0 0;
+            font-size: 0.82em;
+            color: #5e6c77;
+        }
+
         @media (max-width: 992px) {
             .charts-section {
                 grid-template-columns: 1fr;
             }
             .logistics-breakdown-grid {
                 grid-template-columns: 1fr;
+            }
+            .summary-layout {
+                grid-template-columns: 1fr;
+            }
+            .summary-card {
+                height: auto;
+                min-height: 380px;
             }
         }
 
@@ -3016,41 +3535,110 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         </div>
     </div>
 
-    <div class="milestone-cost-layout" style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
-        <div style="flex: 1 1 0; min-width: 320px;">
-            <!-- Module Payment Milestones Section -->
-            <?php
-            // Include the milestone detail table component
-            $section_title = 'Module Payment Milestones';
-            $collapsible = false;
-            include 'components/milestone_detail_table.php';
-
-            // Close the database connection after milestone component is done
-            $conn->close();
-            ?>
-        </div>
-        <div style="flex: 1 1 0; min-width: 320px;">
-            <div class="chart-card" style="margin-top: 0;">
-                <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
-                <div class="chart-container">
-                    <canvas id="costBreakdownChart"></canvas>
-                </div>
-            </div>
-            <div class="chart-card" style="margin-top: 20px;">
-                <h3><i class="fas fa-chart-line"></i> Forecasted vs Actual Cost</h3>
-                <p class="chart-subtitle">Cumulative logistics cost by month from planned delivery dates vs actual delivery dates.</p>
-                <?php if ($has_forecast_actual_chart_data): ?>
-                <div class="forecast-chart-container">
-                    <canvas id="forecastActualCostChart"></canvas>
-                </div>
-                <?php else: ?>
-                <div class="chart-empty-state">
-                    Add anticipated and/or actual delivery dates to view forecasted vs actual trend lines.
-                </div>
-                <?php endif; ?>
-            </div>
-        </div>
+    <!-- Tabs Navigation -->
+    <div class="tabs-nav">
+        <button class="tab-btn active" onclick="switchTab('summary')">Summary</button>
+        <button class="tab-btn" onclick="switchTab('pallets')">Pallet Costs</button>
     </div>
+
+    <div id="tab-summary" class="tab-content active">
+        <div class="summary-layout">
+            <div class="summary-column summary-column-left">
+                <div class="chart-card summary-card" style="margin-top: 0;">
+                    <div class="cashflow-header">
+                        <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="costBreakdownChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="summary-milestones-wrap summary-card">
+                    <?php
+                    // Include the milestone detail table component
+                    $section_title = 'Module Payment Milestones';
+                    $collapsible = false;
+                    $compact_batch_header = true;
+                    include 'components/milestone_detail_table.php';
+
+                    // Close the database connection after milestone component is done
+                    $conn->close();
+                    ?>
+                </div>
+            </div>
+
+            <div class="summary-column summary-column-right">
+                <div class="chart-card summary-card" style="margin-top: 0;">
+                    <div class="cashflow-header">
+                        <h3><i class="fas fa-chart-line"></i> Forecasted vs Actual Cost</h3>
+                        <a href="<?php echo htmlspecialchars($weekly_projection_view_all_url); ?>" class="view-all-link">View All</a>
+                    </div>
+                    <p class="chart-subtitle">Cumulative weekly cost trend from planned delivery dates vs actual delivery dates.</p>
+                    <?php if ($has_forecast_actual_chart_data): ?>
+                    <div class="forecast-chart-container">
+                        <canvas id="forecastActualCostChart"></canvas>
+                    </div>
+                    <?php else: ?>
+                    <div class="chart-empty-state">
+                        Add anticipated and/or actual delivery dates to view forecasted vs actual trend lines.
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="chart-card summary-card" style="margin-top: 0px;">
+                    <div class="cashflow-header">
+                        <h3><i class="fas fa-calendar-week"></i> Weekly Cost Projections</h3>
+                        <a href="<?php echo htmlspecialchars($weekly_projection_view_all_url); ?>" class="view-all-link">View All</a>
+                    </div>
+                    <?php if (!empty($weekly_projection_preview)): ?>
+                    <div class="weekly-table-wrapper">
+                        <table class="weekly-projections-table">
+                            <thead>
+                                <tr>
+                                    <th>Week</th>
+                                    <th>Date Range</th>
+                                    <th>Freight</th>
+                                    <th>Warehousing</th>
+                                    <th>Milestones</th>
+                                    <th>Weekly Total</th>
+                                    <th>Cumulative</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($weekly_projection_preview as $row): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($row['week_label']); ?></td>
+                                    <td><?php echo htmlspecialchars($row['date_range']); ?></td>
+                                    <td>$<?php echo number_format((float)$row['freight'], 2); ?></td>
+                                    <td>$<?php echo number_format((float)$row['warehousing'], 2); ?></td>
+                                    <td>$<?php echo number_format((float)$row['milestones'], 2); ?></td>
+                                    <td style="font-weight: 600;">$<?php echo number_format((float)$row['weekly_total'], 2); ?></td>
+                                    <td style="font-weight: 700; color: #488C9A;">$<?php echo number_format((float)$row['cumulative'], 2); ?></td>
+                                </tr>
+                                <?php endforeach; ?>
+                                <tr class="weekly-totals-row">
+                                    <td><strong>Total</strong></td>
+                                    <td><?php echo htmlspecialchars($weekly_projection_total_range); ?></td>
+                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['freight'], 2); ?></strong></td>
+                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['warehousing'], 2); ?></strong></td>
+                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['milestones'], 2); ?></strong></td>
+                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['weekly_total'], 2); ?></strong></td>
+                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['weekly_total'], 2); ?></strong></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <?php if ($has_more_weekly_rows): ?>
+                    <p class="weekly-preview-note">Showing first 5 weeks. Select <strong>View All</strong> for the full weekly projection table.</p>
+                    <?php endif; ?>
+                    <?php else: ?>
+                    <div class="chart-empty-state">
+                        Add dates in project planning to generate weekly cost projections.
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
 
     <!-- Logistics Breakdown Modal -->
     <div id="logisticsModal" class="logistics-modal">
@@ -3232,14 +3820,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         </form>
     </div>
 
-    <!-- Tabs Navigation -->
-    <div class="tabs-nav">
-        <button class="tab-btn active" onclick="switchTab('pallets')">Pallet Details</button>
-        <button class="tab-btn" onclick="switchTab('deliveries')">Delivery Breakdown</button>
-    </div>
-
-    <!-- Deliveries Tab -->
-    <div id="tab-deliveries" class="tab-content">
+    <!-- Delivery Breakdown (Summary Tab) -->
         <!-- Pagination Controls (Deliveries) -->
         <?php if (!empty($deliveries)): ?>
             <?php
@@ -3278,7 +3859,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             <div class="table-header">
                 <h3 class="table-title">
                     <i class="fas fa-dollar-sign"></i>
-                    Cost Breakdown
+                    Delivery Cost Breakdown
                 </h3>
                 <div class="table-header-actions">
                     <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
@@ -3437,7 +4018,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     </div>
 
     <!-- Pallets Tab -->
-    <div id="tab-pallets" class="tab-content active">
+    <div id="tab-pallets" class="tab-content">
         <?php if (!empty($pallets_data)): ?>
             <?php
                 $pallet_start = $total_pallets_found > 0 ? ($pallet_offset + 1) : 0;
@@ -3781,32 +4362,41 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     }
 
     function switchTab(tabName) {
+        let normalizedTab = tabName;
+        if (normalizedTab === 'deliveries') {
+            normalizedTab = 'summary';
+        }
+        if (!document.getElementById('tab-' + normalizedTab)) {
+            normalizedTab = 'summary';
+        }
+
         // Hide all tabs
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
         
         // Show selected
-        document.getElementById('tab-' + tabName).classList.add('active');
+        document.getElementById('tab-' + normalizedTab).classList.add('active');
         
         // Activate button
         const btns = document.querySelectorAll('.tab-btn');
         btns.forEach(btn => {
-            if (btn.getAttribute('onclick').includes(tabName)) {
+            if (btn.getAttribute('onclick').includes(normalizedTab)) {
                 btn.classList.add('active');
             }
         });
         
         // Store preference
-        localStorage.setItem('cost_details_tab', tabName);
+        localStorage.setItem('cost_details_tab', normalizedTab);
 
-        const statusContext = tabName === 'deliveries' ? 'deliveries' : 'pallets';
+        const statusContext = normalizedTab === 'pallets' ? 'pallets' : 'deliveries';
         setStatusContext(statusContext);
     }
     
     // Restore tab on load
     document.addEventListener('DOMContentLoaded', () => {
-        const savedTab = localStorage.getItem('cost_details_tab');
-        switchTab(savedTab || 'pallets');
+        const savedTabRaw = localStorage.getItem('cost_details_tab');
+        const savedTab = savedTabRaw === 'deliveries' ? 'summary' : savedTabRaw;
+        switchTab(savedTab || 'summary');
         setViewMode('dollars');
     });
 
