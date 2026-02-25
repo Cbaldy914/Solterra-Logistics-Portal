@@ -1084,23 +1084,38 @@ class SunnyTools {
                 return $result;
             }
 
-            // Align warehousing cost with portal helper logic instead of relying only on recorded pallet values.
+            // Align costs with portal helper logic (warehousing + customs hold).
             $conn = $this->queryExecutor->getConnection();
-            if ($conn && function_exists('calculate_project_warehousing_cost')) {
+            if ($conn) {
+                $canCalcWarehousing = function_exists('calculate_project_warehousing_cost');
+                $canCalcCustomsHold = function_exists('calculate_project_customs_hold_cost');
+
                 foreach ($result['data'] as &$row) {
                     $pid = intval($row['id'] ?? 0);
                     if ($pid <= 0) {
                         continue;
                     }
 
-                    $computedWarehousing = round(floatval(calculate_project_warehousing_cost($pid, $conn)), 2);
+                    $computedWarehousing = $canCalcWarehousing
+                        ? round(floatval(calculate_project_warehousing_cost($pid, $conn)), 2)
+                        : round(floatval($row['total_warehousing_cost'] ?? 0), 2);
                     $freight = round(floatval($row['total_freight_cost'] ?? 0), 2);
-                    $accessorial = round(floatval($row['total_accessorial_costs'] ?? 0), 2);
+                    $baseAccessorial = round(floatval($row['total_accessorial_costs'] ?? 0), 2);
+                    $customsHold = $canCalcCustomsHold
+                        ? round(floatval(calculate_project_customs_hold_cost($pid, $conn)), 2)
+                        : 0.0;
+                    $accessorial = $baseAccessorial + $customsHold;
 
+                    $row['total_customs_hold_cost'] = $customsHold;
                     $row['total_warehousing_cost'] = $computedWarehousing;
-                    $row['total_logistics_cost'] = round($freight + $accessorial + $computedWarehousing, 2);
+                    $row['total_accessorial_costs'] = round($accessorial, 2);
+                    $row['total_logistics_cost'] = round($freight + $row['total_accessorial_costs'] + $computedWarehousing, 2);
                 }
                 unset($row);
+
+                usort($result['data'], static function ($a, $b) {
+                    return (float)($b['total_logistics_cost'] ?? 0) <=> (float)($a['total_logistics_cost'] ?? 0);
+                });
             }
 
             return $result;

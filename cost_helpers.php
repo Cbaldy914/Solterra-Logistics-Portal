@@ -486,6 +486,43 @@ function get_portfolio_module_costs($conn, $user_id, $role) {
 }
 
 /**
+ * Calculate total customs hold cost for a project.
+ * Includes pallets linked by assigned project, current project, or module batch project.
+ *
+ * @param int $project_id The project ID
+ * @param mysqli $conn Database connection
+ * @return float Total customs hold cost
+ */
+function calculate_project_customs_hold_cost($project_id, $conn) {
+    if (!$project_id || !$conn) {
+        return 0.0;
+    }
+
+    $total_customs_hold = 0.0;
+    $stmt = $conn->prepare("
+        SELECT COALESCE(SUM(COALESCE(ip.customs_hold_cost, 0)), 0) AS total_customs_hold
+        FROM inventory_pallets ip
+        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE ip.assigned_project_id = ?
+           OR ip.current_project_id = ?
+           OR m.project_id = ?
+    ");
+
+    if (!$stmt) {
+        return 0.0;
+    }
+
+    $stmt->bind_param("iii", $project_id, $project_id, $project_id);
+    $stmt->execute();
+    $stmt->bind_result($total_customs_hold);
+    $stmt->fetch();
+    $stmt->close();
+
+    return (float)$total_customs_hold;
+}
+
+/**
  * Calculate total warehousing cost for a project based on pallet data.
  * Uses recorded warehouse_cost when available, or calculates from warehouse cost items.
  *

@@ -181,6 +181,7 @@ try {
                 -- Warehouse info (current location)
                 w2.id as current_warehouse_id_info,
                 COALESCE(w2.name, '') as current_warehouse_name,
+                COALESCE(w2.is_port, 0) as current_warehouse_is_port,
                 COALESCE(w2.street_address, '') as current_wh_street,
                 COALESCE(w2.city, '') as current_wh_city,
                 COALESCE(w2.state, '') as current_wh_state,
@@ -189,6 +190,7 @@ try {
                 -- Delivery warehouse info (destination from delivery)
                 w.id as delivery_warehouse_id,
                 COALESCE(w.name, '') as delivery_warehouse_name,
+                COALESCE(w.is_port, 0) as delivery_warehouse_is_port,
                 COALESCE(w.street_address, '') as delivery_wh_street,
                 COALESCE(w.city, '') as delivery_wh_city,
                 COALESCE(w.state, '') as delivery_wh_state,
@@ -197,6 +199,7 @@ try {
                 -- Origin warehouse info (where delivery originated if from a warehouse)
                 w_origin.id as origin_warehouse_id,
                 COALESCE(w_origin.name, '') as origin_warehouse_name,
+                COALESCE(w_origin.is_port, 0) as origin_warehouse_is_port,
                 COALESCE(w_origin.street_address, '') as origin_wh_street,
                 COALESCE(w_origin.city, '') as origin_wh_city,
                 COALESCE(w_origin.state, '') as origin_wh_state,
@@ -263,9 +266,9 @@ try {
             GROUP BY 
                 ip.status, ip.wattage, m.vendor_name, 
                 mfg.name, mfg.street_address, mfg.city, mfg.state, mfg.zip_code,
-                w2.id, w2.name, w2.street_address, w2.city, w2.state, w2.zip_code,
-                w.id, w.name, w.street_address, w.city, w.state, w.zip_code,
-                w_origin.id, w_origin.name, w_origin.street_address, w_origin.city, w_origin.state, w_origin.zip_code,
+                w2.id, w2.name, w2.is_port, w2.street_address, w2.city, w2.state, w2.zip_code,
+                w.id, w.name, w.is_port, w.street_address, w.city, w.state, w.zip_code,
+                w_origin.id, w_origin.name, w_origin.is_port, w_origin.street_address, w_origin.city, w_origin.state, w_origin.zip_code,
                 p.project_name, p.street_address, p.city, p.state, p.zip_code,
                 d.origin_type, d.origin_id
             ORDER BY ip.status ASC, m.vendor_name ASC
@@ -1299,7 +1302,11 @@ $conn->close();
                         $currentWarehouse = trim((string)($movementEntry['current_warehouse_name'] ?? ''));
                         $deliveryWarehouse = trim((string)($movementEntry['delivery_warehouse_name'] ?? ''));
                         $originWarehouse = trim((string)($movementEntry['origin_warehouse_name'] ?? ''));
+                        $currentWarehouseIsPort = ((int)($movementEntry['current_warehouse_is_port'] ?? 0) === 1);
+                        $deliveryWarehouseIsPort = ((int)($movementEntry['delivery_warehouse_is_port'] ?? 0) === 1);
+                        $originWarehouseIsPort = ((int)($movementEntry['origin_warehouse_is_port'] ?? 0) === 1);
                         $warehouseHistoryName = '';
+                        $warehouseHistoryIsPort = false;
 
                         if ($status === 'At Manufacturer') {
                             $status_totals['manufacturer']['pallets'] += $palletCount;
@@ -1312,7 +1319,16 @@ $conn->close();
                                 $projectName = 'Project Site';
                             }
                             $addSummary($project_summary, $projectName, $palletCount, $moduleCount);
-                            $warehouseHistoryName = $originWarehouse !== '' ? $originWarehouse : ($deliveryWarehouse !== '' ? $deliveryWarehouse : $currentWarehouse);
+                            if ($originWarehouse !== '') {
+                                $warehouseHistoryName = $originWarehouse;
+                                $warehouseHistoryIsPort = $originWarehouseIsPort;
+                            } elseif ($deliveryWarehouse !== '') {
+                                $warehouseHistoryName = $deliveryWarehouse;
+                                $warehouseHistoryIsPort = $deliveryWarehouseIsPort;
+                            } else {
+                                $warehouseHistoryName = $currentWarehouse;
+                                $warehouseHistoryIsPort = $currentWarehouseIsPort;
+                            }
                         } else {
                             // Intermediate totals should only represent pallets physically at an intermediate stop.
                             if (in_array($status, ['In Warehouse', 'Cleared Customs', 'Customs Hold'], true)) {
@@ -1321,17 +1337,49 @@ $conn->close();
                             }
                             if ($status === 'In Warehouse') {
                                 $warehouseHistoryName = $currentWarehouse;
+                                $warehouseHistoryIsPort = $currentWarehouseIsPort;
                             } elseif (in_array($status, ['Cleared Customs', 'Customs Hold'], true)) {
-                                $warehouseHistoryName = $deliveryWarehouse !== '' ? $deliveryWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $originWarehouse);
+                                if ($deliveryWarehouse !== '') {
+                                    $warehouseHistoryName = $deliveryWarehouse;
+                                    $warehouseHistoryIsPort = $deliveryWarehouseIsPort;
+                                } elseif ($currentWarehouse !== '') {
+                                    $warehouseHistoryName = $currentWarehouse;
+                                    $warehouseHistoryIsPort = $currentWarehouseIsPort;
+                                } else {
+                                    $warehouseHistoryName = $originWarehouse;
+                                    $warehouseHistoryIsPort = $originWarehouseIsPort;
+                                }
                             } elseif ($status === 'In Transit to Warehouse') {
-                                $warehouseHistoryName = $deliveryWarehouse !== '' ? $deliveryWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $originWarehouse);
+                                if ($deliveryWarehouse !== '') {
+                                    $warehouseHistoryName = $deliveryWarehouse;
+                                    $warehouseHistoryIsPort = $deliveryWarehouseIsPort;
+                                } elseif ($currentWarehouse !== '') {
+                                    $warehouseHistoryName = $currentWarehouse;
+                                    $warehouseHistoryIsPort = $currentWarehouseIsPort;
+                                } else {
+                                    $warehouseHistoryName = $originWarehouse;
+                                    $warehouseHistoryIsPort = $originWarehouseIsPort;
+                                }
                             } elseif ($status === 'In Transit to Project') {
-                                $warehouseHistoryName = $originWarehouse !== '' ? $originWarehouse : ($currentWarehouse !== '' ? $currentWarehouse : $deliveryWarehouse);
+                                if ($originWarehouse !== '') {
+                                    $warehouseHistoryName = $originWarehouse;
+                                    $warehouseHistoryIsPort = $originWarehouseIsPort;
+                                } elseif ($currentWarehouse !== '') {
+                                    $warehouseHistoryName = $currentWarehouse;
+                                    $warehouseHistoryIsPort = $currentWarehouseIsPort;
+                                } else {
+                                    $warehouseHistoryName = $deliveryWarehouse;
+                                    $warehouseHistoryIsPort = $deliveryWarehouseIsPort;
+                                }
                             }
                         }
 
                         if ($warehouseHistoryName !== '') {
-                            $addSummary($intermediate_summary['warehouses'], $warehouseHistoryName, $palletCount, $moduleCount);
+                            if ($warehouseHistoryIsPort) {
+                                $addSummary($intermediate_summary['ports'], $warehouseHistoryName, $palletCount, $moduleCount);
+                            } else {
+                                $addSummary($intermediate_summary['warehouses'], $warehouseHistoryName, $palletCount, $moduleCount);
+                            }
                         }
                     }
 
@@ -1347,6 +1395,13 @@ $conn->close();
                                 (int)($containerEntry['pallet_count'] ?? 0),
                                 (int)($containerEntry['module_count'] ?? 0)
                             );
+                        }
+                    }
+
+                    // Prevent a true port facility from appearing in both sections.
+                    foreach (array_keys($intermediate_summary['ports']) as $portLabel) {
+                        if (isset($intermediate_summary['warehouses'][$portLabel])) {
+                            unset($intermediate_summary['warehouses'][$portLabel]);
                         }
                     }
 
@@ -2587,7 +2642,7 @@ function showDetailedBreakdown(type) {
         titleText = '📍 Manufacturer Details';
         contentHtml = generateManufacturerBreakdown();
     } else if (type === 'intermediate') {
-        titleText = '🧭 Ports / Warehouses Details';
+        titleText = '🧭 Port / Warehouse Details';
         contentHtml = generateIntermediateBreakdown();
     } else if (type === 'project') {
         titleText = '🎯 Project Details';

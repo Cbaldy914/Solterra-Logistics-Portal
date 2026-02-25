@@ -17,10 +17,17 @@ $google_maps_api_key = function_exists('getGoogleMapsApiKey') ? (string)getGoogl
 $role = $_SESSION['role'];
 $user_id = (int)$_SESSION['user_id'];
 $can_edit_eta = in_array($role, ['admin', 'global_admin', 'customer_admin'], true);
-$map_picker_enabled = $can_edit_eta && $google_maps_api_key !== '';
 $selected_project_id = isset($_GET['project_id'])
     ? (int)$_GET['project_id']
     : (isset($_POST['scope_project_id']) ? (int)$_POST['scope_project_id'] : 0);
+$selected_tab = isset($_GET['tab'])
+    ? trim((string)$_GET['tab'])
+    : (isset($_POST['scope_tab']) ? trim((string)$_POST['scope_tab']) : 'on_water');
+if (!in_array($selected_tab, ['on_water', 'history'], true)) {
+    $selected_tab = 'on_water';
+}
+$can_edit_active_tab = $can_edit_eta && $selected_tab === 'on_water';
+$map_picker_enabled = $can_edit_active_tab && $google_maps_api_key !== '';
 $tracker_flash = $_SESSION['container_tracking_flash'] ?? null;
 unset($_SESSION['container_tracking_flash']);
 
@@ -35,6 +42,9 @@ $positions_table_ready_message = '';
 $project_waypoint_library = [];
 $container_waypoint_cutoff = [];
 $container_route_context = [];
+$on_water_containers = [];
+$history_containers = [];
+$visible_containers = [];
 
 function has_container_tracking_positions_table(mysqli $conn): bool {
     $result = $conn->query("SHOW TABLES LIKE 'container_tracking_positions'");
@@ -191,7 +201,7 @@ try {
         $postSuccess = null;
 
         try {
-            if (!$can_edit_eta) {
+            if (!$can_edit_active_tab) {
                 throw new Exception('You do not have permission to update container data.');
             }
 
@@ -383,7 +393,12 @@ try {
             'type' => $postError ? 'error' : 'success',
             'message' => $postError ?: $postSuccess
         ];
-        $redirectSuffix = $selected_project_id > 0 ? '?project_id=' . (int)$selected_project_id : '';
+        $redirectParams = [];
+        if ($selected_project_id > 0) {
+            $redirectParams['project_id'] = (int)$selected_project_id;
+        }
+        $redirectParams['tab'] = $selected_tab;
+        $redirectSuffix = '?' . http_build_query($redirectParams);
         header('Location: container_tracking.php' . $redirectSuffix);
         exit();
     }
@@ -441,6 +456,7 @@ try {
             d.container_number,
             d.status_of_delivery,
             d.anticipated_delivery_date AS eta_date,
+            d.warehouse_arrival_date AS arrived_date,
             d.left_warehouse_date AS departed_date,
             d.created_at,
             d.project_id,
@@ -602,6 +618,17 @@ try {
             : null;
     }
     unset($containerRow);
+
+    foreach ($containers as $containerRow) {
+        $statusRaw = trim((string)($containerRow['status_of_delivery'] ?? ''));
+        $isOnWaterStatus = in_array($statusRaw, ['On Water', 'Departed Port'], true);
+        if ($isOnWaterStatus) {
+            $on_water_containers[] = $containerRow;
+        } else {
+            $history_containers[] = $containerRow;
+        }
+    }
+    $visible_containers = ($selected_tab === 'history') ? $history_containers : $on_water_containers;
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
 }
@@ -686,6 +713,36 @@ $conn->close();
             margin-bottom: 20px;
         }
         .tracker-card h2 { margin: 0 0 14px 0; color: #17364d; }
+        .tracker-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .tracker-tab {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 10px 18px;
+            border-radius: 999px;
+            background: #f1f5f9;
+            color: #475569;
+            border: 1px solid #dbe5ee;
+            font-size: 0.9em;
+            font-weight: 700;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .tracker-tab:hover {
+            background: #e2e8f0;
+        }
+        .tracker-tab.active {
+            background: #488C9A;
+            color: #fff;
+            border-color: #488C9A;
+            box-shadow: 0 4px 10px rgba(72, 140, 154, 0.22);
+        }
         .tracker-filters {
             display: flex;
             gap: 12px;
@@ -1112,6 +1169,7 @@ $conn->close();
 
     <div class="tracker-card">
         <form method="GET" class="tracker-filters">
+            <input type="hidden" name="tab" value="<?php echo htmlspecialchars($selected_tab); ?>">
             <div>
                 <label for="project_id">Project</label>
                 <select name="project_id" id="project_id">
@@ -1127,13 +1185,36 @@ $conn->close();
         </form>
     </div>
 
+    <?php
+        $onWaterTabParams = ['tab' => 'on_water'];
+        $historyTabParams = ['tab' => 'history'];
+        if ($selected_project_id > 0) {
+            $onWaterTabParams['project_id'] = (int)$selected_project_id;
+            $historyTabParams['project_id'] = (int)$selected_project_id;
+        }
+        $onWaterTabUrl = 'container_tracking.php?' . http_build_query($onWaterTabParams);
+        $historyTabUrl = 'container_tracking.php?' . http_build_query($historyTabParams);
+    ?>
+    <div class="tracker-tabs">
+        <a href="<?php echo htmlspecialchars($onWaterTabUrl); ?>" class="tracker-tab <?php echo $selected_tab === 'on_water' ? 'active' : ''; ?>">
+            On Water (<?php echo number_format(count($on_water_containers)); ?>)
+        </a>
+        <a href="<?php echo htmlspecialchars($historyTabUrl); ?>" class="tracker-tab <?php echo $selected_tab === 'history' ? 'active' : ''; ?>">
+            Arrived / History (<?php echo number_format(count($history_containers)); ?>)
+        </a>
+    </div>
+
     <?php if ($errorMessage): ?>
         <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
     <?php else: ?>
         <div class="tracker-card">
-            <h2 style="margin-top:0;">Containers</h2>
-            <?php if (empty($containers)): ?>
-                <p style="margin:0; color:#64748b;">No container records found for the selected scope.</p>
+            <h2 style="margin-top:0;"><?php echo $selected_tab === 'history' ? 'Arrived Container History' : 'On Water Containers'; ?></h2>
+            <?php if (empty($visible_containers)): ?>
+                <p style="margin:0; color:#64748b;">
+                    <?php echo $selected_tab === 'history'
+                        ? 'No arrived container history found for the selected scope.'
+                        : 'No on-water container records found for the selected scope.'; ?>
+                </p>
             <?php else: ?>
                 <div class="tracker-table-wrap">
                     <table>
@@ -1142,31 +1223,36 @@ $conn->close();
                                 <th>Container</th>
                                 <th>Project</th>
                                 <th>Status</th>
-                                <th>ETA</th>
+                                <th><?php echo $selected_tab === 'history' ? 'Actual Arrival Date' : 'ETA'; ?></th>
                                 <th>Vessel Position</th>
                                 <th>Waypoints</th>
-                                <th>Days To ETA</th>
+                                <th><?php echo $selected_tab === 'history' ? 'Timing' : 'Days To ETA'; ?></th>
                                 <th>Destination Port</th>
                                 <th>Pallets</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($containers as $container): ?>
+                            <?php foreach ($visible_containers as $container): ?>
                                 <?php
                                     $days = $container['days_to_eta'];
                                     $daysClass = '';
                                     $daysText = 'N/A';
-                                    if ($days !== null) {
-                                        if ($days > 0) {
-                                            $daysClass = 'eta-positive';
-                                            $daysText = $days . ' day' . ($days === 1 ? '' : 's');
-                                        } elseif ($days === 0) {
-                                            $daysClass = 'eta-today';
-                                            $daysText = 'Today';
-                                        } else {
-                                            $daysClass = 'eta-late';
-                                            $daysText = abs($days) . ' day' . (abs($days) === 1 ? '' : 's') . ' late';
+                                    if ($selected_tab === 'history') {
+                                        $daysClass = 'eta-positive';
+                                        $daysText = 'Arrived';
+                                    } else {
+                                        if ($days !== null) {
+                                            if ($days > 0) {
+                                                $daysClass = 'eta-positive';
+                                                $daysText = $days . ' day' . ($days === 1 ? '' : 's');
+                                            } elseif ($days === 0) {
+                                                $daysClass = 'eta-today';
+                                                $daysText = 'Today';
+                                            } else {
+                                                $daysClass = 'eta-late';
+                                                $daysText = abs($days) . ' day' . (abs($days) === 1 ? '' : 's') . ' late';
+                                            }
                                         }
                                     }
                                 ?>
@@ -1199,13 +1285,31 @@ $conn->close();
                                         <?php
                                             $etaValue = trim((string)($container['eta_date'] ?? ''));
                                             $etaFieldValue = ($etaValue !== '' && $etaValue !== '0000-00-00') ? $etaValue : '';
+                                            $arrivedValue = trim((string)($container['arrived_date'] ?? ''));
+                                            if ($arrivedValue === '' || $arrivedValue === '0000-00-00') {
+                                                $arrivedValue = trim((string)($container['departed_date'] ?? ''));
+                                            }
+                                            if ($arrivedValue === '' || $arrivedValue === '0000-00-00') {
+                                                $arrivedValue = $etaFieldValue;
+                                            }
+                                            $arrivedDisplay = 'N/A';
+                                            if ($arrivedValue !== '' && $arrivedValue !== '0000-00-00') {
+                                                try {
+                                                    $arrivedDisplay = (new DateTime($arrivedValue))->format('Y-m-d');
+                                                } catch (Exception $ignored) {
+                                                    $arrivedDisplay = $arrivedValue;
+                                                }
+                                            }
                                         ?>
-                                        <?php if ($can_edit_eta): ?>
+                                        <?php if ($selected_tab === 'history'): ?>
+                                            <?php echo htmlspecialchars($arrivedDisplay); ?>
+                                        <?php elseif ($can_edit_active_tab): ?>
                                             <form method="POST" class="eta-edit-form">
                                                 <input type="hidden" name="form_action" value="update_eta">
                                                 <input type="hidden" name="container_number" value="<?php echo htmlspecialchars((string)$container['container_number']); ?>">
                                                 <input type="hidden" name="project_id" value="<?php echo (int)($container['project_id'] ?? 0); ?>">
                                                 <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
+                                                <input type="hidden" name="scope_tab" value="<?php echo htmlspecialchars($selected_tab); ?>">
                                                 <input type="date" name="eta_date" value="<?php echo htmlspecialchars($etaFieldValue); ?>" required>
                                                 <button type="submit" class="eta-save-btn">Save</button>
                                             </form>
@@ -1222,12 +1326,13 @@ $conn->close();
                                             $waypointCount = (int)($container['waypoint_count'] ?? 0);
                                             $lastWaypointAt = trim((string)($container['last_waypoint_at'] ?? ''));
                                         ?>
-                                        <?php if ($can_edit_eta && $positions_table_exists): ?>
+                                        <?php if ($can_edit_active_tab && $positions_table_exists): ?>
                                             <form method="POST" class="position-edit-form">
                                                 <input type="hidden" name="form_action" value="update_position">
                                                 <input type="hidden" name="container_number" value="<?php echo htmlspecialchars((string)$container['container_number']); ?>">
                                                 <input type="hidden" name="project_id" value="<?php echo (int)($container['project_id'] ?? 0); ?>">
                                                 <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
+                                                <input type="hidden" name="scope_tab" value="<?php echo htmlspecialchars($selected_tab); ?>">
                                                 <input type="number" step="0.000001" min="-90" max="90" name="vessel_latitude" placeholder="Lat" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLat, 6, '.', '')) : ''; ?>">
                                                 <input type="number" step="0.000001" min="-180" max="180" name="vessel_longitude" placeholder="Lng" value="<?php echo $hasPosition ? htmlspecialchars(number_format((float)$vesselLng, 6, '.', '')) : ''; ?>">
                                                 <button type="submit" class="eta-save-btn">Save</button>
@@ -1268,10 +1373,12 @@ $conn->close();
                                     <td>
                                         <div class="tracker-actions">
                                             <a href="<?php echo htmlspecialchars($detailsHref); ?>" class="tracker-action-btn">View</a>
-                                            <?php if ($receiveHref !== ''): ?>
+                                            <?php if ($selected_tab !== 'history' && $receiveHref !== ''): ?>
                                                 <a href="<?php echo htmlspecialchars($receiveHref); ?>" class="tracker-action-btn receive">Receive</a>
-                                            <?php else: ?>
+                                            <?php elseif ($selected_tab !== 'history'): ?>
                                                 <span class="tracker-action-disabled">No destination port</span>
+                                            <?php else: ?>
+                                                <span class="tracker-action-disabled">Arrived</span>
                                             <?php endif; ?>
                                         </div>
                                     </td>
@@ -1284,7 +1391,7 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <?php if ($can_edit_eta && $positions_table_exists): ?>
+    <?php if ($can_edit_active_tab && $positions_table_exists): ?>
         <div id="positionPickerModal" class="position-picker-modal" aria-hidden="true">
             <div class="position-picker-content">
                 <div class="position-picker-header">
@@ -1333,13 +1440,14 @@ $conn->close();
         <input type="hidden" name="container_number" id="deleteWaypointContainerNumber" value="">
         <input type="hidden" name="project_id" id="deleteWaypointProjectId" value="">
         <input type="hidden" name="scope_project_id" value="<?php echo (int)$selected_project_id; ?>">
+        <input type="hidden" name="scope_tab" value="<?php echo htmlspecialchars($selected_tab); ?>">
         <input type="hidden" name="waypoint_id" id="deleteWaypointId" value="">
     </form>
 </main>
 <?php if ($map_picker_enabled): ?>
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 <?php endif; ?>
-<?php if ($can_edit_eta && $positions_table_exists): ?>
+<?php if ($can_edit_active_tab && $positions_table_exists): ?>
 <script>
 const projectWaypointLibrary = <?php echo json_encode($project_waypoint_library ?? []); ?>;
 const containerRouteContext = <?php echo json_encode($container_route_context ?? []); ?>;
@@ -1840,7 +1948,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <?php endif; ?>
 <script>
 const waypointLibraryData = <?php echo json_encode($project_waypoint_library ?? []); ?>;
-const canEditWaypoints = <?php echo $can_edit_eta ? 'true' : 'false'; ?>;
+const canEditWaypoints = <?php echo $can_edit_active_tab ? 'true' : 'false'; ?>;
 
 function normalizeWaypointContainerNumber(value) {
     return String(value || '').trim();

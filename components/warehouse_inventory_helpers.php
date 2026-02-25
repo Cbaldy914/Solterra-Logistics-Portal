@@ -10,14 +10,14 @@
  * @param int $warehouse_id Warehouse/port ID
  * @param string $received_status Status filter for received items
  * @param bool $is_port Whether this is a port facility
+ * @param int|null $project_id Optional project ID to filter by
  * @return array [pallets_in_storage, total_pallets]
  */
-function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) {
+function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port, $project_id = null) {
     $pallets_in_storage = [];
     $total_pallets = 0;
 
-    // Robust pallet query - INNER JOIN to only include pallets with deliveries to current warehouse
-    $stmtP_Stored = $conn->prepare("
+    $sql = "
         SELECT
             ip.id AS pallet_id,
             ip.pallet_identifier,
@@ -37,11 +37,21 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
             AND d_received.status_of_delivery != 'Departed Port'
         LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? AND ip.status = ?
-        ORDER BY ip.arrival_date DESC, ip.id DESC
-    ");
+    ";
+    $params = [$warehouse_id, $warehouse_id, $received_status];
+    $types = "iis";
 
+    if ($project_id) {
+        $sql .= " AND ip.assigned_project_id = ?";
+        $params[] = $project_id;
+        $types .= "i";
+    }
+
+    $sql .= " ORDER BY ip.arrival_date DESC, ip.id DESC";
+
+    $stmtP_Stored = $conn->prepare($sql);
     if (!$stmtP_Stored) throw new Exception("Failed to prepare stored pallets query: " . $conn->error);
-    $stmtP_Stored->bind_param("iis", $warehouse_id, $warehouse_id, $received_status);
+    $stmtP_Stored->bind_param($types, ...$params);
     $stmtP_Stored->execute();
     $resultP_Stored = $stmtP_Stored->get_result();
 
@@ -199,12 +209,13 @@ function fetchPortPalletsByStatus($conn, $warehouse_id, $status) {
  * Fetch pallets currently in transit to this facility
  * @param mysqli $conn Database connection
  * @param int $warehouse_id Warehouse/port ID
+ * @param int|null $project_id Optional project ID to filter by
  * @return array Array of pallets in transit
  */
-function fetchTransitPallets($conn, $warehouse_id) {
+function fetchTransitPallets($conn, $warehouse_id, $project_id = null) {
     $pallets_in_transit = [];
 
-    $stmtP_Transit = $conn->prepare("
+    $sql = "
         SELECT
             ip.id AS pallet_id,
             ip.pallet_identifier,
@@ -224,11 +235,21 @@ function fetchTransitPallets($conn, $warehouse_id) {
         WHERE ip.status IN ('In Transit to Warehouse', 'On Water')
             AND d.warehouse_id = ?
             AND d.status_of_delivery != 'Departed Port'
-        ORDER BY d.anticipated_delivery_date ASC, ip.id DESC
-    ");
+    ";
+    $params = [$warehouse_id];
+    $types = "i";
 
+    if ($project_id) {
+        $sql .= " AND d.project_id = ?";
+        $params[] = $project_id;
+        $types .= "i";
+    }
+
+    $sql .= " ORDER BY d.anticipated_delivery_date ASC, ip.id DESC";
+
+    $stmtP_Transit = $conn->prepare($sql);
     if (!$stmtP_Transit) throw new Exception("Failed to prepare transit pallets query: " . $conn->error);
-    $stmtP_Transit->bind_param("i", $warehouse_id);
+    $stmtP_Transit->bind_param($types, ...$params);
     $stmtP_Transit->execute();
     $resultP_Transit = $stmtP_Transit->get_result();
 
@@ -245,12 +266,13 @@ function fetchTransitPallets($conn, $warehouse_id) {
  * Fetch transit deliveries grouped by delivery/truckload
  * @param mysqli $conn Database connection
  * @param int $warehouse_id Warehouse/port ID
+ * @param int|null $project_id Optional project ID to filter by
  * @return array Array of transit truckloads with grouped data
  */
-function fetchTransitTruckloads($conn, $warehouse_id) {
+function fetchTransitTruckloads($conn, $warehouse_id, $project_id = null) {
     $transit_truckloads = [];
 
-    $stmtTransitTruckloads = $conn->prepare("
+    $sql = "
         SELECT
             d.id AS delivery_id,
             d.bol_number,
@@ -267,12 +289,22 @@ function fetchTransitTruckloads($conn, $warehouse_id) {
         WHERE d.warehouse_id = ?
         AND ip.status IN ('In Transit to Warehouse', 'On Water')
             AND d.status_of_delivery != 'Departed Port'
-        GROUP BY d.id, d.bol_number, d.supplier, d.anticipated_delivery_date
-        ORDER BY d.anticipated_delivery_date ASC
-    ");
+    ";
+    $params = [$warehouse_id];
+    $types = "i";
 
+    if ($project_id) {
+        $sql .= " AND d.project_id = ?";
+        $params[] = $project_id;
+        $types .= "i";
+    }
+
+    $sql .= " GROUP BY d.id, d.bol_number, d.supplier, d.anticipated_delivery_date
+              ORDER BY d.anticipated_delivery_date ASC";
+
+    $stmtTransitTruckloads = $conn->prepare($sql);
     if ($stmtTransitTruckloads) {
-        $stmtTransitTruckloads->bind_param("i", $warehouse_id);
+        $stmtTransitTruckloads->bind_param($types, ...$params);
         $stmtTransitTruckloads->execute();
         $resultTransitTruckloads = $stmtTransitTruckloads->get_result();
 
@@ -311,12 +343,13 @@ function fetchTransitTruckloads($conn, $warehouse_id) {
  * Fetch inbound delivery history for this facility
  * @param mysqli $conn Database connection
  * @param int $warehouse_id Warehouse/port ID
+ * @param int|null $project_id Optional project ID to filter by
  * @return array Array of inbound delivery history grouped by BOL
  */
-function fetchInboundHistory($conn, $warehouse_id) {
+function fetchInboundHistory($conn, $warehouse_id, $project_id = null) {
     $inbound_history = [];
 
-    $stmtInboundHistory = $conn->prepare("
+    $sql = "
         SELECT
             d.bol_number,
             d.supplier,
@@ -343,12 +376,22 @@ function fetchInboundHistory($conn, $warehouse_id) {
         WHERE d.warehouse_id = ?
         AND d.status_of_delivery IN ('Delivered to Warehouse', 'Cleared Customs', 'Departed Port')
         AND d.warehouse_arrival_date IS NOT NULL
-        GROUP BY d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery
-        ORDER BY d.warehouse_arrival_date DESC
-    ");
+    ";
+    $params = [$warehouse_id];
+    $types = "i";
 
+    if ($project_id) {
+        $sql .= " AND d.project_id = ?";
+        $params[] = $project_id;
+        $types .= "i";
+    }
+
+    $sql .= " GROUP BY d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery
+              ORDER BY d.warehouse_arrival_date DESC";
+
+    $stmtInboundHistory = $conn->prepare($sql);
     if ($stmtInboundHistory) {
-        $stmtInboundHistory->bind_param("i", $warehouse_id);
+        $stmtInboundHistory->bind_param($types, ...$params);
         $stmtInboundHistory->execute();
         $resultInboundHistory = $stmtInboundHistory->get_result();
         $index = 0;
@@ -397,12 +440,13 @@ function fetchInboundHistory($conn, $warehouse_id) {
  * Fetch outbound delivery history for this facility
  * @param mysqli $conn Database connection
  * @param int $warehouse_id Warehouse/port ID
+ * @param int|null $project_id Optional project ID to filter by
  * @return array Array of outbound delivery history grouped by BOL
  */
-function fetchOutboundHistory($conn, $warehouse_id) {
+function fetchOutboundHistory($conn, $warehouse_id, $project_id = null) {
     $outbound_history = [];
 
-    $stmtOutboundHistory = $conn->prepare("
+    $sql = "
         SELECT
             d.bol_number,
             d.supplier,
@@ -431,12 +475,22 @@ function fetchOutboundHistory($conn, $warehouse_id) {
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
         WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
         AND d.left_warehouse_date IS NOT NULL
-        GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.anticipated_delivery_date, d.status_of_delivery
-        ORDER BY d.left_warehouse_date DESC
-    ");
+    ";
+    $params = [$warehouse_id, $warehouse_id, $warehouse_id];
+    $types = "iii";
 
+    if ($project_id) {
+        $sql .= " AND d.project_id = ?";
+        $params[] = $project_id;
+        $types .= "i";
+    }
+
+    $sql .= " GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.anticipated_delivery_date, d.status_of_delivery
+              ORDER BY d.left_warehouse_date DESC";
+
+    $stmtOutboundHistory = $conn->prepare($sql);
     if ($stmtOutboundHistory) {
-        $stmtOutboundHistory->bind_param("iii", $warehouse_id, $warehouse_id, $warehouse_id);
+        $stmtOutboundHistory->bind_param($types, ...$params);
         $stmtOutboundHistory->execute();
         $resultOutboundHistory = $stmtOutboundHistory->get_result();
         $index = 0;
