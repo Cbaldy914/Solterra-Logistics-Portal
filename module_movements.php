@@ -196,7 +196,7 @@ try {
                 COALESCE(w.state, '') as delivery_wh_state,
                 COALESCE(w.zip_code, '') as delivery_wh_zip,
 
-                -- Origin warehouse info (where delivery originated if from a warehouse)
+                -- Origin intermediate location info (warehouse or port)
                 w_origin.id as origin_warehouse_id,
                 COALESCE(w_origin.name, '') as origin_warehouse_name,
                 COALESCE(w_origin.is_port, 0) as origin_warehouse_is_port,
@@ -260,7 +260,7 @@ try {
             -- Link to warehouses
             LEFT JOIN warehouses w ON d.warehouse_id = w.id
             LEFT JOIN warehouses w2 ON ip.current_warehouse_id = w2.id
-            LEFT JOIN warehouses w_origin ON (d.origin_type = 'warehouse' AND d.origin_id = w_origin.id)
+            LEFT JOIN warehouses w_origin ON ((d.origin_type = 'warehouse' OR d.origin_type = 'port') AND d.origin_id = w_origin.id)
             
             WHERE p.id = ?
             GROUP BY 
@@ -1598,12 +1598,13 @@ function processMovementData() {
             }
         }
 
-        // Add warehouse location with pallets currently IN warehouse
+        // Add warehouse/port location with pallets currently IN warehouse
         if (movement.status === 'In Warehouse' && movement.current_warehouse_id_info && movement.current_warehouse_name) {
             const whKey = 'wh_' + movement.current_warehouse_id_info;
+            const isCurrentPort = parseInt(movement.current_warehouse_is_port || 0, 10) === 1;
             if (!locations.has(whKey)) {
                 locations.set(whKey, {
-                    type: 'warehouse',
+                    type: isCurrentPort ? 'port' : 'warehouse',
                     id: movement.current_warehouse_id_info,
                     name: movement.current_warehouse_name,
                     address: buildAddress(movement.current_wh_street, movement.current_wh_city, movement.current_wh_state, movement.current_wh_zip),
@@ -1619,12 +1620,31 @@ function processMovementData() {
             location.total_modules += movement.total_quantity;
         }
 
+        // Add destination warehouse marker for in-transit drayage/ground legs.
+        if (movement.status === 'In Transit to Warehouse' && movement.delivery_warehouse_id && movement.delivery_warehouse_name) {
+            const whDestKey = 'wh_' + movement.delivery_warehouse_id;
+            const isDeliveryPort = parseInt(movement.delivery_warehouse_is_port || 0, 10) === 1;
+            if (!locations.has(whDestKey)) {
+                locations.set(whDestKey, {
+                    type: isDeliveryPort ? 'port' : 'warehouse',
+                    id: movement.delivery_warehouse_id,
+                    name: movement.delivery_warehouse_name,
+                    address: buildAddress(movement.delivery_wh_street, movement.delivery_wh_city, movement.delivery_wh_state, movement.delivery_wh_zip),
+                    pallets: [],
+                    total_pallets: 0,
+                    total_modules: 0,
+                    marker: null
+                });
+            }
+        }
+
         // Add origin warehouse location even if no pallets currently there
-        if (movement.origin_type === 'warehouse' && movement.origin_warehouse_id && movement.origin_warehouse_name) {
+        if ((movement.origin_type === 'warehouse' || movement.origin_type === 'port') && movement.origin_warehouse_id && movement.origin_warehouse_name) {
             const whOrigKey = 'wh_' + movement.origin_warehouse_id;
+            const isOriginPort = parseInt(movement.origin_warehouse_is_port || 0, 10) === 1;
             if (!locations.has(whOrigKey)) {
                 locations.set(whOrigKey, {
-                    type: 'warehouse',
+                    type: isOriginPort ? 'port' : 'warehouse',
                     id: movement.origin_warehouse_id,
                     name: movement.origin_warehouse_name,
                     address: buildAddress(movement.origin_wh_street, movement.origin_wh_city, movement.origin_wh_state, movement.origin_wh_zip),
@@ -1679,11 +1699,12 @@ function processMovementData() {
             const portName = (container.destination_port_name || '').trim();
             const portAddress = (container.destination_port_full_address || '').trim();
             if (!portName && !portAddress) return;
-            const key = `port_${container.destination_port_id || 'x'}_${portName}_${portAddress}`;
+            const portId = Number(container.destination_port_id) || null;
+            const key = portId ? `wh_${portId}` : `port_${portName}_${portAddress}`;
             if (!locations.has(key)) {
                 locations.set(key, {
                     type: 'port',
-                    id: container.destination_port_id || null,
+                    id: portId,
                     name: portName || 'Destination Port',
                     address: portAddress || '',
                     pallets: [],
@@ -1693,6 +1714,16 @@ function processMovementData() {
                 });
             }
             const portLoc = locations.get(key);
+            portLoc.type = 'port';
+            if (!portLoc.name) {
+                portLoc.name = portName || 'Destination Port';
+            }
+            if (!portLoc.address) {
+                portLoc.address = portAddress || '';
+            }
+            if (!portLoc.id && portId) {
+                portLoc.id = portId;
+            }
             portLoc.total_pallets += Number(container.pallet_count) || 0;
             portLoc.total_modules += Number(container.module_count) || 0;
         });
@@ -2383,89 +2414,111 @@ function createRouteLines(locations) {
     if (!map) return;
     
     const routes = new Map();
+    const isPortFlag = (value) => parseInt(value || 0, 10) === 1;
+    const addMovementRoute = (routeKey, seed, movement) => {
+        if (!routes.has(routeKey)) {
+            routes.set(routeKey, {
+                ...seed,
+                pallets: [],
+                modules: 0,
+                pallet_count: 0
+            });
+        }
+        const route = routes.get(routeKey);
+        route.pallets.push(movement);
+        route.modules += parseInt(movement.total_quantity || 0, 10);
+        route.pallet_count += parseInt(movement.pallet_count || 0, 10);
+    };
     
     // Analyze movement patterns to create routes based on aggregated delivery history
     movementData.forEach(movement => {
         const manufacturerKey = 'mfg_' + movement.manufacturer_name;
         const projectKey = 'proj_' + projectData.id;
+        const status = String(movement.status || '').trim();
         
         // Determine warehouse key based on where pallets were delivered or are currently stored
         let warehouseKey = null;
-        if (movement.current_warehouse_id_info && movement.current_warehouse_name) {
+        let warehouseIsPort = false;
+        if (status === 'In Transit to Warehouse' && movement.delivery_warehouse_id && movement.delivery_warehouse_name) {
+            warehouseKey = 'wh_' + movement.delivery_warehouse_id;
+            warehouseIsPort = isPortFlag(movement.delivery_warehouse_is_port);
+        } else if (movement.current_warehouse_id_info && movement.current_warehouse_name) {
             warehouseKey = 'wh_' + movement.current_warehouse_id_info;
+            warehouseIsPort = isPortFlag(movement.current_warehouse_is_port);
         } else if (movement.delivery_warehouse_id && movement.delivery_warehouse_name) {
             warehouseKey = 'wh_' + movement.delivery_warehouse_id;
+            warehouseIsPort = isPortFlag(movement.delivery_warehouse_is_port);
         }
 
         // Origin warehouse for deliveries leaving a warehouse
         let originWarehouseKey = null;
-        if (movement.origin_type === 'warehouse' && movement.origin_warehouse_id && movement.origin_warehouse_name) {
+        let originWarehouseIsPort = false;
+        if ((movement.origin_type === 'warehouse' || movement.origin_type === 'port') && movement.origin_warehouse_id && movement.origin_warehouse_name) {
             originWarehouseKey = 'wh_' + movement.origin_warehouse_id;
+            originWarehouseIsPort = isPortFlag(movement.origin_warehouse_is_port);
         }
-        
-        // Create manufacturer → warehouse route (for pallets that either reside in a warehouse or were delivered to project via that warehouse)
-        if (warehouseKey && (movement.status === 'In Warehouse' || movement.status === 'Delivered to Project')) {
+
+        const hasIntermediateTransfer =
+            !!warehouseKey &&
+            !!originWarehouseKey &&
+            warehouseKey !== originWarehouseKey &&
+            (status === 'In Transit to Warehouse' || status === 'In Warehouse');
+
+        // If this shipment leg originated at another intermediate facility, draw that leg directly.
+        if (hasIntermediateTransfer) {
+            const transferType = originWarehouseIsPort ? 'port_to_warehouse' : 'warehouse_to_warehouse';
+            const transferColor = originWarehouseIsPort ? '#f39c12' : '#6366f1';
+            const transferRouteKey = `${originWarehouseKey}_to_${warehouseKey}`;
+            addMovementRoute(transferRouteKey, {
+                from: originWarehouseKey,
+                to: warehouseKey,
+                color: transferColor,
+                type: transferType
+            }, movement);
+        }
+
+        const shouldShowManufacturerToWarehouse =
+            warehouseKey &&
+            !hasIntermediateTransfer &&
+            (status === 'In Warehouse' || status === 'Delivered to Project' || status === 'In Transit to Warehouse');
+
+        // Create manufacturer → warehouse route only when there is no explicit intermediate-origin transfer.
+        if (shouldShowManufacturerToWarehouse && !$warehouseIsPort) {
             const route1Key = `${manufacturerKey}_to_${warehouseKey}`;
-            if (!routes.has(route1Key)) {
-                routes.set(route1Key, {
-                    from: manufacturerKey,
-                    to: warehouseKey,
-                    pallets: [],
-                    modules: 0,
-                    pallet_count: 0,
-                    color: '#488C9A', // Blue for manufacturer → warehouse
-                    type: 'manufacturer_to_warehouse'
-                });
-            }
-            const route = routes.get(route1Key);
-            route.pallets.push(movement);
-            route.modules += parseInt(movement.total_quantity);
-            route.pallet_count += parseInt(movement.pallet_count);
+            addMovementRoute(route1Key, {
+                from: manufacturerKey,
+                to: warehouseKey,
+                color: '#488C9A',
+                type: 'manufacturer_to_warehouse'
+            }, movement);
         }
 
         // Create manufacturer → origin warehouse route for pallets delivered to project (to preserve historical path)
-        if (!warehouseKey && originWarehouseKey && movement.status === 'Delivered to Project') {
+        if (!warehouseKey && originWarehouseKey && status === 'Delivered to Project' && !$originWarehouseIsPort) {
             const routeOrigKey = `${manufacturerKey}_to_${originWarehouseKey}`;
-            if (!routes.has(routeOrigKey)) {
-                routes.set(routeOrigKey, {
-                    from: manufacturerKey,
-                    to: originWarehouseKey,
-                    pallets: [],
-                    modules: 0,
-                    pallet_count: 0,
-                    color: '#488C9A',
-                    type: 'manufacturer_to_warehouse'
-                });
-            }
-            const route = routes.get(routeOrigKey);
-            route.pallets.push(movement);
-            route.modules += parseInt(movement.total_quantity);
-            route.pallet_count += parseInt(movement.pallet_count);
+            addMovementRoute(routeOrigKey, {
+                from: manufacturerKey,
+                to: originWarehouseKey,
+                color: '#488C9A',
+                type: 'manufacturer_to_warehouse'
+            }, movement);
         }
         
         // Create warehouse → project route (for aggregated groups delivered to project)
-        if ((warehouseKey || originWarehouseKey) && movement.status === 'Delivered to Project') {
+        if ((warehouseKey || originWarehouseKey) && status === 'Delivered to Project') {
             const whKeyForRoute = warehouseKey || originWarehouseKey;
             const route2Key = `${whKeyForRoute}_to_${projectKey}`;
-            if (!routes.has(route2Key)) {
-                routes.set(route2Key, {
-                    from: whKeyForRoute,
-                    to: projectKey,
-                    pallets: [],
-                    modules: 0,
-                    pallet_count: 0,
-                    color: '#27ae60', // Green for warehouse → project
-                    type: 'warehouse_to_project'
-                });
-            }
-            const route = routes.get(route2Key);
-            route.pallets.push(movement);
-            route.modules += parseInt(movement.total_quantity);
-            route.pallet_count += parseInt(movement.pallet_count);
+            const whType = warehouseKey ? warehouseIsPort : originWarehouseIsPort;
+            addMovementRoute(route2Key, {
+                from: whKeyForRoute,
+                to: projectKey,
+                color: '#27ae60',
+                type: whType ? 'port_to_project' : 'warehouse_to_project'
+            }, movement);
         }
         
         // Create direct manufacturer → project route (for aggregated groups that skipped warehouse)
-        if (!warehouseKey && movement.status === 'Delivered to Project') {
+        if (!warehouseKey && status === 'Delivered to Project') {
             // Check if this is actually a direct delivery from manufacturer (not via warehouse)
             // Use the new origin tracking data to make this determination
             const isDirectFromManufacturer = movement.origin_type === 'manufacturer';
@@ -2473,21 +2526,12 @@ function createRouteLines(locations) {
             
             if (isDirectFromManufacturer && !isFromWarehouse) {
                 const directRouteKey = `${manufacturerKey}_to_${projectKey}`;
-                if (!routes.has(directRouteKey)) {
-                    routes.set(directRouteKey, {
-                        from: manufacturerKey,
-                        to: projectKey,
-                        pallets: [],
-                        modules: 0,
-                        pallet_count: 0,
-                        color: '#e74c3c', // Red for direct routes
-                        type: 'manufacturer_to_project_direct'
-                    });
-                }
-                const route = routes.get(directRouteKey);
-                route.pallets.push(movement);
-                route.modules += parseInt(movement.total_quantity);
-                route.pallet_count += parseInt(movement.pallet_count);
+                addMovementRoute(directRouteKey, {
+                    from: manufacturerKey,
+                    to: projectKey,
+                    color: '#e74c3c',
+                    type: 'manufacturer_to_project_direct'
+                }, movement);
             }
             // If origin_type is 'warehouse', this delivery will be handled by the warehouse → project route logic above
         }
@@ -2558,19 +2602,31 @@ function createRouteLines(locations) {
                 }
 
                 const routeTypeLabel = route.type === 'manufacturer_to_warehouse' ? 'Manufacturer → Warehouse' :
+                                     route.type === 'manufacturer_to_port' ? 'Manufacturer → Port' :
+                                     route.type === 'port_to_warehouse' ? 'Port → Warehouse' :
+                                     route.type === 'warehouse_to_warehouse' ? 'Warehouse → Warehouse' :
                                      route.type === 'warehouse_to_project' ? 'Warehouse → Project' :
+                                     route.type === 'port_to_project' ? 'Port → Project' :
                                      'Manufacturer → Project (Direct)';
 
-                const routeIcon = route.type === 'manufacturer_to_warehouse'
+                const routeIcon = route.type === 'manufacturer_to_warehouse' || route.type === 'manufacturer_to_port'
                     ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>'
-                    : route.type === 'warehouse_to_project'
+                    : route.type === 'warehouse_to_project' || route.type === 'port_to_project' || route.type === 'port_to_warehouse' || route.type === 'warehouse_to_warehouse'
                     ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>'
                     : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>';
 
                 const routeGradient = route.type === 'manufacturer_to_warehouse'
                     ? 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)'
+                    : route.type === 'manufacturer_to_port'
+                    ? 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)'
+                    : route.type === 'port_to_warehouse'
+                    ? 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)'
+                    : route.type === 'warehouse_to_warehouse'
+                    ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
                     : route.type === 'warehouse_to_project'
                     ? 'linear-gradient(135deg, #27ae60 0%, #1e8449 100%)'
+                    : route.type === 'port_to_project'
+                    ? 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)'
                     : 'linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)';
 
                 const routeInfo = `

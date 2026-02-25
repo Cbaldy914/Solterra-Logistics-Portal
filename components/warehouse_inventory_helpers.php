@@ -476,7 +476,7 @@ function fetchOutboundHistory($conn, $warehouse_id, $project_id = null) {
         WHERE d.left_warehouse_date IS NOT NULL
         AND (
             (d.origin_type = 'warehouse' AND d.origin_id = ?)
-            OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL)
+            OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL AND d.left_warehouse_date > d.warehouse_arrival_date)
         )
     ";
     $params = [$warehouse_id, $warehouse_id, $warehouse_id];
