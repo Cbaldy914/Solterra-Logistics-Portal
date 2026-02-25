@@ -215,6 +215,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !in_array($action, ['receive_pallet
 
 $receiving_warehouse_id = isset($_POST['warehouse_id']) ? intval($_POST['warehouse_id']) : 0;
 $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id;
+// Use caller-provided redirect URL if given (e.g. warehouse.php passes its own URL)
+if (!empty($_POST['redirect_url'])) {
+    $redirect_url = $_POST['redirect_url'];
+}
 unset($_SESSION['customs_hold_next_step']);
 
 // Validate warehouse ID
@@ -421,7 +425,7 @@ if ($action === 'receive_truckload') {
         }
         
         $_SESSION['move_pallet_message'] = "Successfully received truckload with $updated_count pallets. Delivery updated with arrival date: $actual_arrival_date.";
-        if ($is_port) {
+        if ($is_port && empty($_POST['redirect_url'])) {
             $_SESSION['customs_hold_next_step'] = ['source' => 'receive_truckload'];
             $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id . "&tab=storedInventory";
         }
@@ -675,7 +679,7 @@ if ($action === 'receive_truckload') {
             }
             
             $_SESSION['move_pallet_message'] = $success_message;
-            if ($is_port) {
+            if ($is_port && empty($_POST['redirect_url'])) {
                 $_SESSION['customs_hold_next_step'] = ['source' => 'receive_multiple_truckloads'];
                 $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id . "&tab=storedInventory";
             }
@@ -812,7 +816,7 @@ if ($action === 'receive_truckload') {
             $msg .= "Errors: " . implode(" ", $errors);
         }
         $_SESSION['move_pallet_message'] = $msg;
-        if ($is_port && !empty($successes)) {
+        if ($is_port && !empty($successes) && empty($_POST['redirect_url'])) {
             $_SESSION['customs_hold_next_step'] = ['source' => 'receive_pallets'];
             $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $receiving_warehouse_id . "&tab=storedInventory";
         }

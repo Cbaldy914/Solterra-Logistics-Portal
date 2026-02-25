@@ -582,7 +582,7 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $outbound_grouped = [];
         
         $sql_deliveries_left = "
-            SELECT 
+            SELECT
                 d.bol_number,
                 d.supplier,
                 d.left_warehouse_date,
@@ -598,10 +598,14 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             FROM deliveries d
             LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
             LEFT JOIN projects p ON d.project_id = p.id
-            WHERE d.warehouse_id = ? AND d.left_warehouse_date IS NOT NULL 
+            WHERE d.left_warehouse_date IS NOT NULL
+            AND (
+                (d.origin_type = 'warehouse' AND d.origin_id = ?)
+                OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL)
+            )
         "; 
-        $left_params = [$warehouse_id];
-        $left_types = "i";
+        $left_params = [$warehouse_id, $warehouse_id];
+        $left_types = "ii";
         if ($project_id) {
              $sql_deliveries_left .= " AND d.project_id = ?";
              $left_params[] = $project_id;
@@ -683,28 +687,41 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $current_storage_cost = 0;
         $departed_pallets_count = 0;
         
-        // Get cost rates from warehouse_cost_items - sum ALL costs of each trigger type
+        // Get cost rates from warehouse_cost_items - separate per_pallet vs per_truck
         $monthly_rate_per_pallet = 0;
         if (!empty($warehouse_costs['monthly'])) {
             foreach ($warehouse_costs['monthly'] as $cost) {
-                $monthly_rate_per_pallet += floatval($cost['amount']);
+                if (($cost['unit_type'] ?? 'per_pallet') === 'per_pallet' || empty($cost['unit_type'])) {
+                    $monthly_rate_per_pallet += floatval($cost['amount']);
+                }
             }
         }
         $daily_rate = $monthly_rate_per_pallet > 0 ? ($monthly_rate_per_pallet / 30) : 0;
 
+        $total_inbound_bols = count($inbound_grouped);
+        $total_outbound_bols = count($outbound_grouped);
+
         if (!empty($warehouse_costs['entry'])) {
-            $entry_rate = 0;
             foreach ($warehouse_costs['entry'] as $cost) {
-                $entry_rate += floatval($cost['amount']);
+                $unit = $cost['unit_type'] ?? 'per_pallet';
+                $amt = floatval($cost['amount']);
+                if ($unit === 'per_truck' || $unit === 'per_bol') {
+                    $in_fee_cost += $amt * $total_inbound_bols;
+                } else {
+                    $in_fee_cost += $amt * $total_inbound_pallets_count;
+                }
             }
-            $in_fee_cost = $entry_rate * $total_inbound_pallets_count;
         }
         if (!empty($warehouse_costs['exit'])) {
-            $exit_rate = 0;
             foreach ($warehouse_costs['exit'] as $cost) {
-                $exit_rate += floatval($cost['amount']);
+                $unit = $cost['unit_type'] ?? 'per_pallet';
+                $amt = floatval($cost['amount']);
+                if ($unit === 'per_truck' || $unit === 'per_bol') {
+                    $out_fee_cost += $amt * $total_outbound_bols;
+                } else {
+                    $out_fee_cost += $amt * $total_outbound_pallets_count;
+                }
             }
-            $out_fee_cost = $exit_rate * $total_outbound_pallets_count;
         }
         if ($monthly_rate_per_pallet > 0) {
             $monthly_storage_rate = $monthly_rate_per_pallet * $total_pallets_count; // current pallets only
@@ -3058,7 +3075,7 @@ if ($conn) {
                          <?php
                          $unique_wattages_inbound = [];
                          if (!empty($inbound_deliveries_for_table)) {
-                             foreach($inbound_deliveries_for_table as $d) { $unique_wattages_inbound[$d['wattage']] = true; }
+                             foreach($inbound_deliveries_for_table as $d) { foreach(explode(', ', $d['wattages'] ?? '') as $w) { if ($w !== '') $unique_wattages_inbound[$w] = true; } }
                              ksort($unique_wattages_inbound);
                              foreach (array_keys($unique_wattages_inbound) as $wattage):
                          ?>
@@ -3178,7 +3195,7 @@ if ($conn) {
                         <?php
                         $unique_wattages_outbound = [];
                         if (!empty($outbound_deliveries_for_table)) {
-                            foreach($outbound_deliveries_for_table as $d) { $unique_wattages_outbound[$d['wattage']] = true; }
+                            foreach($outbound_deliveries_for_table as $d) { foreach(explode(', ', $d['wattages'] ?? '') as $w) { if ($w !== '') $unique_wattages_outbound[$w] = true; } }
                             ksort($unique_wattages_outbound);
                             foreach (array_keys($unique_wattages_outbound) as $wattage):
                         ?>
@@ -4294,9 +4311,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const form = document.createElement('form');
         form.method = 'POST';
         form.action = 'handle_pallet_arrival.php';
+        form.enctype = 'multipart/form-data';
         const fields = {
+            action: 'receive_multiple_truckloads',
             warehouse_id: '<?php echo $warehouse_id; ?>',
-            arrival_date: arrivalDate,
+            actual_arrival_date: arrivalDate,
             redirect_url: window.location.href
         };
         for (const [key, value] of Object.entries(fields)) {
@@ -4308,7 +4327,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Optional fields
         const bolField = document.getElementById('receive_truckload_bol');
         if (bolField && bolField.value) {
-            const input = document.createElement('input'); input.type = 'hidden'; input.name = 'bol_number'; input.value = bolField.value; form.appendChild(input);
+            const input = document.createElement('input'); input.type = 'hidden'; input.name = 'bol_number_override'; input.value = bolField.value; form.appendChild(input);
         }
         const houseBol = document.getElementById('house_bol');
         if (houseBol && houseBol.value) {
@@ -4317,6 +4336,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const masterBol = document.getElementById('master_bol');
         if (masterBol && masterBol.value) {
             const input = document.createElement('input'); input.type = 'hidden'; input.name = 'master_bol'; input.value = masterBol.value; form.appendChild(input);
+        }
+        // Include POD file if selected
+        const podFile = document.getElementById('pod_file');
+        if (podFile && podFile.files.length > 0) {
+            form.appendChild(podFile.cloneNode(true));
         }
         document.body.appendChild(form);
         form.submit();
