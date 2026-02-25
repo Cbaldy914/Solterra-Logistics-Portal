@@ -304,19 +304,98 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 
-<!-- Single-level Tabs -->
-<div class="project-tabs">
-    <button class="tab-btn active" data-tab="tab-timeline">Timeline</button>
-    <button class="tab-btn" data-tab="tab-site">Site</button>
-    <button class="tab-btn" data-tab="tab-modules">Modules</button>
-    <button class="tab-btn" data-tab="tab-deliveries">Deliveries</button>
-    <button class="tab-btn" data-tab="tab-financial">Financial</button>
+<div class="project-tabs-row">
+    <span class="project-tabs-label">Overview:</span>
+    <div class="project-tabs">
+        <button class="tab-btn active" data-tab="tab-timeline">Timeline</button>
+        <button class="tab-btn" data-tab="tab-site">Site</button>
+        <button class="tab-btn" data-tab="tab-modules">Modules</button>
+        <button class="tab-btn" data-tab="tab-deliveries">Deliveries</button>
+    </div>
 </div>
 
 <!-- Timeline Tab -->
 <div id="tab-timeline" class="tab-content active">
-        <!-- Unit Filters (inside content) -->
-        <div class="unit-filter-bar">
+        <?php
+        $next_actions = [];
+        $next_action_keys = [];
+        $push_next_action = function ($key, $label, $url) use (&$next_actions, &$next_action_keys) {
+            if (isset($next_action_keys[$key])) {
+                return;
+            }
+            if (count($next_actions) >= 5) {
+                return;
+            }
+            $next_action_keys[$key] = true;
+            $next_actions[] = ['label' => $label, 'url' => $url, 'recommended' => false];
+        };
+
+        $at_manufacturer_pallets = (int)($status_totals['At Manufacturer']['pallets'] ?? 0);
+        $in_warehouse_pallets = (int)($status_totals['In Warehouse']['pallets'] ?? 0);
+        $in_transit_to_project_pallets = (int)($status_totals['In Transit to Project']['pallets'] ?? 0);
+
+        if ($can_add_modules && !$step2_completed) {
+            $push_next_action('add_modules', 'Add Modules', 'add_module_batch.php?project_id=' . (int)$project_id);
+        }
+        if ($step2_completed && !$step3_completed) {
+            $push_next_action(
+                'palletize_modules',
+                $isAdmin ? 'Palletize Modules' : 'View Pallets',
+                ($isAdmin ? 'module_overview.php' : 'manage_pallets.php') . '?project_id=' . (int)$project_id
+            );
+        }
+        if (!$has_legs_with_dates) {
+            $push_next_action('add_plan', 'Add Plan', 'anticipated_deliveries.php?project_id=' . (int)$project_id);
+        }
+        if ($isAdmin && $step3_completed && ($at_manufacturer_pallets > 0 || $in_warehouse_pallets > 0)) {
+            $push_next_action('create_shipment', 'Create Shipment', 'create_shipment.php?project_id=' . (int)$project_id);
+        }
+        if ($isAdmin && $step3_completed && $in_transit_to_project_pallets > 0) {
+            $push_next_action('schedule_delivery', 'Schedule Delivery', 'scheduling.php?project_id=' . (int)$project_id);
+        }
+        if ($isAdmin) {
+            $push_next_action('manage_deliveries', 'Manage Deliveries', 'manage_deliveries.php?project_id=' . (int)$project_id);
+        } else {
+            $push_next_action('view_deliveries', 'View Deliveries', $deliveriesLink);
+        }
+        $push_next_action('supply_chain_map', 'Supply Chain Map', 'module_movements.php?project_id=' . (int)$project_id);
+
+        if (!empty($next_actions)) {
+            $next_actions[0]['recommended'] = true;
+        }
+        ?>
+
+        <?php if (!empty($next_actions)): ?>
+        <div class="next-actions-card" id="nextActionsCard">
+            <div class="next-actions-card-header">
+                <div class="next-actions-card-icon"><i class="fas fa-compass"></i></div>
+                <span class="next-actions-card-title">Suggested Next Actions</span>
+                <button type="button" class="next-actions-dismiss" onclick="dismissNextActions()" title="Dismiss">&times;</button>
+            </div>
+            <div class="next-action-chips">
+                <?php foreach ($next_actions as $action): ?>
+                <a href="<?php echo htmlspecialchars($action['url']); ?>" class="next-action-chip<?php echo !empty($action['recommended']) ? ' recommended' : ''; ?>">
+                    <?php echo htmlspecialchars($action['label']); ?>
+                </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <script>
+        (function() {
+            var card = document.getElementById('nextActionsCard');
+            if (card && sessionStorage.getItem('nextActionsDismissed')) {
+                card.style.display = 'none';
+            }
+        })();
+        function dismissNextActions() {
+            var card = document.getElementById('nextActionsCard');
+            if (card) { card.style.display = 'none'; }
+            sessionStorage.setItem('nextActionsDismissed', '1');
+        }
+        </script>
+        <?php endif; ?>
+
+        <div class="unit-filter-bar unit-filter-bar-overview">
             <span class="filter-label">View as:</span>
             <div class="filter-chips">
                 <button type="button" class="filter-chip active" data-unit="mws">MWs</button>
@@ -1053,7 +1132,13 @@ document.addEventListener('keydown', function(e) {
                         <h2>Anticipated vs Actual Deliveries</h2>
                         <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
                     </div>
-                    <canvas id="lineChart"></canvas>
+                    <div class="chart-wrapper">
+                        <canvas id="lineChart"></canvas>
+                        <div class="chart-no-data" id="lineChartNoData" style="display:none;">
+                            <i class="fas fa-chart-line"></i>
+                            <p>No delivery data available yet</p>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="right-side">
@@ -1143,12 +1228,17 @@ document.addEventListener('keydown', function(e) {
                     <h2>Delivery Overview</h2>
                     <div class="chart-container">
                         <canvas id="pieChart"></canvas>
+                        <div class="chart-no-data" id="pieChartNoData" style="display:none;">
+                            <i class="fas fa-chart-pie"></i>
+                            <p>No delivery status data yet</p>
+                        </div>
                     </div>
                 </div>
             </div>
     </div>
 
-<!-- Financial Tab -->
+<?php if (false): ?>
+<!-- LEGACY REFERENCE: Financial tab moved to project_cost_details.php. This block is dead code kept for reference only. Styles that were inline here (cashflow-header, view-all-link) have been moved to project_overview.css. -->
 <div id="tab-financial" class="tab-content">
         <!-- Unit Filters (inside content) -->
         <div class="unit-filter-bar">
@@ -1508,6 +1598,7 @@ document.addEventListener('keydown', function(e) {
                 </div>
             </div>
     </div>
+<?php endif; ?>
 
 <!-- ==================== MODALS ==================== -->
 <!-- Note: Logistics Breakdown Modal is in modals.php -->
