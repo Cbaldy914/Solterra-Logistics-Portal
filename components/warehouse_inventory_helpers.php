@@ -473,8 +473,11 @@ function fetchOutboundHistory($conn, $warehouse_id, $project_id = null) {
         LEFT JOIN warehouses w ON d.warehouse_id = w.id
         JOIN delivery_pallets dp ON d.id = dp.delivery_id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-        WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
-        AND d.left_warehouse_date IS NOT NULL
+        WHERE d.left_warehouse_date IS NOT NULL
+        AND (
+            (d.origin_type = 'warehouse' AND d.origin_id = ?)
+            OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL)
+        )
     ";
     $params = [$warehouse_id, $warehouse_id, $warehouse_id];
     $types = "iii";
