@@ -1615,7 +1615,24 @@ function generateShippingContent(filter){
             }
             html+=`</div>`;
         }else if(filter==='In Warehouse'){
-            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+            // Collect warehouse IDs from breakdown for this status
+            const warehouseLinks = [];
+            for(const key in shippingBreakdown){
+                if(key.includes('In Warehouse') && shippingBreakdown[key].warehouse_id){
+                    warehouseLinks.push({name: key, id: shippingBreakdown[key].warehouse_id});
+                }
+            }
+            html+=`<div style="text-align:center;margin-top:15px;">`;
+            if(warehouseLinks.length === 1){
+                html+=`<a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse&warehouse_id=${warehouseLinks[0].id}" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a>`;
+            } else if(warehouseLinks.length > 1){
+                warehouseLinks.forEach(wh => {
+                    html+=`<a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse&warehouse_id=${wh.id}" class="modal-action" style="display:inline-block;background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Create Shipment from ${wh.name}</a>`;
+                });
+            } else {
+                html+=`<a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a>`;
+            }
+            html+=`</div>`;
         }else if(filter==='In Transit to Project'){
             html+=`<div style="text-align:center;margin-top:15px;"><a href="scheduling.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Schedule/Receive Deliveries</a></div>`;
         }

@@ -5061,82 +5061,135 @@
 
 /* ==================== NEXT ACTIONS GUIDANCE CARD ==================== */
 .next-actions-card {
-    background: rgba(72, 140, 154, 0.06);
-    border: 1px solid rgba(72, 140, 154, 0.15);
-    border-left: 3px solid #488C9A;
-    border-radius: 10px;
-    padding: 12px 16px;
-    margin-bottom: 12px;
+    background: rgba(72, 140, 154, 0.04);
+    border: 1px solid rgba(72, 140, 154, 0.12);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
 }
 
 .next-actions-card-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 10px;
+    user-select: none;
 }
 
 .next-actions-card-icon {
-    color: #488C9A;
-    font-size: 0.95rem;
+    color: #7aabb5;
+    font-size: 0.85rem;
 }
 
 .next-actions-card-title {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #293E4C;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #5a7a85;
     flex: 1;
 }
 
-.next-actions-dismiss {
-    background: none;
-    border: none;
-    color: #6c757d;
-    font-size: 1.2rem;
-    cursor: pointer;
-    padding: 0 4px;
-    line-height: 1;
-    transition: color 0.15s ease;
+.next-actions-chevron {
+    color: #7aabb5;
+    font-size: 0.65rem;
+    transition: transform 0.2s ease;
 }
 
-.next-actions-dismiss:hover {
-    color: #293E4C;
+.next-actions-chevron.open {
+    transform: rotate(180deg);
 }
 
-.next-actions-card .next-action-chips {
+.next-actions-card .next-action-items {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
+    margin-top: 10px;
 }
 
-.next-actions-card .next-action-chip {
-    display: inline-flex;
+.next-actions-card .next-action-item {
+    display: flex;
     align-items: center;
-    padding: 5px 14px;
-    border-radius: 20px;
-    font-size: 0.82rem;
-    font-weight: 500;
+    gap: 9px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 0.8rem;
     text-decoration: none;
-    border: 1px solid rgba(72, 140, 154, 0.3);
-    color: #488C9A;
-    background: #ffffff;
+    border: 1px solid rgba(72, 140, 154, 0.15);
+    color: #293E4C;
+    background: rgba(255, 255, 255, 0.7);
     transition: all 0.15s ease;
+    flex: 1 1 calc(50% - 3px);
+    min-width: 190px;
+    max-width: 100%;
 }
 
-.next-actions-card .next-action-chip:hover {
+.next-actions-card .next-action-item:hover {
+    background: rgba(72, 140, 154, 0.06);
+    border-color: rgba(72, 140, 154, 0.35);
+}
+
+.next-actions-card .next-action-item-icon {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(72, 140, 154, 0.07);
+    color: #7aabb5;
+    font-size: 0.75rem;
+}
+
+.next-actions-card .next-action-item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.next-actions-card .next-action-item-label {
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: #3d5a65;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.next-actions-card .next-action-item-desc {
+    font-size: 0.7rem;
+    color: #8a9ba3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.next-actions-card .next-action-item.recommended {
     background: rgba(72, 140, 154, 0.08);
+    border-color: rgba(72, 140, 154, 0.3);
+}
+
+.next-actions-card .next-action-item.recommended .next-action-item-icon {
+    background: rgba(72, 140, 154, 0.15);
+    color: #488C9A;
+}
+
+.next-actions-card .next-action-item.recommended .next-action-item-label {
+    color: #488C9A;
+}
+
+.next-actions-card .next-action-item.recommended .next-action-item-desc {
+    color: #7aabb5;
+}
+
+.next-actions-card .next-action-item.recommended:hover {
+    background: rgba(72, 140, 154, 0.12);
     border-color: #488C9A;
 }
 
-.next-actions-card .next-action-chip.recommended {
-    background: #488C9A;
-    color: #ffffff;
-    border-color: #488C9A;
-}
-
-.next-actions-card .next-action-chip.recommended:hover {
-    background: #3A6E7F;
-    border-color: #3A6E7F;
+@media (max-width: 600px) {
+    .next-actions-card .next-action-item {
+        flex: 1 1 100%;
+    }
 }
 
 /* ==================== CHART CONTAINERS & NO-DATA ==================== */

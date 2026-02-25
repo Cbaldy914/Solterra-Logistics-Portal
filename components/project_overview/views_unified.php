@@ -319,7 +319,7 @@ document.addEventListener('keydown', function(e) {
         <?php
         $next_actions = [];
         $next_action_keys = [];
-        $push_next_action = function ($key, $label, $url) use (&$next_actions, &$next_action_keys) {
+        $push_next_action = function ($key, $label, $url, $icon, $description) use (&$next_actions, &$next_action_keys) {
             if (isset($next_action_keys[$key])) {
                 return;
             }
@@ -327,7 +327,7 @@ document.addEventListener('keydown', function(e) {
                 return;
             }
             $next_action_keys[$key] = true;
-            $next_actions[] = ['label' => $label, 'url' => $url, 'recommended' => false];
+            $next_actions[] = ['label' => $label, 'url' => $url, 'icon' => $icon, 'description' => $description, 'recommended' => false];
         };
 
         $at_manufacturer_pallets = (int)($status_totals['At Manufacturer']['pallets'] ?? 0);
@@ -335,30 +335,32 @@ document.addEventListener('keydown', function(e) {
         $in_transit_to_project_pallets = (int)($status_totals['In Transit to Project']['pallets'] ?? 0);
 
         if ($can_add_modules && !$step2_completed) {
-            $push_next_action('add_modules', 'Add Modules', 'add_module_batch.php?project_id=' . (int)$project_id);
+            $push_next_action('add_modules', 'Add Modules', 'add_module_batch.php?project_id=' . (int)$project_id, 'fa-cubes', 'Add module batches to this project');
         }
         if ($step2_completed && !$step3_completed) {
             $push_next_action(
                 'palletize_modules',
                 $isAdmin ? 'Palletize Modules' : 'View Pallets',
-                ($isAdmin ? 'module_overview.php' : 'manage_pallets.php') . '?project_id=' . (int)$project_id
+                ($isAdmin ? 'module_overview.php' : 'manage_pallets.php') . '?project_id=' . (int)$project_id,
+                'fa-boxes-stacked',
+                'Configure pallet packaging for modules'
             );
         }
         if (!$has_legs_with_dates) {
-            $push_next_action('add_plan', 'Add Plan', 'anticipated_deliveries.php?project_id=' . (int)$project_id);
+            $push_next_action('add_plan', 'Add Plan', 'anticipated_deliveries.php?project_id=' . (int)$project_id, 'fa-calendar-alt', 'Set up delivery schedule and planning');
         }
         if ($isAdmin && $step3_completed && ($at_manufacturer_pallets > 0 || $in_warehouse_pallets > 0)) {
-            $push_next_action('create_shipment', 'Create Shipment', 'create_shipment.php?project_id=' . (int)$project_id);
+            $push_next_action('create_shipment', 'Create Shipment', 'create_shipment.php?project_id=' . (int)$project_id, 'fa-truck', 'Ship pallets from manufacturer or warehouse');
         }
         if ($isAdmin && $step3_completed && $in_transit_to_project_pallets > 0) {
-            $push_next_action('schedule_delivery', 'Schedule Delivery', 'scheduling.php?project_id=' . (int)$project_id);
+            $push_next_action('schedule_delivery', 'Schedule Delivery', 'scheduling.php?project_id=' . (int)$project_id, 'fa-calendar-check', 'Schedule deliveries for in-transit pallets');
         }
         if ($isAdmin) {
-            $push_next_action('manage_deliveries', 'Manage Deliveries', 'manage_deliveries.php?project_id=' . (int)$project_id);
+            $push_next_action('manage_deliveries', 'Manage Deliveries', 'manage_deliveries.php?project_id=' . (int)$project_id, 'fa-clipboard-list', 'Track and manage active deliveries');
         } else {
-            $push_next_action('view_deliveries', 'View Deliveries', $deliveriesLink);
+            $push_next_action('view_deliveries', 'View Deliveries', $deliveriesLink, 'fa-eye', 'View delivery status and history');
         }
-        $push_next_action('supply_chain_map', 'Supply Chain Map', 'module_movements.php?project_id=' . (int)$project_id);
+        $push_next_action('supply_chain_map', 'Supply Chain Map', 'module_movements.php?project_id=' . (int)$project_id, 'fa-map-marked-alt', 'View module movement across supply chain');
 
         if (!empty($next_actions)) {
             $next_actions[0]['recommended'] = true;
@@ -367,30 +369,46 @@ document.addEventListener('keydown', function(e) {
 
         <?php if (!empty($next_actions)): ?>
         <div class="next-actions-card" id="nextActionsCard">
-            <div class="next-actions-card-header">
+            <div class="next-actions-card-header" onclick="toggleNextActions()" style="cursor:pointer;">
                 <div class="next-actions-card-icon"><i class="fas fa-compass"></i></div>
                 <span class="next-actions-card-title">Suggested Next Actions</span>
-                <button type="button" class="next-actions-dismiss" onclick="dismissNextActions()" title="Dismiss">&times;</button>
+                <i class="fas fa-chevron-down next-actions-chevron" id="nextActionsChevron"></i>
             </div>
-            <div class="next-action-chips">
+            <div class="next-action-items" id="nextActionsBody" style="display:none;">
                 <?php foreach ($next_actions as $action): ?>
-                <a href="<?php echo htmlspecialchars($action['url']); ?>" class="next-action-chip<?php echo !empty($action['recommended']) ? ' recommended' : ''; ?>">
-                    <?php echo htmlspecialchars($action['label']); ?>
+                <a href="<?php echo htmlspecialchars($action['url']); ?>" class="next-action-item<?php echo !empty($action['recommended']) ? ' recommended' : ''; ?>">
+                    <div class="next-action-item-icon"><i class="fas <?php echo htmlspecialchars($action['icon']); ?>"></i></div>
+                    <div class="next-action-item-text">
+                        <span class="next-action-item-label"><?php echo htmlspecialchars($action['label']); ?></span>
+                        <span class="next-action-item-desc"><?php echo htmlspecialchars($action['description']); ?></span>
+                    </div>
                 </a>
                 <?php endforeach; ?>
             </div>
         </div>
         <script>
         (function() {
-            var card = document.getElementById('nextActionsCard');
-            if (card && sessionStorage.getItem('nextActionsDismissed')) {
-                card.style.display = 'none';
+            var projectId = <?php echo (int)$project_id; ?>;
+            var body = document.getElementById('nextActionsBody');
+            var chevron = document.getElementById('nextActionsChevron');
+            if (body && localStorage.getItem('nextActionsOpen_' + projectId)) {
+                body.style.display = '';
+                if (chevron) chevron.classList.add('open');
             }
         })();
-        function dismissNextActions() {
-            var card = document.getElementById('nextActionsCard');
-            if (card) { card.style.display = 'none'; }
-            sessionStorage.setItem('nextActionsDismissed', '1');
+        function toggleNextActions() {
+            var projectId = <?php echo (int)$project_id; ?>;
+            var body = document.getElementById('nextActionsBody');
+            var chevron = document.getElementById('nextActionsChevron');
+            if (!body) return;
+            var isOpen = body.style.display !== 'none';
+            body.style.display = isOpen ? 'none' : '';
+            if (chevron) chevron.classList.toggle('open', !isOpen);
+            if (isOpen) {
+                localStorage.removeItem('nextActionsOpen_' + projectId);
+            } else {
+                localStorage.setItem('nextActionsOpen_' + projectId, '1');
+            }
         }
         </script>
         <?php endif; ?>
