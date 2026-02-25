@@ -496,6 +496,7 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
                 GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
                 GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+                GROUP_CONCAT(DISTINCT d.project_id ORDER BY d.project_id SEPARATOR ',') AS project_ids,
                 CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage
             FROM deliveries d
             LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
@@ -530,13 +531,13 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 $drow['details'] = [];
                 foreach ($delivery_ids_array as $del_id) {
                     $stmtDetail = $conn->prepare("
-                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                        SELECT d.id, d.project_id, d.wattage, d.quantity, p.project_name,
                                COUNT(dp.inventory_pallet_id) AS pallet_count
                         FROM deliveries d
                         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
                         LEFT JOIN projects p ON d.project_id = p.id
                         WHERE d.id = ?
-                        GROUP BY d.id, d.wattage, d.quantity, p.project_name
+                        GROUP BY d.id, d.project_id, d.wattage, d.quantity, p.project_name
                     ");
                     if ($stmtDetail) {
                         $stmtDetail->bind_param("i", $del_id);
@@ -592,6 +593,7 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
                 GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
                 GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+                GROUP_CONCAT(DISTINCT d.project_id ORDER BY d.project_id SEPARATOR ',') AS project_ids,
                 CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage
             FROM deliveries d
             LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
@@ -627,13 +629,13 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 $drow['details'] = [];
                 foreach ($delivery_ids_array as $del_id) {
                     $stmtDetail = $conn->prepare("
-                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                        SELECT d.id, d.project_id, d.wattage, d.quantity, p.project_name,
                                COUNT(dp.inventory_pallet_id) AS pallet_count
                         FROM deliveries d
                         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
                         LEFT JOIN projects p ON d.project_id = p.id
                         WHERE d.id = ?
-                        GROUP BY d.id, d.wattage, d.quantity, p.project_name
+                        GROUP BY d.id, d.project_id, d.wattage, d.quantity, p.project_name
                     ");
                     if ($stmtDetail) {
                         $stmtDetail->bind_param("i", $del_id);
@@ -2988,6 +2990,7 @@ if ($conn) {
                                 <th>Total Modules</th>
                                 <th>Arrival Date</th>
                                 <th>Proof of Delivery</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                                                   <tbody>
@@ -3022,6 +3025,17 @@ if ($conn) {
                                                  N/A
                                              <?php endif; ?>
                                          </td>
+                                         <td>
+                                             <?php
+                                                $inbound_view_delivery_id = (int)(explode(',', (string)($delivery['delivery_ids'] ?? '0'))[0] ?? 0);
+                                                $inbound_view_project_id = $project_id ? (int)$project_id : (int)(explode(',', (string)($delivery['project_ids'] ?? '0'))[0] ?? 0);
+                                             ?>
+                                             <?php if ($inbound_view_delivery_id > 0 && $inbound_view_project_id > 0): ?>
+                                                 <a href="view_project.php?project_id=<?php echo $inbound_view_project_id; ?>&delivery_id=<?php echo $inbound_view_delivery_id; ?>" class="action-button" style="padding:3px 8px; font-size:0.85em;" onclick="event.stopPropagation();">View</a>
+                                             <?php else: ?>
+                                                 <span style="color:#9ca3af;">N/A</span>
+                                             <?php endif; ?>
+                                         </td>
                                     </tr>
                                     
                                     <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
@@ -3034,12 +3048,23 @@ if ($conn) {
                                                 <td><?php echo number_format($detail['quantity']); ?></td>
                                                 <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                                 <td>-</td>
+                                                <td>
+                                                    <?php
+                                                        $inbound_detail_project_id = $project_id ? (int)$project_id : (int)($detail['project_id'] ?? 0);
+                                                        $inbound_detail_delivery_id = (int)($detail['id'] ?? 0);
+                                                    ?>
+                                                    <?php if ($inbound_detail_project_id > 0 && $inbound_detail_delivery_id > 0): ?>
+                                                        <a href="view_project.php?project_id=<?php echo $inbound_detail_project_id; ?>&delivery_id=<?php echo $inbound_detail_delivery_id; ?>" class="action-button" style="padding:2px 6px; font-size:0.8em;">View</a>
+                                                    <?php else: ?>
+                                                        <span style="color:#9ca3af;">N/A</span>
+                                                    <?php endif; ?>
+                                                </td>
                                             </tr>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="6">No inbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                                <tr><td colspan="7">No inbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
                             <?php endif; ?>
                          </tbody>
                      </table>
@@ -3085,6 +3110,7 @@ if ($conn) {
                               <th>Total Modules</th>
                               <th>Departure Date</th>
                               <th>Proof of Delivery</th>
+                              <th>Actions</th>
                           </tr>
                       </thead>
                       <tbody>
@@ -3119,6 +3145,17 @@ if ($conn) {
                                                N/A
                                            <?php endif; ?>
                                        </td>
+                                       <td>
+                                           <?php
+                                              $outbound_view_delivery_id = (int)(explode(',', (string)($delivery['delivery_ids'] ?? '0'))[0] ?? 0);
+                                              $outbound_view_project_id = $project_id ? (int)$project_id : (int)(explode(',', (string)($delivery['project_ids'] ?? '0'))[0] ?? 0);
+                                           ?>
+                                           <?php if ($outbound_view_delivery_id > 0 && $outbound_view_project_id > 0): ?>
+                                               <a href="view_project.php?project_id=<?php echo $outbound_view_project_id; ?>&delivery_id=<?php echo $outbound_view_delivery_id; ?>" class="action-button" style="padding:3px 8px; font-size:0.85em;" onclick="event.stopPropagation();">View</a>
+                                           <?php else: ?>
+                                               <span style="color:#9ca3af;">N/A</span>
+                                           <?php endif; ?>
+                                       </td>
                                   </tr>
                                   
                                   <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
@@ -3131,12 +3168,23 @@ if ($conn) {
                                               <td><?php echo number_format($detail['quantity']); ?></td>
                                               <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
                                               <td>-</td>
+                                              <td>
+                                                  <?php
+                                                      $outbound_detail_project_id = $project_id ? (int)$project_id : (int)($detail['project_id'] ?? 0);
+                                                      $outbound_detail_delivery_id = (int)($detail['id'] ?? 0);
+                                                  ?>
+                                                  <?php if ($outbound_detail_project_id > 0 && $outbound_detail_delivery_id > 0): ?>
+                                                      <a href="view_project.php?project_id=<?php echo $outbound_detail_project_id; ?>&delivery_id=<?php echo $outbound_detail_delivery_id; ?>" class="action-button" style="padding:2px 6px; font-size:0.8em;">View</a>
+                                                  <?php else: ?>
+                                                      <span style="color:#9ca3af;">N/A</span>
+                                                  <?php endif; ?>
+                                              </td>
                                           </tr>
                                       <?php endforeach; ?>
                                   <?php endif; ?>
                               <?php endforeach; ?>
                           <?php else: ?>
-                              <tr><td colspan="6">No outbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                              <tr><td colspan="7">No outbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
                           <?php endif; ?>
                       </tbody>
                   </table>
