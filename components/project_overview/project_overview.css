@@ -1190,19 +1190,14 @@
 }
 
 /* Quick Navigation - subtle utility links */
-.project-quick-nav {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    padding-bottom: 14px;
-    border-bottom: 1px solid #e9ecef;
-    margin-bottom: 4px;
-}
-
-.nav-dropdown {
-    position: relative;
+.quick-nav-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    text-align: center;
+    margin-bottom: 6px;
 }
 
 .nav-dropdown-btn,
@@ -1223,6 +1218,11 @@
     box-shadow: none;
 }
 
+.nav-dropdown-btn i {
+    font-size: 0.78rem;
+    opacity: 0.65;
+}
+
 .nav-dropdown-btn:hover,
 .nav-btn:hover {
     border-color: #488C9A;
@@ -1237,13 +1237,28 @@
 }
 
 .nav-dropdown-btn svg {
-    transition: transform 0.2s ease;
+    transition: transform 0.2s ease, opacity 0.2s ease;
     opacity: 0.5;
 }
 
 .nav-dropdown.open .nav-dropdown-btn svg {
     transform: rotate(180deg);
     opacity: 0.8;
+}
+
+.project-quick-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #e9ecef;
+    margin-bottom: 4px;
+}
+
+.nav-dropdown {
+    position: relative;
 }
 
 .nav-dropdown-content {
@@ -1406,11 +1421,26 @@
 }
 
 /* ==================== SINGLE-LEVEL TABS ==================== */
+.project-tabs-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 20px 0 24px 0;
+}
+
+.project-tabs-label {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #4c5c6d;
+    white-space: nowrap;
+}
+
 .project-tabs {
     display: flex;
     gap: 0;
-    margin: 20px 0 24px 0;
+    margin: 0;
     border-bottom: 2px solid #e9ecef;
+    flex: 1;
 }
 
 .project-tabs .tab-btn {
@@ -1453,6 +1483,12 @@
 
 /* ==================== RESPONSIVE TABS ==================== */
 @media (max-width: 768px) {
+    .project-tabs-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
     .project-tabs .tab-btn {
         padding: 10px 14px;
         font-size: 0.85rem;
@@ -4720,18 +4756,89 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 12px;
-    padding: 12px 16px;
+    gap: 10px;
+    padding: 10px 16px;
     margin-bottom: 20px;
     background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
     border-radius: 12px;
     border: 1px solid rgba(72, 140, 154, 0.12);
 }
 
+/* Slim variant above the timeline — acts as a toolbar, not a separate card */
+.unit-filter-bar-overview {
+    background: transparent;
+    border: none;
+    padding: 0 4px 10px 4px;
+    margin-bottom: 8px;
+}
+
+.unit-filter-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.unit-filter-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
 .unit-filter-bar .filter-label {
     font-size: 0.85rem;
     font-weight: 500;
     color: #6c757d;
+}
+
+.next-actions-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #5a6a79;
+    white-space: nowrap;
+}
+
+.next-action-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.next-action-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border: 1px solid #d0dbe0;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #3f5c66;
+    font-size: 0.76rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: all 0.18s ease;
+}
+
+.next-action-chip:hover {
+    border-color: #488C9A;
+    color: #2f6673;
+    background: rgba(72, 140, 154, 0.08);
+}
+
+.next-action-chip.recommended {
+    background: #488C9A;
+    border-color: #488C9A;
+    color: #ffffff;
+}
+
+.next-action-chip.recommended:hover {
+    background: #3b7583;
+    border-color: #3b7583;
+    color: #ffffff;
 }
 
 .filter-chips {
@@ -4775,6 +4882,13 @@
         margin: 0 0 15px 0;
     }
 
+    .unit-filter-left,
+    .unit-filter-right {
+        width: 100%;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
     .unit-filter-bar .filter-label {
         text-align: center;
         font-size: 0.8rem;
@@ -4791,9 +4905,23 @@
         flex: 1;
         text-align: center;
     }
+
+    .next-actions-label {
+        width: 100%;
+        text-align: center;
+    }
+
+    .next-action-chips {
+        justify-content: center;
+    }
 }
 
 @media (max-width: 480px) {
+    .next-action-chip {
+        font-size: 0.72rem;
+        padding: 6px 8px;
+    }
+
     .filter-chip {
         padding: 6px 8px;
         font-size: 0.75rem;
@@ -4886,4 +5014,161 @@
         margin-top: 10px;
         padding: 8px 12px;
     }
+}
+
+/* ==================== CASHFLOW HEADER & VIEW LINKS ==================== */
+.cashflow-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0;
+}
+
+.cashflow-header h2 {
+    margin-bottom: 0;
+}
+
+.cashflow-header + .table-responsive {
+    margin-top: 8px;
+}
+
+.cashflow-header + canvas,
+.cashflow-header + .chart-wrapper {
+    margin-top: 12px;
+}
+
+.view-all-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.82rem;
+    color: #488C9A;
+    text-decoration: none;
+    font-weight: 500;
+    padding: 4px 12px;
+    border: 1px solid rgba(72, 140, 154, 0.3);
+    border-radius: 20px;
+    background: rgba(72, 140, 154, 0.04);
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.view-all-link:hover {
+    background: rgba(72, 140, 154, 0.1);
+    border-color: #488C9A;
+    color: #3A6E7F;
+}
+
+/* ==================== NEXT ACTIONS GUIDANCE CARD ==================== */
+.next-actions-card {
+    background: rgba(72, 140, 154, 0.06);
+    border: 1px solid rgba(72, 140, 154, 0.15);
+    border-left: 3px solid #488C9A;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+
+.next-actions-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.next-actions-card-icon {
+    color: #488C9A;
+    font-size: 0.95rem;
+}
+
+.next-actions-card-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #293E4C;
+    flex: 1;
+}
+
+.next-actions-dismiss {
+    background: none;
+    border: none;
+    color: #6c757d;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    transition: color 0.15s ease;
+}
+
+.next-actions-dismiss:hover {
+    color: #293E4C;
+}
+
+.next-actions-card .next-action-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.next-actions-card .next-action-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    text-decoration: none;
+    border: 1px solid rgba(72, 140, 154, 0.3);
+    color: #488C9A;
+    background: #ffffff;
+    transition: all 0.15s ease;
+}
+
+.next-actions-card .next-action-chip:hover {
+    background: rgba(72, 140, 154, 0.08);
+    border-color: #488C9A;
+}
+
+.next-actions-card .next-action-chip.recommended {
+    background: #488C9A;
+    color: #ffffff;
+    border-color: #488C9A;
+}
+
+.next-actions-card .next-action-chip.recommended:hover {
+    background: #3A6E7F;
+    border-color: #3A6E7F;
+}
+
+/* ==================== CHART CONTAINERS & NO-DATA ==================== */
+.chart-wrapper {
+    position: relative;
+    min-height: 200px;
+}
+
+.chart-container {
+    position: relative;
+    min-height: 200px;
+}
+
+.chart-no-data {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 180px;
+    color: #6c757d;
+    text-align: center;
+    padding: 24px;
+}
+
+.chart-no-data i {
+    font-size: 2rem;
+    opacity: 0.3;
+    margin-bottom: 8px;
+}
+
+.chart-no-data p {
+    font-size: 0.88rem;
+    margin: 0;
+    opacity: 0.7;
 }

@@ -247,11 +247,12 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
 
         <!-- Quick Navigation -->
+        <div class="quick-nav-label">Quick Links</div>
         <div class="project-quick-nav">
             <!-- Modules Dropdown -->
             <div class="nav-dropdown">
-                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'modulesDropdown')">
-                    Modules <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'modulesDropdown')" title="Batch setup, palletization & movements">
+                    <i class="fas fa-cubes"></i> Modules <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="modulesDropdown">
                     <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
@@ -265,8 +266,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <!-- Deliveries Dropdown -->
             <div class="nav-dropdown">
-                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'deliveriesDropdown')">
-                    Deliveries <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'deliveriesDropdown')" title="Shipments & delivery scheduling">
+                    <i class="fas fa-truck"></i> Deliveries <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="deliveriesDropdown">
                     <?php if ($isAdmin): ?>
@@ -282,13 +283,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <!-- Warehousing Dropdown -->
             <div class="nav-dropdown">
-                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'warehousingDropdown')">
-                    Warehousing <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'warehousingDropdown')" title="Inventory & customs workflows">
+                    <i class="fas fa-warehouse"></i> Warehousing <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="warehousingDropdown">
                     <?php if (!empty($warehouses_with_inventory)): ?>
                         <?php foreach ($warehouses_with_inventory as $wh): ?>
-                        <a href="<?php echo $isAdmin ? 'manage_warehouse_inventory.php' : 'warehouse_info'; ?>?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>">
+                        <a href="warehouse_info.php?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>">
                             <?php echo htmlspecialchars($wh['name']); ?>
                             <?php if ($wh['modules_in_warehouse'] > 0 || $wh['modules_in_transit_to_wh'] > 0): ?>
                             <span style="font-size: 0.75rem; color: #6c757d; margin-left: 4px;">(<?php echo number_format($wh['modules_in_warehouse'] + $wh['modules_in_transit_to_wh']); ?>)</span>
@@ -303,8 +304,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <!-- Reports Dropdown (All Roles) -->
             <div class="nav-dropdown">
-                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'reportsDropdown')">
-                    Reports <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'reportsDropdown')" title="Cost, sustainability & exports">
+                    <i class="fas fa-chart-bar"></i> Reports <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="reportsDropdown">
                     <a href="project_cost_details?project_id=<?php echo $project_id; ?>">Costs</a>
@@ -317,8 +318,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <!-- Documents Dropdown -->
             <div class="nav-dropdown">
-                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'documentsDropdown')">
-                    Documents <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'documentsDropdown')" title="Project & global document libraries">
+                    <i class="fas fa-folder-open"></i> Documents <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="documentsDropdown">
                     <a href="project_documents?project_id=<?php echo $project_id; ?>">Project Documents</a>
@@ -572,6 +573,11 @@ document.addEventListener('click', function(event) {
 // ==================== TAB NAVIGATION ====================
 
 function activateTab(tabId) {
+    if (tabId === 'tab-financial') {
+        window.location.href = 'project_cost_details.php?project_id=<?php echo $project_id; ?>';
+        return;
+    }
+
     // Update tab button states
     document.querySelectorAll('.project-tabs .tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tabId);
@@ -587,8 +593,6 @@ function activateTab(tabId) {
     // Initialize charts when needed
     if (tabId === 'tab-deliveries') {
         initializeDeliveryCharts();
-    } else if (tabId === 'tab-financial') {
-        initializeFinancialCharts();
     }
 
     history.replaceState(null, null, '#' + tabId);
@@ -597,6 +601,10 @@ function activateTab(tabId) {
 // Hash-based tab routing
 function setActiveTabFromHash() {
     const hash = window.location.hash.replace('#', '');
+    if (hash === 'tab-financial') {
+        window.location.replace('project_cost_details.php?project_id=<?php echo $project_id; ?>');
+        return;
+    }
     if (hash && document.getElementById(hash)) {
         activateTab(hash);
     }
@@ -609,7 +617,12 @@ document.querySelectorAll('.project-tabs .tab-btn').forEach(btn => {
     });
 });
 
-setActiveTabFromHash();
+// Defer tab activation until DOM and scripts are fully ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setActiveTabFromHash);
+} else {
+    setActiveTabFromHash();
+}
 window.addEventListener('hashchange', setActiveTabFromHash);
 
 function toggleDropdown(dropdownId) {
@@ -868,27 +881,40 @@ let chartsInitialized = { delivery: false, financial: false };
 
 function initializeDeliveryCharts() {
     if (chartsInitialized.delivery) return;
-    chartsInitialized.delivery = true;
-    initLineChart();
-    initPieChart();
+    try {
+        initLineChart();
+        initPieChart();
+        chartsInitialized.delivery = true;
+    } catch(e) {
+        // Chart.js may not be loaded yet — will retry on next tab activation
+        console.warn('Delivery charts not ready, will retry:', e.message);
+    }
 }
 
 function initializeFinancialCharts() {
     if (chartsInitialized.financial) return;
-    chartsInitialized.financial = true;
-    initBudgetLineChart();
-    initCostPieChart();
+    try {
+        initBudgetLineChart();
+        initCostPieChart();
+        chartsInitialized.financial = true;
+    } catch(e) {
+        console.warn('Financial charts not ready, will retry:', e.message);
+    }
 }
 
 // Legacy compatibility
 function showView(viewId) {
+    if (viewId === 'financial-info') {
+        window.location.href = 'project_cost_details.php?project_id=<?php echo $project_id; ?>';
+        return;
+    }
+
     const viewMap = {
         'progress-info': 'tab-timeline',
         'project-progress': 'tab-timeline',
         'site-info': 'tab-site',
         'module-info': 'tab-modules',
-        'delivery-info': 'tab-deliveries',
-        'financial-info': 'tab-financial'
+        'delivery-info': 'tab-deliveries'
     };
     const tabId = viewMap[viewId];
     if (tabId) activateTab(tabId);
@@ -1153,195 +1179,21 @@ function initCostPieChart() {
     });
 }
 
-// ==================== LEGACY CODE STARTS ====================
-
-<?php if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-// Delivery View line chart (for regular users) - Now handled by initLineChart()
-var dateLabels = <?php echo $dateLabelsJSON; ?>;
-var lineData   = <?php echo $lineChartDataJSON; ?>;
-var ctxLineEl  = document.getElementById('lineChart');
-if(ctxLineEl){
-var ctxLine    = ctxLineEl.getContext('2d');
-// Force a layout refresh to ensure tick rotation takes effect in some browsers
-setTimeout(function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} }, 0);
-var lineChart = new Chart(ctxLine, {
-    type: 'line',
-    data: {
-        labels: dateLabels,
-        datasets: [
-            {
-                label: 'Anticipated',
-                data: lineData.anticipated,
-                borderColor: '#488C9A',
-                borderDash: [5,5],
-                borderWidth: 2,
-                fill: false,
-                pointRadius: 0
-            },
-            {
-                label: 'Actual',
-                data: lineData.actual,
-                borderColor: '#293E4C',
-                borderWidth: 2,
-                fill: false,
-                pointRadius: 0,
-                spanGaps: false
-            }
-        ]
-    },
-    options: {
-        interaction: { mode: 'index', intersect: false },
-        responsive: true,
-        animation: false,
-        scales: {
-            x: {
-                type: 'time',
-                time: {
-                    parser: 'yyyy-MM-dd',
-                    tooltipFormat: 'PP',
-                    unit: 'week',
-                    displayFormats: { week: 'MMM d' }
-                },
-                title: { display: true, text: 'Date' },
-                ticks: {
-                    maxRotation: 70,
-                    minRotation: 70,
-                    autoSkip: true,
-                    autoSkipPadding: 12
-                }
-            },
-            y: {
-                beginAtZero: true,
-                ticks: { precision: 0 },
-                title: {
-                    display: true,
-                    text: '<?php echo ($view_mode=="mw") ? "MWs" : "Number of Modules";?>'
-                }
-            }
-        },
-        plugins: {
-            tooltip: { mode: 'index', intersect: false },
-            legend: { display: true, position: 'top' }
-        }
-    }
-});
-}
-
-// Delivery Overview pie (for regular users)
-var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
-var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
-
-// Create dynamic color mapping based on actual labels
-var colorMap = {
-    'Delivered to Project': '#488C9A',
-    'At Manufacturer': '#293E4C', 
-    'On Water': '#66B2FF',
-    'Customs Hold': '#dc2626',
-    'Cleared Customs': '#32CD32',
-    'In Transit to Warehouse': '#9370DB',
-    'In Transit to Project': '#C0C0C0',
-    'In Warehouse': '#FF6B6B',
-    'Exceptions': '#f57c00'
-};
-
-var dynamicColors = pieChartLabels.map(function(label) {
-    return colorMap[label] || '#cccccc'; // fallback color
-});
-
-var ctxPieEl       = document.getElementById('pieChart');
-if(ctxPieEl){
-// Add pointer cursor since pie chart is now clickable
-ctxPieEl.style.cursor = 'pointer';
-var ctxPie         = ctxPieEl.getContext('2d');
-var pieChart = new Chart(ctxPie,{
-    type:'pie',
-    data:{
-        labels: pieChartLabels,
-        datasets:[{
-            data: pieChartData,
-            backgroundColor: dynamicColors
-        }]
-    },
-    options:{
-        plugins:{
-            tooltip:{
-                callbacks:{
-                    label:function(context){
-                        var lab=context.label||'';
-                        var val=context.parsed||0;
-                        let tooltipText = lab+': '+ val.toFixed(2)+'%';
-                        
-                        // Add damaged count for Delivered to Project
-                        if (lab === 'Delivered to Project') {
-                            const deliveredDamagedTotal = <?php echo (int)($delivered_damaged_total ?? 0); ?>;
-                            if (deliveredDamagedTotal > 0) {
-                                tooltipText += ` (${deliveredDamagedTotal} modules damaged)`;
-                            }
-                        }
-                        
-                        return tooltipText;
-                    }
-                }
-            }
-        },
-        onClick: function(event, elements) {
-            if (elements.length > 0) {
-                const elementIndex = elements[0].index;
-                const label = pieChartLabels[elementIndex];
-                
-                // Map pie chart labels to modal status names
-                let modalStatus = label;
-                if (label === 'Delivered to Project') {
-                    modalStatus = 'Delivered';
-                } else if (label === 'Exceptions') {
-                    modalStatus = 'Exceptions';
-                }
-                
-                // Open the same modal as the shipping status boxes
-                showCustomerShippingModal(modalStatus);
-            }
-        }
-    }
-});
-}
-<?php endif; ?>
-
 function showView(viewId) {
-    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-    // Admin view logic
-    ['progress-info','site-info','module-info'].forEach(function(id){
-        var sec = document.getElementById(id);
-        var btn = document.getElementById(id+'-btn');
-        if(sec) sec.style.display = (id===viewId)?'block':'none';
-        if(btn){
-            if(id===viewId) btn.classList.add('active');
-            else btn.classList.remove('active');
-        }
-    });
-    
-    // Load content for site-info and module-info when they're selected
-    if(viewId === 'site-info') {
-        loadSiteInfo();
-    } else if(viewId === 'module-info') {
-        loadModuleInfo();
+    if (viewId === 'financial-info') {
+        window.location.href = 'project_cost_details.php?project_id=<?php echo $project_id; ?>';
+        return;
     }
-    <?php else: ?>
-    // Regular user view logic
-    document.getElementById('delivery-info').style.display='none';
-    document.getElementById('financial-info').style.display='none';
 
-    document.getElementById('delivery-info-btn').classList.remove('active');
-    document.getElementById('financial-info-btn').classList.remove('active');
-
-    if(viewId==='delivery-info'){
-        document.getElementById('delivery-info').style.display='block';
-        document.getElementById('delivery-info-btn').classList.add('active');
-    } else {
-        document.getElementById('financial-info').style.display='block';
-        document.getElementById('financial-info-btn').classList.add('active');
-        initializeFinancialCharts();
-    }
-    <?php endif; ?>
+    const viewMap = {
+        'progress-info': 'tab-timeline',
+        'project-progress': 'tab-timeline',
+        'site-info': 'tab-site',
+        'module-info': 'tab-modules',
+        'delivery-info': 'tab-deliveries'
+    };
+    const tabId = viewMap[viewId];
+    if (tabId) activateTab(tabId);
 }
 
 <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
@@ -1723,7 +1575,7 @@ function generateShippingContent(filter){
                     html+='</ul>';
                 }
                 if(filter==='In Transit to Warehouse' && data.warehouse_id){
-                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="display:inline-block;margin-top:8px;background:#488C9A;color:#fff;padding:6px 10px;border-radius:4px;text-decoration:none;">Receive into Warehouse</a>`;
+                    html+=`<a href="warehouse_info.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="display:inline-block;margin-top:8px;background:#488C9A;color:#fff;padding:6px 10px;border-radius:4px;text-decoration:none;">Receive into Warehouse</a>`;
                 }
                 html+='</div>';
             }
@@ -1745,7 +1597,7 @@ function generateShippingContent(filter){
             html+=`<p style="color:#666;margin-bottom:10px;">Pallets are being reviewed by customs. Use the customs hold queue to release eligible pallets.</p>`;
             for(const key in shippingBreakdown){
                 if(key.includes('Customs Hold') && shippingBreakdown[key].warehouse_id){
-                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>&tab=customsHold" class="modal-action" style="background:#dc2626;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Manage Customs Hold</a>`;
+                    html+=`<a href="warehouse_info.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>&tab=customsHold" class="modal-action" style="background:#dc2626;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Manage Customs Hold</a>`;
                     break;
                 }
             }
@@ -1757,7 +1609,7 @@ function generateShippingContent(filter){
             // Find the port warehouse for this project's cleared customs pallets
             for(const key in shippingBreakdown){
                 if(key.includes('Cleared Customs') && shippingBreakdown[key].warehouse_id){
-                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Create Drayage Shipment</a>`;
+                    html+=`<a href="warehouse_info.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Create Drayage Shipment</a>`;
                     break;
                 }
             }
@@ -1782,8 +1634,8 @@ function handleAdminWarehousing() {
         alert('No inventory found for this project in any warehouse.');
         return;
     } else if (warehousesWithInventory.length === 1) {
-        // Single warehouse - go directly to manage_warehouse_inventory
-        window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehousesWithInventory[0].id + '&project_id=' + projectId;
+        // Single warehouse - go directly to warehouse_info
+        window.location.href = 'warehouse_info.php?warehouse_id=' + warehousesWithInventory[0].id + '&project_id=' + projectId;
     } else {
         // Multiple warehouses - show warehouse selection page
         showWarehouseSelectionModal();
@@ -1828,7 +1680,7 @@ function closeWarehouseModal() {
 
 function goToWarehouseManagement(warehouseId) {
     const projectId = <?php echo $project_id; ?>;
-    window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehouseId + '&project_id=' + projectId;
+    window.location.href = 'warehouse_info.php?warehouse_id=' + warehouseId + '&project_id=' + projectId;
 }
 <?php endif; ?>
 
@@ -1864,34 +1716,25 @@ window.actualStatusData = {
 };
 
 function showView(viewId) {
-    // Hide all sections
-    document.getElementById('project-progress').style.display = 'none';
-    document.getElementById('delivery-info').style.display = 'none';
-    document.getElementById('financial-info').style.display = 'none';
-
-    // Remove active class from all buttons
-    document.getElementById('project-progress-btn').classList.remove('active');
-    document.getElementById('delivery-info-btn').classList.remove('active');
-    document.getElementById('financial-info-btn').classList.remove('active');
-
-    // Show selected section and activate button
-    if(viewId === 'project-progress'){
-        document.getElementById('project-progress').style.display = 'block';
-        document.getElementById('project-progress-btn').classList.add('active');
-    } else if(viewId === 'delivery-info'){
-        document.getElementById('delivery-info').style.display = 'block';
-        document.getElementById('delivery-info-btn').classList.add('active');
-        // Initialize charts if needed
-        initializeFinancialCharts();
-    } else {
-        document.getElementById('financial-info').style.display = 'block';
-        document.getElementById('financial-info-btn').classList.add('active');
-        // Initialize charts if needed
-        initializeFinancialCharts();
+    if (viewId === 'financial-info') {
+        window.location.href = 'project_cost_details.php?project_id=<?php echo $project_id; ?>';
+        return;
     }
-    
-    // Apply the current filter to the new section
-    syncFiltersToState();
+
+    const viewMap = {
+        'progress-info': 'tab-timeline',
+        'project-progress': 'tab-timeline',
+        'site-info': 'tab-site',
+        'module-info': 'tab-modules',
+        'delivery-info': 'tab-deliveries'
+    };
+    const tabId = viewMap[viewId];
+    if (tabId) {
+        activateTab(tabId);
+        if (typeof syncFiltersToState === 'function') {
+            syncFiltersToState();
+        }
+    }
 }
 
 function toggleSubRows(cls){
@@ -2795,7 +2638,7 @@ function generateCustomerShippingContent(status) {
                 } else if(status === 'Customs Hold') {
                     if(data.warehouse_id) {
                         html += `<div style="text-align:center;margin-top:20px;">` +
-                               `<a href="manage_warehouse_inventory.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>&tab=customsHold" class="customer-modal-btn" style="background:#dc2626;border-color:#dc2626;">View Customs Hold</a>` +
+                               `<a href="warehouse_info.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>&tab=customsHold" class="customer-modal-btn" style="background:#dc2626;border-color:#dc2626;">View Customs Hold</a>` +
                                `</div>`;
                     }
                 } else if(status === 'In Warehouse') {
