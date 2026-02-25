@@ -411,240 +411,69 @@ try {
     }
 
     // ── Page-awareness: inject context about which page the user is currently viewing ──
-    $currentPage = $_GET['page'] ?? '';
-    $pageContextMap = [
-        'dashboard' => [
-            'name' => 'Dashboard',
-            'description' => 'The main portfolio overview showing project cards/table, health badges, delivery charts, and key metrics (total MW, cost per watt, deliveries, modules in storage).',
-            'help' => 'Help users understand their portfolio status, explain health badge colors, guide them to projects needing attention, and explain the grid/table toggle and MW/module unit switcher.',
-            'actions' => ['View project details', 'Filter by health status', 'Toggle grid/table view', 'Switch MW/module units'],
-        ],
-        'project_overview' => [
-            'name' => 'Project Overview',
-            'description' => 'Detailed view of a single project showing delivery progress, order progress, module batches, milestones, financials, and delivery timeline.',
-            'help' => 'Explain project metrics, delivery vs order progress, milestone status, health badges, and help users find the right action (create shipment, view reports, manage modules).',
-            'actions' => ['View delivery progress', 'Check milestones', 'Access reports', 'View module batches', 'Create a shipment'],
-        ],
-        'create_shipment' => [
-            'name' => 'Create Shipment',
-            'description' => 'Form for creating new shipments. Users select pallets, choose destination, set shipment mode (single/multi), and enter carrier, cost, and BOL details. Supports domestic and overseas/container flows.',
-            'help' => 'Explain the difference between single and multi shipment modes, what each cost field means (freight, customer, accessorial), when to use overseas vs domestic flow, what BOL/Master BOL/House BOL are, and what "pallets per truck" controls.',
-            'actions' => ['Select pallets to ship', 'Choose single vs multi mode', 'Enter carrier and cost details', 'Set overseas container info'],
-        ],
-        'manage_warehouse_inventory' => [
-            'name' => 'Warehouse Inventory / Receiving',
-            'description' => 'Shows inventory for a specific warehouse or port. Users can receive inbound shipments, view stored pallets, and track outbound movements. Ports additionally handle containers and customs.',
-            'help' => 'Walk users through the receiving process, explain port vs warehouse differences, explain storage cost structure (entry/exit/monthly fees), and help with damage reporting during receiving.',
-            'actions' => ['Receive inbound shipments', 'View stored inventory', 'Track outbound movements', 'Report damage on receipt'],
-        ],
-        'warehousing_overview' => [
-            'name' => 'Warehousing Overview',
-            'description' => 'Aggregate view across all warehouses showing total pallets in storage, inbound/outbound activity, and facility summaries.',
-            'help' => 'Help users understand their overall storage footprint, compare warehouse utilization, and navigate to specific warehouse detail pages.',
-            'actions' => ['View all warehouse inventory', 'Compare facility utilization', 'Navigate to specific warehouse'],
-        ],
-        'scheduling' => [
-            'name' => 'Scheduling / Delivery Appointments',
-            'description' => 'Calendar and form for scheduling delivery appointments at project sites. Users pick dates/times, manage existing appointments, report damage, safety incidents, and upload POD.',
-            'help' => 'Explain operating hours, how to schedule and reschedule, what happens when marking as delivered (permanent, triggers milestones), how to report damage and safety incidents, and what POD is.',
-            'actions' => ['Schedule a delivery appointment', 'Reschedule existing delivery', 'Mark delivery as completed', 'Report damage or safety incident', 'Upload Proof of Delivery'],
-        ],
-        'modules' => [
-            'name' => 'Manage Modules',
-            'description' => 'Lists all module batches with status, wattage, quantities, and palletization progress. Users can add new batches, edit existing ones, and navigate to batch detail pages.',
-            'help' => 'Explain what module batches are, what "unassigned" means, palletization status badges, and guide users to palletize or edit batches.',
-            'actions' => ['View all module batches', 'Add a new module batch', 'Edit batch details', 'Navigate to palletization'],
-        ],
-        'module_overview' => [
-            'name' => 'Module Batch Overview',
-            'description' => 'Detailed view of a single module batch with tabs for palletization, pricing, logistics, and documentation. Users generate/undo pallets and manage batch configuration.',
-            'help' => 'Explain how to generate pallets (set modules per pallet, click generate), pallet dimensions, cost per watt, domestic content tracking, and what each tab shows.',
-            'actions' => ['Generate pallets', 'Undo palletization', 'View pricing details', 'Manage batch documentation'],
-        ],
-        'documents' => [
-            'name' => 'Project Documents',
-            'description' => 'Documents organized by project. Click a project to see all its files.',
-            'help' => 'Explain the difference between Project Documents and Global Documents, what document types exist, and how to find specific files.',
-            'actions' => ['Browse documents by project', 'Navigate to Global Documents for cross-project search'],
-        ],
-        'global_documents' => [
-            'name' => 'Global Documents',
-            'description' => 'All documents across all projects with filters by type, sub-type, project, date range, and BOL number. Supports upload and bulk download.',
-            'help' => 'Help users find documents using filters, explain document types and sub-types, guide uploads, and explain bulk download.',
-            'actions' => ['Upload a document', 'Filter by type/project/date', 'Bulk download selected files', 'Find a specific BOL document'],
-        ],
-        'anticipated_deliveries' => [
-            'name' => 'Delivery Projections / Anticipated Deliveries',
-            'description' => 'Planning tool for modeling delivery routes, stops, legs, and costs. Includes an interactive map for drawing routes and weekly cost projection tables.',
-            'help' => 'Explain what stops vs legs are, how freight costs are estimated, the difference between projected and actual costs, and how to use the route builder.',
-            'actions' => ['Create a delivery projection', 'Add stops and legs to a route', 'View weekly cost projections', 'Compare projected vs actual costs'],
-        ],
-        'project_planning' => [
-            'name' => 'Project Planning',
-            'description' => 'High-level planning view for creating and managing delivery projections across projects. Can create general (unattached) projections for "what-if" analysis.',
-            'help' => 'Explain the difference between project delivery plans and general projections, how to start planning, and what Plan Set/In Progress/Add Plan badges mean.',
-            'actions' => ['Create a new projection', 'View existing delivery plans', 'Compare scenarios'],
-        ],
-        'add_project' => [
-            'name' => 'Add New Project',
-            'description' => 'Form for creating a new project with name, address, target MW, operating hours, and optional site documents.',
-            'help' => 'Explain what each field means, especially Project Size (MW), and what site documents are helpful to upload during setup (delivery SOPs, site maps, safety docs).',
-            'actions' => ['Fill in project details', 'Set site operating hours', 'Upload site documents'],
-        ],
-        'add_warehouse' => [
-            'name' => 'Add New Warehouse',
-            'description' => 'Form for requesting a new warehouse or port facility with address, contact info, and fee structure.',
-            'help' => 'Explain the difference between port and warehouse types, what fee fields mean (entry, exit, monthly storage), and that the request goes to an account manager for setup.',
-            'actions' => ['Enter warehouse details', 'Set fee structure', 'Submit request'],
-        ],
-        'questions' => [
-            'name' => 'Questions & Support',
-            'description' => 'FAQ page with 57 searchable questions across 10 categories, plus a contact form for reaching the Solterra team.',
-            'help' => 'Help users find answers in the FAQ, explain how to use the search and category filters, and offer to answer their question directly.',
-            'actions' => ['Search the FAQ', 'Filter by category', 'Contact support via the form'],
-        ],
-        'profile_settings' => [
-            'name' => 'Profile Settings',
-            'description' => 'User profile management including name, email, phone, password change, and notification preferences.',
-            'help' => 'Guide users through updating their profile, changing passwords, and configuring notification preferences (in-app vs email per event type).',
-            'actions' => ['Update profile info', 'Change password', 'Manage notification preferences'],
-        ],
-        'notifications' => [
-            'name' => 'Notifications',
-            'description' => 'List of in-app notifications for document uploads, project updates, delivery changes, and other events.',
-            'help' => 'Explain what each notification type means and how to manage notification preferences from Profile Settings.',
-            'actions' => ['View recent notifications', 'Navigate to related items'],
-        ],
-        'warehouse_info' => [
-            'name' => 'Warehouse Detail',
-            'description' => 'Detailed info for a specific warehouse showing address, contacts, fee structure (entry/exit/monthly), and operational details.',
-            'help' => 'Explain the fee structure, how storage costs are calculated, and how to navigate to the inventory page for this warehouse.',
-            'actions' => ['View fee structure', 'See warehouse contacts', 'Navigate to inventory'],
-        ],
-        'cost_analysis' => [
-            'name' => 'Cost Analysis',
-            'description' => 'Financial breakdown for a project showing freight costs, accessorial costs, cost per watt, and accounts payable.',
-            'help' => 'Explain how costs are categorized, what cost per watt means, and how freight vs accessorial vs customer costs relate.',
-            'actions' => ['View cost breakdown', 'Filter by date range', 'Export cost data'],
-        ],
-        'sustainability' => [
-            'name' => 'Sustainability / Domestic Content',
-            'description' => 'Domestic content reporting showing weighted average domestic content % across module batches for IRA tax credit compliance.',
-            'help' => 'Explain what Domestic Content % means, why it matters for tax credits, and how the weighted average is calculated across batches.',
-            'actions' => ['View domestic content percentages', 'Check IRA compliance status'],
-        ],
-        'module_movements' => [
-            'name' => 'Module Movement Tracking',
-            'description' => 'Tracks where modules/pallets have been and where they are now. Shows location history through the supply chain: At Manufacturer → In Transit → In Warehouse → In Transit to Project → Delivered.',
-            'help' => 'Explain what module movements are, how to read the movement timeline, what each status means, and help users trace where specific pallets are.',
-            'actions' => ['Select a project to view movements', 'View movement map', 'Track pallet location history'],
-        ],
-        'manage_deliveries' => [
-            'name' => 'Manage Deliveries',
-            'description' => 'Lists all deliveries across projects with status, BOL numbers, scheduling info, and pallet counts. Entry point for editing deliveries, marking as complete, and managing PODs.',
-            'help' => 'Help users find specific deliveries, explain delivery statuses, guide them to schedule or edit a delivery, and explain POD requirements.',
-            'actions' => ['View all deliveries', 'Filter by status or project', 'Edit delivery details', 'Upload POD'],
-        ],
-        'manufacturers' => [
-            'name' => 'Manufacturers',
-            'description' => 'Lists all solar module manufacturers associated with the account. Shows manufacturer details, locations, and associated module batches.',
-            'help' => 'Explain how manufacturers relate to module batches, how to request a new manufacturer, and how to view manufacturer details.',
-            'actions' => ['View manufacturer list', 'See manufacturer details', 'Request a new manufacturer'],
-        ],
-        'manufacturer_overview' => [
-            'name' => 'Manufacturer Overview',
-            'description' => 'Detailed view of a single manufacturer showing locations, contact info, and all associated module batches.',
-            'help' => 'Help users understand manufacturer details, find associated batches, and navigate to related module or shipment pages.',
-            'actions' => ['View manufacturer locations', 'See associated module batches', 'View contact details'],
-        ],
-        'invoices' => [
-            'name' => 'Invoices',
-            'description' => 'Invoice management page showing all invoices (Solterra, freight, module) with filtering and search.',
-            'help' => 'Help users find specific invoices, explain invoice types, and guide them through the invoice workflow.',
-            'actions' => ['View invoices', 'Filter by type or project', 'Download invoices'],
-        ],
-        'manage_warehouses' => [
-            'name' => 'Manage Warehouses',
-            'description' => 'Lists all warehouse and port facilities with addresses, types, and inventory summaries.',
-            'help' => 'Explain the difference between ports and warehouses, help users find specific facilities, and guide them to inventory or detail pages.',
-            'actions' => ['View all warehouses', 'Navigate to warehouse detail', 'Request a new warehouse'],
-        ],
-        'bills_of_lading' => [
-            'name' => 'Bills of Lading',
-            'description' => 'Lists all BOL documents across shipments with status, dates, and associated projects.',
-            'help' => 'Explain what BOLs are, help users find specific BOL numbers, and explain the relationship between BOLs and shipments.',
-            'actions' => ['Search BOL numbers', 'View BOL details', 'Download BOL documents'],
-        ],
-        'pods' => [
-            'name' => 'Proof of Delivery',
-            'description' => 'Lists all POD documents with upload status, delivery dates, and associated projects/BOLs.',
-            'help' => 'Explain what PODs are, help users find missing PODs, and guide them through uploading POD documents.',
-            'actions' => ['View POD status', 'Upload POD documents', 'Download PODs', 'Identify missing PODs'],
-        ],
-        'ftd' => [
-            'name' => 'Flash Test Data',
-            'description' => 'Flash test results from manufacturers verifying module power output. Shows test data per batch.',
-            'help' => 'Explain what flash test data is, why it matters (quality verification), and how to view/download test results.',
-            'actions' => ['View flash test results', 'Download test data', 'Check module quality verification'],
-        ],
-        'warranty' => [
-            'name' => 'Warranty Claims',
-            'description' => 'Warranty claim management showing open/closed claims, damage documentation, and resolution status.',
-            'help' => 'Explain the warranty claim process, help users file or track claims, and explain damage documentation requirements.',
-            'actions' => ['View warranty claims', 'Create new claim', 'Track claim status', 'Upload damage documentation'],
-        ],
-        'add_module_batch' => [
-            'name' => 'Add Module Batch',
-            'description' => 'Form for adding a new module batch with manufacturer, project assignment, wattage/quantity rows, and domestic content tracking.',
-            'help' => 'Explain what a module batch is, guide users through the form fields, explain domestic content tracking, and clarify that multiple wattage/quantity rows can be added.',
-            'actions' => ['Select manufacturer', 'Assign to project (optional)', 'Enter wattage and quantity', 'Enable domestic content tracking'],
-        ],
-        'pallet_details' => [
-            'name' => 'Pallet Details',
-            'description' => 'Detailed view of a single pallet showing its current status, location history, module count, and associated shipment/BOL information.',
-            'help' => 'Explain pallet statuses, location history, and how to trace a pallet through the supply chain.',
-            'actions' => ['View pallet status', 'See location history', 'View associated shipment'],
-        ],
-        'project_photos' => [
-            'name' => 'Project Photos',
-            'description' => 'Photo gallery for a project showing site photos, progress documentation, and damage images.',
-            'help' => 'Help users upload and organize project photos, explain photo categories, and guide them through the gallery.',
-            'actions' => ['View project photos', 'Upload new photos', 'Reorder photos'],
-        ],
-        'archived_projects' => [
-            'name' => 'Archived Projects',
-            'description' => 'List of completed or archived projects that are no longer active.',
-            'help' => 'Explain why projects get archived, how to find them, and how to access their historical data.',
-            'actions' => ['View archived projects', 'Access historical project data'],
-        ],
-        'sustainability_overview' => [
-            'name' => 'Sustainability Overview',
-            'description' => 'Portfolio-wide domestic content and sustainability reporting across all projects.',
-            'help' => 'Explain domestic content requirements, IRA tax credit implications, and how the weighted average is calculated.',
-            'actions' => ['View portfolio domestic content', 'Check compliance status'],
-        ],
-        'incident_reports' => [
-            'name' => 'Incident Reports',
-            'description' => 'Safety incident reports from deliveries including driver incidents, equipment damage, and near-miss events.',
-            'help' => 'Explain what constitutes a safety incident, how to file reports, and how incidents are tracked.',
-            'actions' => ['View incident reports', 'File new incident report', 'Track resolution status'],
-        ],
-    ];
+    $currentPageRaw = strtolower(trim((string)($_GET['page'] ?? '')));
+    $currentPage = preg_replace('/[^a-z0-9_]/', '', $currentPageRaw);
+    $normalizedRole = strtolower(trim((string)$user_role));
+    if ($normalizedRole === 'ddpm') {
+        $normalizedRole = 'user';
+    }
 
-    if (!empty($currentPage) && isset($pageContextMap[$currentPage])) {
+    $pageCatalogPath = dirname(__DIR__) . '/config/page-context-map.php';
+    $pageCatalog = ['aliases' => [], 'pages' => []];
+    if (file_exists($pageCatalogPath)) {
+        $loadedCatalog = require $pageCatalogPath;
+        if (is_array($loadedCatalog)) {
+            $pageCatalog = array_merge($pageCatalog, $loadedCatalog);
+        }
+    }
+
+    $pageAliases = is_array($pageCatalog['aliases'] ?? null) ? $pageCatalog['aliases'] : [];
+    $pageContextMap = is_array($pageCatalog['pages'] ?? null) ? $pageCatalog['pages'] : [];
+    if ($currentPage !== '' && isset($pageAliases[$currentPage])) {
+        $currentPage = $pageAliases[$currentPage];
+    }
+
+    if ($currentPage !== '' && isset($pageContextMap[$currentPage])) {
         $ctx = $pageContextMap[$currentPage];
-        $actionsStr = implode(', ', $ctx['actions']);
+        $actions = is_array($ctx['actions'] ?? null) ? $ctx['actions'] : [];
+        $actionsStr = !empty($actions) ? implode(', ', $actions) : 'No actions listed.';
         $systemMessage .= "\n\n**Current Page Context**\n";
-        $systemMessage .= "The user is currently on the **{$ctx['name']}** page (`{$currentPage}.php`).\n";
-        $systemMessage .= "Page description: {$ctx['description']}\n";
-        $systemMessage .= "How to help on this page: {$ctx['help']}\n";
+        $systemMessage .= "The user is currently on the **" . ($ctx['name'] ?? ucwords(str_replace('_', ' ', $currentPage))) . "** page (`{$currentPage}.php`).\n";
+        $systemMessage .= "Page description: " . ($ctx['description'] ?? 'No description available.') . "\n";
+        $systemMessage .= "How to help on this page: " . ($ctx['help'] ?? 'Give practical guidance specific to this page.') . "\n";
         $systemMessage .= "Key actions available: {$actionsStr}\n";
-        $systemMessage .= "When the user asks vague questions like \"help\", \"what can I do here?\", or \"what is this page?\", use this context to give a specific, relevant answer about THIS page rather than a generic response.\n";
-    } elseif (!empty($currentPage)) {
-        // Page not in map — provide the page name but don't make a big deal of it
+
+        $accessRoles = is_array($ctx['access_roles'] ?? null) ? $ctx['access_roles'] : [];
+        if (!empty($accessRoles)) {
+            $systemMessage .= "Authorized roles: " . implode(', ', $accessRoles) . "\n";
+            if (!in_array($normalizedRole, $accessRoles, true)) {
+                $systemMessage .= "Current user role (`{$normalizedRole}`) is not listed for this page. If asked for restricted actions, explain access limits clearly.\n";
+            }
+        }
+
+        $roleCapabilities = is_array($ctx['role_capabilities'] ?? null) ? $ctx['role_capabilities'] : [];
+        if (!empty($roleCapabilities)) {
+            $systemMessage .= "Role capability matrix for this page:\n";
+            foreach (['user', 'customer_admin', 'admin', 'global_admin'] as $roleKey) {
+                if (!empty($roleCapabilities[$roleKey])) {
+                    $systemMessage .= "- {$roleKey}: {$roleCapabilities[$roleKey]}\n";
+                }
+            }
+            if (!empty($roleCapabilities[$normalizedRole])) {
+                $systemMessage .= "Current user role focus (`{$normalizedRole}`): {$roleCapabilities[$normalizedRole]}\n";
+            }
+        }
+
+        $supportingPages = is_array($ctx['supporting_pages'] ?? null) ? $ctx['supporting_pages'] : [];
+        if (!empty($supportingPages)) {
+            $systemMessage .= "Related pages: " . implode(', ', $supportingPages) . "\n";
+        }
+
+        $systemMessage .= "When the user asks vague questions like \"help\", \"what can I do here?\", or \"what is this page?\", answer with this page and role context first.\n";
+    } elseif ($currentPage !== '') {
         $readableName = ucwords(str_replace('_', ' ', $currentPage));
         $systemMessage .= "\n\n**Current Page Context**\n";
-        $systemMessage .= "The user is currently on the **{$readableName}** page (`{$currentPage}.php`). No detailed context is available for this page, but use the page name to tailor your response. Do NOT tell the user you can't see their page — just answer their question naturally.\n";
+        $systemMessage .= "The user is currently on the **{$readableName}** page (`{$currentPage}.php`). No detailed context is available for this page, but use the page name to tailor your response. Do NOT tell the user you can't see their page - just answer naturally.\n";
     }
 
     // Append dynamic tool context (if any) so the model can ground its answer
