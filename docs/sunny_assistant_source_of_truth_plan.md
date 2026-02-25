@@ -373,3 +373,21 @@ Priority: Critical
     - tightened heuristic routing so generic "module cost" prompts are not misrouted to inventory valuation unless storage context is present
 18. customer_admin permissions hotfix:
     - added `module_batch_milestones` to Sunny query-executor allowed tables to unblock cost-summary queries that join milestone metadata
+2026-02-25:
+1. Page-awareness refactor:
+   - moved hardcoded page context map out of `ai-assistant/api/chat-stream.php` into `ai-assistant/config/page-context-map.php`
+   - added alias resolution for legacy/non-canonical page names (`manage_warehouse_inventory`, `profile_settings`, etc.)
+2. Role-aware page context:
+   - added explicit `access_roles` and `role_capabilities` per page for `user`, `customer_admin`, `admin`, `global_admin`
+   - chat stream now injects page-specific role matrix + current-role focus into system prompt context
+3. Portal page matrix source:
+    - created `docs/portal_page_role_matrix.md` covering 52 user-facing pages with purpose, role profile, access roles, and supporting pages
+    - linked matrix + Sunny page-context config from `portal.md` key files section
+4. Pass 2 page coverage completed:
+   - expanded `ai-assistant/config/page-context-map.php` from 52 to 104 modeled page contexts (including legacy/utility pages)
+   - added role and capability coverage for remaining header-based page controllers
+5. Drift-maintenance tooling:
+   - added `scripts/sunny/check_page_context_drift.sh` to compare modeled page contexts vs header-based pages and validate alias targets
+   - added `scripts/sunny/generate_portal_page_role_matrix.sh` + `scripts/sunny/extract_page_catalog.awk` to regenerate matrix docs directly from page-context config
+6. Matrix regeneration:
+   - regenerated `docs/portal_page_role_matrix.md` from the page-context config after Pass 2 expansion
