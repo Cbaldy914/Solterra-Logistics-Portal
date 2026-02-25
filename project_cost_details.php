@@ -1281,7 +1281,7 @@ $module_cost_per_watt_display = $module_cost_per_watt !== null
 // Project totals for header (ignore filters)
 $project_total_freight_cost = 0.0;
 $project_total_accessorial_costs = 0.0;
-$project_total_customs_hold_cost = 0.0;
+$project_total_customs_hold_cost = calculate_project_customs_hold_cost($project_id, $conn);
 $project_total_watts = 0.0;
 $project_total_delivered_watts = 0.0;
 
@@ -1306,23 +1306,6 @@ if ($stmt_project_totals) {
     );
     $stmt_project_totals->fetch();
     $stmt_project_totals->close();
-}
-
-$stmt_project_customs_hold = $conn->prepare("
-    SELECT COALESCE(SUM(COALESCE(ip.customs_hold_cost, 0)), 0)
-    FROM inventory_pallets ip
-    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-    WHERE ip.assigned_project_id = ?
-       OR ip.current_project_id = ?
-       OR m.project_id = ?
-");
-if ($stmt_project_customs_hold) {
-    $stmt_project_customs_hold->bind_param('iii', $project_id, $project_id, $project_id);
-    $stmt_project_customs_hold->execute();
-    $stmt_project_customs_hold->bind_result($project_total_customs_hold_cost);
-    $stmt_project_customs_hold->fetch();
-    $stmt_project_customs_hold->close();
 }
 
 $project_total_accessorial_costs += $project_total_customs_hold_cost;

@@ -805,12 +805,12 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 }
             }
 
-            // Use helper functions for admin inventory data
-            list($admin_pallets_in_storage, $admin_total_pallets) = fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port);
-            $admin_transit_pallets = fetchTransitPallets($conn, $warehouse_id);
-            $admin_transit_truckloads = fetchTransitTruckloads($conn, $warehouse_id);
-            $admin_inbound_history = fetchInboundHistory($conn, $warehouse_id);
-            $admin_outbound_history = fetchOutboundHistory($conn, $warehouse_id);
+            // Use helper functions for admin inventory data (filtered by project if set)
+            list($admin_pallets_in_storage, $admin_total_pallets) = fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port, $from_project_id ?: null);
+            $admin_transit_pallets = fetchTransitPallets($conn, $warehouse_id, $from_project_id ?: null);
+            $admin_transit_truckloads = fetchTransitTruckloads($conn, $warehouse_id, $from_project_id ?: null);
+            $admin_inbound_history = fetchInboundHistory($conn, $warehouse_id, $from_project_id ?: null);
+            $admin_outbound_history = fetchOutboundHistory($conn, $warehouse_id, $from_project_id ?: null);
 
             // Port-specific data
             if ($is_port) {
@@ -820,8 +820,12 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             }
 
             // Admin cost variables from admin data
-            $admin_total_storage_cost_monthly_rate = ($admin_total_pallets ?? 0) * $warehouse_fees['monthly'];
-            $current_monthly_accrual = $admin_total_storage_cost_monthly_rate;
+            // When project_id is set, use the already project-filtered values from the non-admin section
+            // Only override with warehouse-wide totals when viewing the full warehouse
+            if (!$from_project_id) {
+                $admin_total_storage_cost_monthly_rate = ($admin_total_pallets ?? 0) * $warehouse_fees['monthly'];
+                $current_monthly_accrual = $admin_total_storage_cost_monthly_rate;
+            }
 
             // Fetch all projects for dropdown (admin move/create shipment features)
             $project_clause = $role === 'global_admin' ? '' : ' AND account_id = ?';
@@ -2031,6 +2035,91 @@ if ($conn) {
         .hold-badge { background:#fecaca; color:#dc2626; padding:2px 8px; border-radius:10px; font-size:0.85em; font-weight:600; }
         .selection-counter { color:#6b7280; font-size:0.9em; }
 
+        /* Receive Truckload Modal */
+        #receiveTruckloadModal .modal-content {
+            background: #fff;
+            margin: 8% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 520px;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            animation: modalSlideIn 0.3s ease;
+        }
+        #receiveTruckloadModal .modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            padding: 18px 24px;
+            font-size: 1.15em;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #receiveTruckloadModal .close-receive-truckload-modal {
+            position: absolute;
+            top: 14px;
+            right: 18px;
+            font-size: 1.6em;
+            color: #fff;
+            cursor: pointer;
+            background: none;
+            border: none;
+            line-height: 1;
+            opacity: 0.85;
+            transition: opacity 0.2s;
+            z-index: 1;
+        }
+        #receiveTruckloadModal .close-receive-truckload-modal:hover { opacity: 1; }
+        #receiveTruckloadModal .modal-content { position: relative; }
+        #receiveTruckloadFormContainer {
+            padding: 24px;
+        }
+        .modal-form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .modal-form-row label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.9em;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        .modal-form-row input[type="text"],
+        .modal-form-row input[type="date"],
+        .modal-form-row input[type="file"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 0.95em;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .modal-form-row input[type="text"]:focus,
+        .modal-form-row input[type="date"]:focus {
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.15);
+            outline: none;
+        }
+        .modal-form-row small {
+            display: block;
+            color: #6b7280;
+            margin-top: 5px;
+            font-size: 0.85em;
+        }
+        #receiveTruckloadFormContainer .action-button {
+            width: 100%;
+            padding: 12px 24px;
+            font-size: 1em;
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+
         /* Action button variants */
         .action-button-secondary { background:#f3f4f6 !important; color:#374151 !important; border:1px solid #d1d5db !important; }
         .action-button-secondary:hover { background:#e5e7eb !important; }
@@ -2247,7 +2336,7 @@ if ($conn) {
             }
             $is_port_facility = !empty($warehouse_data['is_port']) && $warehouse_data['is_port'] == 1;
             $cost_scope_summary = 'Facility-wide costs across all projects in this location.';
-            if (!$isAdmin && $project_id) {
+            if ($project_id) {
                 $project_scope_name = $project_name_for_title ?: ('Project #' . (int)$project_id);
                 $cost_scope_summary = 'Project-only costs for ' . $project_scope_name . '.';
             } elseif (!$isAdmin && $module_batch_id) {
@@ -3247,9 +3336,11 @@ if ($conn) {
     <div class="modal-content">
         <span class="close-receive-truckload-modal">&times;</span>
         <?php if ($is_port): ?>
-            <div class="modal-header">Receive Container(s)<div style="font-size: 0.8em; color: #666; font-weight: normal; margin-top: 3px;">(Cleared Customs)</div></div>
+            <div class="modal-header">
+                <span>Receive Container(s) <span style="font-size: 0.8em; font-weight: normal; opacity: 0.85;">(Cleared Customs)</span></span>
+            </div>
         <?php else: ?>
-            <div class="modal-header"><?php echo $receiving_title; ?></div>
+            <div class="modal-header"><span><?php echo $receiving_title; ?></span></div>
         <?php endif; ?>
     </div>
 </div>

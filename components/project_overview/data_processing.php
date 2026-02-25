@@ -1321,6 +1321,7 @@ $stmt->close();
 // Totals
 $total_freight_cost      = 0;
 $total_accessorial_costs = 0;
+$total_customs_hold_cost = 0;
 $total_warehousing_cost  = 0;
 $total_solterra_fee      = 0;
 $total_logistics_cost    = 0;
@@ -1495,6 +1496,7 @@ function calculateProjectWarehousingCostFromPallets($conn, $project_id) {
 
 // Calculate warehousing cost from pallets (replaces old delivery-based calculation)
 $total_warehousing_cost = calculateProjectWarehousingCostFromPallets($conn, $project_id);
+$total_customs_hold_cost = calculate_project_customs_hold_cost($project_id, $conn);
 
 // Build actual total cost from deliveries (warehousing already calculated from pallets above)
 while ($dv = $dres->fetch_assoc()) {
@@ -1538,6 +1540,7 @@ while ($dv = $dres->fetch_assoc()) {
 }
 
 // Calculate total logistics cost (includes warehousing from pallets)
+$total_accessorial_costs += $total_customs_hold_cost;
 $total_logistics_cost = $total_freight_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
 
 // Calculate module costs from cost_per_watt
@@ -1639,7 +1642,8 @@ foreach ($keys_list_fin as $k) {
 
     // Add proportional share of warehousing cost based on quantity
     $warehousing_share = ($total_qty_for_warehousing > 0) ? ($total_warehousing_cost * ($qt / $total_qty_for_warehousing)) : 0;
-    $tc += $warehousing_share;
+    $customs_hold_share = ($total_qty_for_warehousing > 0) ? ($total_customs_hold_cost * ($qt / $total_qty_for_warehousing)) : 0;
+    $tc += $warehousing_share + $customs_hold_share;
 
     $lbl = ($k==='canceled') ? 'Canceled' : ($k.'W');
 
@@ -2229,6 +2233,20 @@ if (($total_warehousing_cost ?? 0) > 0) {
         $actual_cost_breakdown_by_month[$wh_month] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
     }
     $actual_cost_breakdown_by_month[$wh_month]['warehousing'] += $total_warehousing_cost;
+}
+
+// Add customs hold costs at today's month (tracked at pallet level, not per-delivery date)
+if (($total_customs_hold_cost ?? 0) > 0) {
+    $customs_month = date('Y-m');
+    if (!isset($deliveries_by_month_actual_cost[$customs_month])) {
+        $deliveries_by_month_actual_cost[$customs_month] = 0;
+    }
+    $deliveries_by_month_actual_cost[$customs_month] += $total_customs_hold_cost;
+
+    if (!isset($actual_cost_breakdown_by_month[$customs_month])) {
+        $actual_cost_breakdown_by_month[$customs_month] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+    }
+    $actual_cost_breakdown_by_month[$customs_month]['freight'] += $total_customs_hold_cost;
 }
 
 // Anticipated costs from projection (or fallback to old method)

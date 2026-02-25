@@ -1394,15 +1394,7 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $stmtCosts->close();
         $totalFreightCost = (float)($costRow['freight'] ?? 0);
         $totalAccessorialCost = (float)($costRow['accessorial'] ?? 0);
-        $totalCustomsHoldCost = 0.0;
-        $stmtCustomsHold = $conn->prepare('SELECT COALESCE(SUM(COALESCE(ip.customs_hold_cost, 0)), 0) AS customs_hold FROM inventory_pallets ip LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE ip.assigned_project_id = ? OR ip.current_project_id = ? OR m.project_id = ?');
-        if ($stmtCustomsHold) {
-            $stmtCustomsHold->bind_param('iii', $project_id, $project_id, $project_id);
-            $stmtCustomsHold->execute();
-            $customsRow = $stmtCustomsHold->get_result()->fetch_assoc();
-            $totalCustomsHoldCost = (float)($customsRow['customs_hold'] ?? 0);
-            $stmtCustomsHold->close();
-        }
+        $totalCustomsHoldCost = calculate_project_customs_hold_cost($project_id, $conn);
         $totalAccessorialCost += $totalCustomsHoldCost;
         $totalWarehousingCost = calculate_project_warehousing_cost($project_id, $conn);
 
