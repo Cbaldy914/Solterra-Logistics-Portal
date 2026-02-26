@@ -1011,6 +1011,7 @@ function initPieChart() {
     });
 }
 
+<?php if (!empty($enable_overview_financial)): ?>
 // Financial chart data from PHP
 var budgetChartData = <?php echo $budgetLineChartDataJSON ?? '{"anticipated_cost":[],"actual_cost":[]}'; ?>;
 var budgetDateLabels = <?php echo $dateLabelsForBudget ?: '[]'; ?>;
@@ -1178,6 +1179,7 @@ function initCostPieChart() {
         }
     });
 }
+<?php endif; ?>
 
 function showView(viewId) {
     if (viewId === 'financial-info') {
@@ -2713,6 +2715,7 @@ function handleLargeNumbers() {
     });
 }
 
+<?php if (!empty($enable_overview_financial)): ?>
 // Prepare costPie + budgetLineChart (for regular users)
 var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
 var dateLabelsForBudget   = <?php echo $dateLabelsForBudget ?: '[]';?>;
@@ -2897,6 +2900,7 @@ function initializeFinancialCharts(){
     });
     ctxBudgetEl.chartInitialized = true;
 }
+<?php endif; ?>
 <?php endif; ?>
 
 <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>

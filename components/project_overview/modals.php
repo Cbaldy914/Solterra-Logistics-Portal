@@ -104,6 +104,8 @@ if (in_array($role, ['admin', 'global_admin', 'customer_admin'])):
 
 <?php endif; ?>
 
+<?php if (!empty($enable_overview_financial)): ?>
+
 <!-- Logistics Breakdown Modal (available to all users) -->
 <style>
 .logistics-modal-content {
@@ -1225,3 +1227,5 @@ document.getElementById('costDetailModal')?.addEventListener('click', function(e
     if (e.target === this) closeCostDetailModal();
 });
 </script>
+
+<?php endif; ?>
