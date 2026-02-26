@@ -1301,6 +1301,108 @@ foreach ($weeks as $ix => $wobj) {
 }
 
 // -------------- Financial View --------------
+$enable_overview_financial = false;
+
+if (!$enable_overview_financial) {
+    // Keep milestone progress visible on the Modules tab even when overview financials are disabled.
+    $milestone_completion = get_milestone_completion_status($project_id, $conn);
+    $has_milestone_data = $milestone_completion['total_contract_value'] > 0;
+    $accrued_module_cost = $milestone_completion['total_triggered'];
+    $module_contract_value = $milestone_completion['total_contract_value'];
+    $module_milestone_rows = [];
+    $milestone_timeline = [];
+
+    $milestone_trigger_names = [
+        'po_execution' => 'PO Execution',
+        'shipping' => 'Shipping',
+        'customs_cleared' => 'Customs Clearance',
+        'project_delivery' => 'Project Delivery'
+    ];
+    $milestone_trigger_order = ['po_execution', 'shipping', 'customs_cleared', 'project_delivery'];
+
+    $milestone_by_event = [];
+    $stmt_ms_events = $conn->prepare("
+        SELECT mbm.trigger_event, mbm.percentage,
+               COALESCE(SUM(
+                   CASE WHEN mbm.trigger_event = 'shipping' AND d.origin_type = 'warehouse' THEN 0
+                        ELSE dmi.payment_amount END
+               ), 0) as triggered_amount
+        FROM module_batch_milestones mbm
+        JOIN modules m ON mbm.module_id = m.id
+        LEFT JOIN delivery_milestone_instances dmi ON dmi.milestone_id = mbm.id
+        LEFT JOIN deliveries d ON dmi.delivery_id = d.id
+        WHERE m.project_id = ? AND mbm.is_active = 1
+        GROUP BY mbm.trigger_event, mbm.percentage
+    ");
+    if ($stmt_ms_events) {
+        $stmt_ms_events->bind_param("i", $project_id);
+        $stmt_ms_events->execute();
+        $ms_events_result = $stmt_ms_events->get_result();
+        while ($ms_row = $ms_events_result->fetch_assoc()) {
+            $trigger = $ms_row['trigger_event'];
+            if (!isset($milestone_by_event[$trigger])) {
+                $milestone_by_event[$trigger] = ['triggered' => 0, 'percentage' => $ms_row['percentage']];
+            }
+            $milestone_by_event[$trigger]['triggered'] += floatval($ms_row['triggered_amount']);
+        }
+        $stmt_ms_events->close();
+    }
+
+    foreach ($milestone_trigger_order as $trigger) {
+        if (isset($milestone_by_event[$trigger]) || $module_contract_value > 0) {
+            $pct = $milestone_by_event[$trigger]['percentage'] ?? 0;
+            $target_amount = $module_contract_value * ($pct / 100);
+            $triggered_amount = $milestone_by_event[$trigger]['triggered'] ?? 0;
+            $module_milestone_rows[] = [
+                'name' => $milestone_trigger_names[$trigger] ?? $trigger,
+                'trigger' => $trigger,
+                'percentage' => $pct,
+                'target_amount' => round($target_amount, 2),
+                'accrued_amount' => round($triggered_amount, 2),
+                'is_complete' => ($target_amount > 0 && $triggered_amount >= $target_amount * 0.99)
+            ];
+        }
+    }
+
+    // Safe defaults for disabled financial section.
+    $total_freight_cost = 0;
+    $total_accessorial_costs = 0;
+    $total_customs_hold_cost = 0;
+    $total_warehousing_cost = 0;
+    $total_solterra_fee = 0;
+    $total_logistics_cost = 0;
+    $total_module_cost = 0;
+    $module_cost_per_watt = 0;
+    $has_module_cost_data = false;
+    $logistics_percentage_of_module = null;
+    $total_project_cost = $accrued_module_cost;
+    $cost_data = [];
+    $combined_qty = 0;
+    $combined_pallets = 0;
+    $combined_ppp = 0;
+    $combined_ppm = 0;
+    $sum_watts = 0;
+    $combined_ppw = 0;
+    $pieChartDataFinancial = [];
+    $weeks_financial = [];
+    $anticipated_deliveries_financial = [];
+    $projection_weekly_costs = [];
+    $projection_monthly_costs = [];
+    $all_projection_weeks = [];
+    $open_invoices_total = 0;
+    $budgetLineChartData = [
+        'anticipated_cost' => [],
+        'actual_cost' => [],
+        'forecast_breakdown' => [],
+        'actual_breakdown' => [],
+    ];
+    $budgetLineChartDataJSON = json_encode($budgetLineChartData);
+    $dateLabelsForBudget = '[]';
+    $allProjectionWeeksJSON = '[]';
+
+    goto project_overview_financial_done;
+}
+
 $deliveries = [];
 $stmt = $conn->prepare("SELECT * FROM deliveries WHERE project_id=?");
 $stmt->bind_param("i", $project_id);
@@ -2388,6 +2490,8 @@ $budgetDateLabels = array_map(function($month_key) {
 }, $all_months_cost);
 $dateLabelsForBudget = json_encode($budgetDateLabels);
 $allProjectionWeeksJSON = json_encode($all_projection_weeks);
+
+project_overview_financial_done:
 
 // For Admin Warehousing functionality - check if project has pallets in multiple warehouses
 $warehouses_with_inventory = [];
