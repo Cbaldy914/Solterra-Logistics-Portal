@@ -1386,11 +1386,25 @@ $to_date = static function ($value): ?DateTimeImmutable {
     if ($value === null || $value === '') {
         return null;
     }
-    $ts = strtotime((string)$value);
-    if ($ts === false) {
+
+    $raw_value = trim((string)$value);
+    if ($raw_value === '' || $raw_value === '0000-00-00' || $raw_value === '0000-00-00 00:00:00') {
         return null;
     }
-    return (new DateTimeImmutable())->setTimestamp($ts)->setTime(0, 0, 0);
+
+    $ts = strtotime($raw_value);
+    if ($ts === false || $ts <= 0) {
+        return null;
+    }
+
+    $year = (int)date('Y', $ts);
+    if ($year < 2000) {
+        return null;
+    }
+
+    return (new DateTimeImmutable('@' . $ts))
+        ->setTimezone(new DateTimeZone(date_default_timezone_get()))
+        ->setTime(0, 0, 0);
 };
 
 $get_week_start_key = static function ($value) use ($to_date): ?string {
@@ -1652,16 +1666,102 @@ foreach ($milestone_events as $event) {
     $forecast_weekly_buckets[$week_key]['milestones'] += (float)($event['amount'] ?? 0);
 }
 
-$outgoing_leg_by_stop = [];
+$incoming_legs_by_stop = [];
+$outgoing_legs_by_stop = [];
 foreach ($projection_legs as $leg) {
-    $stop_id = (string)($leg['from_stop_id'] ?? '');
-    if ($stop_id !== '' && !isset($outgoing_leg_by_stop[$stop_id])) {
-        $outgoing_leg_by_stop[$stop_id] = $leg;
+    $from_stop_id = (string)($leg['from_stop_id'] ?? '');
+    $to_stop_id = (string)($leg['to_stop_id'] ?? '');
+    if ($from_stop_id !== '') {
+        $outgoing_legs_by_stop[$from_stop_id][] = $leg;
+    }
+    if ($to_stop_id !== '') {
+        $incoming_legs_by_stop[$to_stop_id][] = $leg;
     }
 }
 
+$calculate_leg_end_date = static function (array $leg) use ($to_date): ?DateTimeImmutable {
+    $explicit_end = $to_date($leg['end_date'] ?? null);
+    if ($explicit_end) {
+        return $explicit_end;
+    }
+
+    $start_date = $to_date($leg['start_date'] ?? null);
+    if (!$start_date) {
+        return null;
+    }
+
+    $rate = (float)($leg['delivery_rate'] ?? 0);
+    if ($rate <= 0) {
+        return $start_date;
+    }
+
+    $rate_unit = (string)($leg['delivery_rate_unit'] ?? 'per_week');
+    $total_trucks = (int)($leg['trucks_required'] ?? 0);
+    if ($total_trucks <= 0) {
+        $total_trucks = 1;
+    }
+
+    if ($rate_unit === 'per_month') {
+        $days_per_delivery = 30 / $rate;
+    } elseif ($rate_unit === 'per_day') {
+        $days_per_delivery = 1 / $rate;
+    } else {
+        $days_per_delivery = 7 / $rate;
+    }
+
+    $total_days = (int)ceil($total_trucks * $days_per_delivery);
+    return $start_date->modify('+' . $total_days . ' days');
+};
+
+$resolve_stop_arrival_date = static function (array $stop) use ($to_date, $incoming_legs_by_stop, $calculate_leg_end_date): ?DateTimeImmutable {
+    $arrival = $to_date($stop['estimated_arrival_date'] ?? null);
+    if ($arrival) {
+        return $arrival;
+    }
+
+    $stop_id = (string)($stop['id'] ?? '');
+    if ($stop_id === '' || empty($incoming_legs_by_stop[$stop_id])) {
+        return null;
+    }
+
+    foreach ($incoming_legs_by_stop[$stop_id] as $incoming_leg) {
+        $leg_arrival = $calculate_leg_end_date($incoming_leg);
+        if ($leg_arrival) {
+            return $leg_arrival;
+        }
+
+        $fallback_start = $to_date($incoming_leg['start_date'] ?? null);
+        if ($fallback_start) {
+            return $fallback_start;
+        }
+    }
+
+    return null;
+};
+
+$resolve_stop_departure_date = static function (array $stop) use ($to_date, $outgoing_legs_by_stop): ?DateTimeImmutable {
+    $departure = $to_date($stop['estimated_departure_date'] ?? null);
+    if ($departure) {
+        return $departure;
+    }
+
+    $stop_id = (string)($stop['id'] ?? '');
+    if ($stop_id === '' || empty($outgoing_legs_by_stop[$stop_id])) {
+        return null;
+    }
+
+    foreach ($outgoing_legs_by_stop[$stop_id] as $outgoing_leg) {
+        $start = $to_date($outgoing_leg['start_date'] ?? null);
+        if ($start) {
+            return $start;
+        }
+    }
+
+    return null;
+};
+
 foreach ($projection_stops as $stop_index => $stop) {
-    $arrival_date = $to_date($stop['estimated_arrival_date'] ?? null);
+    $arrival_date = $resolve_stop_arrival_date($stop);
     $fees = is_array($stop['fees'] ?? null) ? $stop['fees'] : [];
     if (!$arrival_date || empty($fees)) {
         continue;
@@ -1676,9 +1776,9 @@ foreach ($projection_stops as $stop_index => $stop) {
         $fee_type = strtolower(trim((string)($fee['fee_type'] ?? '')));
         $fee_trigger = strtolower(trim((string)($fee['trigger'] ?? '')));
         if ($fee_type === 'storage' || $fee_trigger === 'monthly') {
-            $planned_departure = $to_date($stop['estimated_departure_date'] ?? null);
+            $planned_departure = $resolve_stop_departure_date($stop);
             $next_stop = $projection_stops[$stop_index + 1] ?? null;
-            $next_arrival = $to_date($next_stop['estimated_arrival_date'] ?? null);
+            $next_arrival = $next_stop ? $resolve_stop_arrival_date($next_stop) : null;
 
             if ($planned_departure && $planned_departure > $arrival_date) {
                 $departure_date = $planned_departure;
@@ -1706,14 +1806,10 @@ foreach ($projection_stops as $stop_index => $stop) {
 
         $fee_date = $arrival_date;
         if ($fee_type === 'outbound' || $fee_type === 'out') {
-            $departure_date = $to_date($stop['estimated_departure_date'] ?? null);
-            if (!$departure_date) {
-                $outgoing_leg = $outgoing_leg_by_stop[(string)($stop['id'] ?? '')] ?? null;
-                $departure_date = $to_date($outgoing_leg['start_date'] ?? null);
-            }
+            $departure_date = $resolve_stop_departure_date($stop);
             if (!$departure_date) {
                 $next_stop = $projection_stops[$stop_index + 1] ?? null;
-                $departure_date = $to_date($next_stop['estimated_arrival_date'] ?? null);
+                $departure_date = $next_stop ? $resolve_stop_arrival_date($next_stop) : null;
             }
             if ($departure_date && $departure_date > $arrival_date) {
                 $fee_date = $departure_date;
@@ -1792,18 +1888,94 @@ ksort($actual_weekly_totals);
 $all_week_keys = array_values(array_unique(array_merge(array_keys($forecast_weekly_totals), array_keys($actual_weekly_totals))));
 sort($all_week_keys);
 
+if (!empty($all_week_keys)) {
+    $first_week = new DateTimeImmutable($all_week_keys[0]);
+    $last_week = new DateTimeImmutable($all_week_keys[count($all_week_keys) - 1]);
+    $filled_week_keys = [];
+    $cursor = $first_week;
+    while ($cursor <= $last_week) {
+        $filled_week_keys[] = $cursor->format('Y-m-d');
+        $cursor = $cursor->modify('+1 week');
+    }
+    $all_week_keys = $filled_week_keys;
+}
+
 $forecast_actual_labels = [];
 $forecast_actual_forecast_cumulative = [];
 $forecast_actual_actual_cumulative = [];
+$forecast_actual_cadence_label = 'Week';
+
+$forecast_actual_cadence = 'weekly';
+if (count($all_week_keys) > 24) {
+    $forecast_actual_cadence = 'monthly';
+} elseif (count($all_week_keys) > 8) {
+    $forecast_actual_cadence = 'biweekly';
+}
+
+$forecast_actual_buckets = [];
+
+if ($forecast_actual_cadence === 'monthly') {
+    $forecast_actual_cadence_label = 'Month';
+    foreach ($all_week_keys as $week_key) {
+        $month_key = substr($week_key, 0, 7);
+        if (!isset($forecast_actual_buckets[$month_key])) {
+            $month_start = new DateTimeImmutable($month_key . '-01');
+            $forecast_actual_buckets[$month_key] = [
+                'label' => $month_start->format('M Y'),
+                'forecast_increment' => 0.0,
+                'actual_increment' => 0.0
+            ];
+        }
+
+        $forecast_actual_buckets[$month_key]['forecast_increment'] += (float)($forecast_weekly_totals[$week_key] ?? 0.0);
+        $forecast_actual_buckets[$month_key]['actual_increment'] += (float)($actual_weekly_totals[$week_key] ?? 0.0);
+    }
+    $forecast_actual_buckets = array_values($forecast_actual_buckets);
+} elseif ($forecast_actual_cadence === 'biweekly') {
+    $forecast_actual_cadence_label = 'Bi-Weekly';
+    $bucket_count = count($all_week_keys);
+    for ($i = 0; $i < $bucket_count; $i += 2) {
+        $slice = array_slice($all_week_keys, $i, 2);
+        if (empty($slice)) {
+            continue;
+        }
+
+        $first_week = new DateTimeImmutable($slice[0]);
+        $last_week = new DateTimeImmutable($slice[count($slice) - 1]);
+        $range_end = $last_week->modify('+6 days');
+
+        $forecast_increment = 0.0;
+        $actual_increment = 0.0;
+        foreach ($slice as $week_key) {
+            $forecast_increment += (float)($forecast_weekly_totals[$week_key] ?? 0.0);
+            $actual_increment += (float)($actual_weekly_totals[$week_key] ?? 0.0);
+        }
+
+        $forecast_actual_buckets[] = [
+            'label' => $first_week->format('M j') . ' - ' . $range_end->format('M j, Y'),
+            'forecast_increment' => $forecast_increment,
+            'actual_increment' => $actual_increment
+        ];
+    }
+} else {
+    foreach ($all_week_keys as $week_key) {
+        $week_start = new DateTimeImmutable($week_key);
+        $week_end = $week_start->modify('+6 days');
+        $forecast_actual_buckets[] = [
+            'label' => $week_start->format('M j') . ' - ' . $week_end->format('M j, Y'),
+            'forecast_increment' => (float)($forecast_weekly_totals[$week_key] ?? 0.0),
+            'actual_increment' => (float)($actual_weekly_totals[$week_key] ?? 0.0)
+        ];
+    }
+}
+
 $running_forecast = 0.0;
 $running_actual = 0.0;
+foreach ($forecast_actual_buckets as $bucket) {
+    $running_forecast += (float)($bucket['forecast_increment'] ?? 0.0);
+    $running_actual += (float)($bucket['actual_increment'] ?? 0.0);
 
-foreach ($all_week_keys as $week_key) {
-    $running_forecast += (float)($forecast_weekly_totals[$week_key] ?? 0);
-    $running_actual += (float)($actual_weekly_totals[$week_key] ?? 0);
-
-    $week_start = new DateTimeImmutable($week_key);
-    $forecast_actual_labels[] = $week_start->format('M j');
+    $forecast_actual_labels[] = (string)($bucket['label'] ?? '');
     $forecast_actual_forecast_cumulative[] = round($running_forecast, 2);
     $forecast_actual_actual_cumulative[] = round($running_actual, 2);
 }
@@ -3556,7 +3728,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                         <h3><i class="fas fa-chart-line"></i> Forecasted vs Actual Cost</h3>
                         <a href="<?php echo htmlspecialchars($weekly_projection_view_all_url); ?>" class="view-all-link">View All</a>
                     </div>
-                    <p class="chart-subtitle">Cumulative weekly cost trend from planned delivery dates vs actual delivery dates.</p>
+                    <p class="chart-subtitle">Cumulative projected cost trend from planned delivery dates vs actual delivery dates.</p>
                     <?php if ($has_forecast_actual_chart_data): ?>
                     <div class="forecast-chart-container">
                         <canvas id="forecastActualCostChart"></canvas>
@@ -4496,6 +4668,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         forecast: <?php echo json_encode($forecast_actual_forecast_cumulative, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS); ?>,
         actual: <?php echo json_encode($forecast_actual_actual_cumulative, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS); ?>,
         totalWatts: <?php echo (float)$project_total_watts; ?>,
+        xAxisTitle: <?php echo json_encode($forecast_actual_cadence_label, JSON_UNESCAPED_UNICODE | JSON_HEX_APOS); ?>,
         hasData: <?php echo $has_forecast_actual_chart_data ? 'true' : 'false'; ?>
     };
 
@@ -4659,7 +4832,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                     x: {
                         title: {
                             display: true,
-                            text: 'Month'
+                            text: forecastActualData.xAxisTitle || 'Month'
                         }
                     }
                 }
