@@ -149,65 +149,9 @@ $forecasted_freight     = $forecasted_costs['freight']     ?? 0;
 $forecasted_warehousing = $forecasted_costs['warehousing'] ?? 0; 
 $forecasted_accessorial = $forecasted_costs['accessorial'] ?? 0;
 
-// Ensure project_wattage_orders reflects all module batches assigned to this project
-// We compare against actual batch items, and if mismatched, we rebuild the totals.
-try {
-    $actual_totals = [];
-    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n          AND NOT EXISTS (\n              SELECT 1\n              FROM inventory_pallets ip\n              JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id\n              WHERE ip.unassigned_module_item_id = umi.id\n          )\n        GROUP BY umi.wattage\n    ")) {
-        $stmtA->bind_param("i", $project_id);
-        $stmtA->execute();
-        $resA = $stmtA->get_result();
-        while ($row = $resA->fetch_assoc()) {
-            $w = (int)$row['wattage'];
-            $q = (int)$row['total_qty'];
-            if ($w > 0 && $q > 0) { $actual_totals[$w] = $q; }
-        }
-        $stmtA->close();
-    }
-
-    $pwo_totals = [];
-    if ($stmtP = $conn->prepare("SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ?")) {
-        $stmtP->bind_param("i", $project_id);
-        $stmtP->execute();
-        $resP = $stmtP->get_result();
-        while ($row = $resP->fetch_assoc()) {
-            $pwo_totals[(int)$row['wattage']] = (int)$row['total_order'];
-        }
-        $stmtP->close();
-    }
-
-    $needs_sync = false;
-    if (count($actual_totals) !== count($pwo_totals)) {
-        $needs_sync = true;
-    } else {
-        foreach ($actual_totals as $w => $q) {
-            if (!isset($pwo_totals[$w]) || $pwo_totals[$w] !== $q) { $needs_sync = true; break; }
-        }
-    }
-
-    if ($needs_sync) {
-        $conn->begin_transaction();
-        if ($stmtDel = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?")) {
-            $stmtDel->bind_param("i", $project_id);
-            $stmtDel->execute();
-            $stmtDel->close();
-        }
-        if (!empty($actual_totals)) {
-            if ($stmtIns = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)")) {
-                foreach ($actual_totals as $w => $q) {
-                    $stmtIns->bind_param("iii", $project_id, $w, $q);
-                    $stmtIns->execute();
-                }
-                $stmtIns->close();
-            }
-        }
-        $conn->commit();
-    }
-} catch (Exception $e) {
-    // If anything fails, do not block page rendering; leave existing data in place
-}
-
-// Fetch total orders
+// project_wattage_orders should be maintained by module import/edit workflows.
+// Keep this page read-only and avoid request-time writes.
+$total_order_rows = [];
 $stmt = $conn->prepare("
     SELECT wattage, total_order
     FROM project_wattage_orders
@@ -216,12 +160,42 @@ $stmt = $conn->prepare("
 $stmt->bind_param("i", $project_id);
 $stmt->execute();
 $total_orders_result = $stmt->get_result();
+while ($row = $total_orders_result->fetch_assoc()) {
+    $total_order_rows[] = $row;
+}
+$stmt->close();
+
+// Fallback for projects missing precomputed rows; avoids empty overview data.
+if (empty($total_order_rows)) {
+    $stmt_fallback_orders = $conn->prepare("
+        SELECT umi.wattage, SUM(umi.quantity) AS total_order
+        FROM unassigned_module_items umi
+        JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM inventory_pallets ip
+              JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id
+              WHERE ip.unassigned_module_item_id = umi.id
+          )
+        GROUP BY umi.wattage
+    ");
+    if ($stmt_fallback_orders) {
+        $stmt_fallback_orders->bind_param("i", $project_id);
+        $stmt_fallback_orders->execute();
+        $fallback_result = $stmt_fallback_orders->get_result();
+        while ($row = $fallback_result->fetch_assoc()) {
+            $total_order_rows[] = $row;
+        }
+        $stmt_fallback_orders->close();
+    }
+}
 
 $total_orders = [];
 $project_size_mw = isset($project['project_size']) ? (float)$project['project_size'] : 0;
 $wattages = [];
 
-while ($row = $total_orders_result->fetch_assoc()) {
+foreach ($total_order_rows as $row) {
     $w = (float)$row['wattage'];
     $t = (int)$row['total_order'];
     $wattages[] = $w;
@@ -233,7 +207,6 @@ while ($row = $total_orders_result->fetch_assoc()) {
         'raw_quantity'=> $t,
     ];
 }
-$stmt->close();
 
 // Count total raw modules for forecast
 $total_raw_modules = 0;
@@ -1049,25 +1022,42 @@ $stmt_status->close();
 
 // Process warranty damaged pallets for delivered damaged total calculation only
 // Note: Don't add to status_totals as damaged pallets are already counted with status='Damaged' in main loop
+$damaged_pallet_ids = [];
 foreach ($warranty_damaged_pallets as $damaged_pallet) {
-    $damaged_qty = $damaged_pallet['damaged'];
-    $pallet_id = $damaged_pallet['pallet_id'];
-    
-    // Check if this damaged pallet was delivered to project site
-    $stmt_check_delivery = $conn->prepare(
-        "SELECT COUNT(*) as is_delivered FROM deliveries d 
-         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id 
-         WHERE dp.inventory_pallet_id = ? AND d.status_of_delivery = 'Delivered to Project'"
-    );
-    $stmt_check_delivery->bind_param('i', $pallet_id);
-    $stmt_check_delivery->execute();
-    $delivery_result = $stmt_check_delivery->get_result();
-    $delivery_row = $delivery_result->fetch_assoc();
-    $is_delivered_to_project = ($delivery_row['is_delivered'] > 0);
-    $stmt_check_delivery->close();
-    
-    // If this damaged pallet was delivered to project, add to delivered damaged total
-    if ($is_delivered_to_project) {
+    $pid = (int)($damaged_pallet['pallet_id'] ?? 0);
+    if ($pid > 0) {
+        $damaged_pallet_ids[$pid] = true;
+    }
+}
+
+$delivered_damage_pallet_set = [];
+if (!empty($damaged_pallet_ids)) {
+    $damaged_id_list = array_keys($damaged_pallet_ids);
+    $placeholders = implode(',', array_fill(0, count($damaged_id_list), '?'));
+    $types = str_repeat('i', count($damaged_id_list));
+    $sql_delivered_damage_check = "
+        SELECT DISTINCT dp.inventory_pallet_id
+        FROM delivery_pallets dp
+        JOIN deliveries d ON d.id = dp.delivery_id
+        WHERE dp.inventory_pallet_id IN ($placeholders)
+          AND d.status_of_delivery = 'Delivered to Project'
+    ";
+    $stmt_delivered_damage_check = $conn->prepare($sql_delivered_damage_check);
+    if ($stmt_delivered_damage_check) {
+        $stmt_delivered_damage_check->bind_param($types, ...$damaged_id_list);
+        $stmt_delivered_damage_check->execute();
+        $delivered_damage_result = $stmt_delivered_damage_check->get_result();
+        while ($delivered_damage_row = $delivered_damage_result->fetch_assoc()) {
+            $delivered_damage_pallet_set[(int)$delivered_damage_row['inventory_pallet_id']] = true;
+        }
+        $stmt_delivered_damage_check->close();
+    }
+}
+
+foreach ($warranty_damaged_pallets as $damaged_pallet) {
+    $damaged_qty = (int)($damaged_pallet['damaged'] ?? 0);
+    $pallet_id = (int)($damaged_pallet['pallet_id'] ?? 0);
+    if ($damaged_qty > 0 && $pallet_id > 0 && isset($delivered_damage_pallet_set[$pallet_id])) {
         $delivered_damaged_total += $damaged_qty;
     }
 }
@@ -1457,7 +1447,40 @@ function calculateProjectWarehousingCostFromPallets($conn, $project_id) {
     $pallets_result = $stmt->get_result();
     $stmt->close();
 
+    $pallet_rows = [];
+    $warehouse_ids = [];
     while ($pallet = $pallets_result->fetch_assoc()) {
+        $pallet_rows[] = $pallet;
+        if (!empty($pallet['current_warehouse_id'])) {
+            $warehouse_ids[(int)$pallet['current_warehouse_id']] = true;
+        }
+    }
+
+    $monthly_fee_by_warehouse = [];
+    if (!empty($warehouse_ids)) {
+        $warehouse_id_list = array_keys($warehouse_ids);
+        $placeholders = implode(',', array_fill(0, count($warehouse_id_list), '?'));
+        $types = str_repeat('i', count($warehouse_id_list));
+        $sql_monthly_fees = "
+            SELECT warehouse_id, COALESCE(SUM(amount), 0) AS monthly_fee
+            FROM warehouse_cost_items
+            WHERE trigger_event = 'monthly' AND is_active = 1
+              AND warehouse_id IN ($placeholders)
+            GROUP BY warehouse_id
+        ";
+        $stmt_monthly_fees = $conn->prepare($sql_monthly_fees);
+        if ($stmt_monthly_fees) {
+            $stmt_monthly_fees->bind_param($types, ...$warehouse_id_list);
+            $stmt_monthly_fees->execute();
+            $monthly_fees_result = $stmt_monthly_fees->get_result();
+            while ($monthly_fee_row = $monthly_fees_result->fetch_assoc()) {
+                $monthly_fee_by_warehouse[(int)$monthly_fee_row['warehouse_id']] = (float)$monthly_fee_row['monthly_fee'];
+            }
+            $stmt_monthly_fees->close();
+        }
+    }
+
+    foreach ($pallet_rows as $pallet) {
         $pallet_cost = 0.0;
 
         // First use recorded warehouse_cost if available
@@ -1466,21 +1489,16 @@ function calculateProjectWarehousingCostFromPallets($conn, $project_id) {
 
             // For pallets still in warehouse, add pending storage cost
             if ($pallet['status'] === 'In Warehouse' && !empty($pallet['current_warehouse_id']) && !empty($pallet['arrival_date'])) {
-                $wh_stmt = $conn->prepare("SELECT amount FROM warehouse_cost_items WHERE warehouse_id = ? AND trigger_event = 'monthly' AND is_active = 1");
-                if ($wh_stmt) {
-                    $wh_stmt->bind_param("i", $pallet['current_warehouse_id']);
-                    $wh_stmt->execute();
-                    $wh_stmt->bind_result($monthly_fee);
-                    if ($wh_stmt->fetch() && $monthly_fee > 0) {
-                        $arrival = new DateTime($pallet['arrival_date']);
-                        $now = new DateTime();
-                        $days = max(0, $arrival->diff($now)->days);
-                        $estimated_storage = $days * ($monthly_fee / 30);
-                        if ($estimated_storage > $pallet_cost) {
-                            $pallet_cost = $estimated_storage;
-                        }
+                $warehouse_id = (int)$pallet['current_warehouse_id'];
+                $monthly_fee = (float)($monthly_fee_by_warehouse[$warehouse_id] ?? 0);
+                if ($monthly_fee > 0) {
+                    $arrival = new DateTime($pallet['arrival_date']);
+                    $now = new DateTime();
+                    $days = max(0, $arrival->diff($now)->days);
+                    $estimated_storage = $days * ($monthly_fee / 30);
+                    if ($estimated_storage > $pallet_cost) {
+                        $pallet_cost = $estimated_storage;
                     }
-                    $wh_stmt->close();
                 }
             }
         } else {
@@ -2676,6 +2694,7 @@ if (!empty($project['manual_health_status'])) {
 
 // Fetch module batches for this project with wattage information
 $module_batches = [];
+$module_batch_ids = [];
 $stmt_modules = $conn->prepare("
     SELECT m.*, c.name as account_name,
         EXISTS (
@@ -2694,26 +2713,47 @@ $stmt_modules->bind_param("i", $project_id);
 $stmt_modules->execute();
 $modules_result = $stmt_modules->get_result();
 while ($module = $modules_result->fetch_assoc()) {
-    // Get wattage information for this module batch
-    $stmt_wattages = $conn->prepare("
-        SELECT wattage, quantity 
-        FROM unassigned_module_items 
-        WHERE unassigned_module_id = ? AND wattage > 0 AND quantity > 0
-        ORDER BY wattage ASC
-    ");
-    $stmt_wattages->bind_param("i", $module['id']);
-    $stmt_wattages->execute();
-    $wattages_result = $stmt_wattages->get_result();
-    
     $module['wattages'] = [];
-    while ($wattage_row = $wattages_result->fetch_assoc()) {
-        $module['wattages'][] = $wattage_row;
-    }
-    $stmt_wattages->close();
-    
     $module_batches[] = $module;
+    $module_batch_ids[] = (int)$module['id'];
 }
 $stmt_modules->close();
+
+if (!empty($module_batch_ids)) {
+    $wattages_by_batch = [];
+    $placeholders = implode(',', array_fill(0, count($module_batch_ids), '?'));
+    $types = str_repeat('i', count($module_batch_ids));
+    $stmt_batch_wattages = $conn->prepare("
+        SELECT unassigned_module_id, wattage, quantity
+        FROM unassigned_module_items
+        WHERE unassigned_module_id IN ($placeholders)
+          AND wattage > 0
+          AND quantity > 0
+        ORDER BY unassigned_module_id ASC, wattage ASC
+    ");
+    if ($stmt_batch_wattages) {
+        $stmt_batch_wattages->bind_param($types, ...$module_batch_ids);
+        $stmt_batch_wattages->execute();
+        $batch_wattages_result = $stmt_batch_wattages->get_result();
+        while ($batch_wattage_row = $batch_wattages_result->fetch_assoc()) {
+            $batch_id = (int)$batch_wattage_row['unassigned_module_id'];
+            if (!isset($wattages_by_batch[$batch_id])) {
+                $wattages_by_batch[$batch_id] = [];
+            }
+            $wattages_by_batch[$batch_id][] = [
+                'wattage' => $batch_wattage_row['wattage'],
+                'quantity' => $batch_wattage_row['quantity']
+            ];
+        }
+        $stmt_batch_wattages->close();
+    }
+
+    foreach ($module_batches as &$module) {
+        $batch_id = (int)$module['id'];
+        $module['wattages'] = $wattages_by_batch[$batch_id] ?? [];
+    }
+    unset($module);
+}
 
 // Calculate averages for conversion settings from module batches
 $pallets_per_truck_values = [];
