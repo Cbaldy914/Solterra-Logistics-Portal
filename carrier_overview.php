@@ -396,40 +396,50 @@ $conn->close();
         .chart-card h3 i { color: #488C9A; }
         .chart-container { position: relative; height: 280px; }
 
-        .carrier-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px; margin-bottom: 40px;
+        /* Carrier Table */
+        .table-card {
+            background: #fff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            overflow: hidden; border: 1px solid #e9ecef; margin-bottom: 40px;
         }
-        .carrier-card {
-            background: #fff; border-radius: 16px; padding: 24px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef;
-            cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden;
+        .table-card-header {
+            display: flex; align-items: center; gap: 12px; padding: 20px 24px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-bottom: 1px solid #e9ecef;
         }
-        .carrier-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(72,140,154,0.15); }
-        .carrier-card-overlay {
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            background: linear-gradient(45deg, rgba(72,140,154,0.95), rgba(41,62,76,0.95));
-            display: flex; align-items: center; justify-content: center;
-            opacity: 0; transition: opacity 0.2s; border-radius: 16px;
+        .table-card-header .icon-badge {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%); color: #fff;
+            width: 36px; height: 36px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center; font-size: 1rem;
         }
-        .carrier-card:hover .carrier-card-overlay { opacity: 1; }
-        .carrier-card-overlay span { color: #fff; font-size: 1em; font-weight: 600; }
-        .carrier-card-header {
-            display: flex; justify-content: space-between; align-items: flex-start;
-            margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #f1f3f4; gap: 12px;
+        .table-card-header h2 { margin: 0; font-size: 1.15rem; font-weight: 600; color: #293E4C; }
+        .table-card table { width: 100%; border-collapse: collapse; }
+        .table-card thead th {
+            padding: 14px 16px; text-align: left; font-size: 0.8rem; font-weight: 600;
+            color: #fff; text-transform: uppercase; letter-spacing: 0.5px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
         }
-        .carrier-name { font-size: 1.2em; font-weight: 600; color: #293E4C; flex: 1; min-width: 0; }
+        .table-card tbody tr { cursor: pointer; transition: background 0.15s, border-color 0.15s; border-left: 3px solid transparent; }
+        .table-card tbody tr:hover { background: #f0f7f8; border-left-color: #488C9A; }
+        .table-card tbody td { padding: 14px 16px; border-bottom: 1px solid #f1f3f4; font-size: 0.9rem; color: #333; vertical-align: middle; }
+        .table-card tbody tr:last-child td { border-bottom: none; }
         .carrier-badge {
-            font-size: 0.75em; font-weight: 600; padding: 4px 10px; border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+            font-size: 0.72em; font-weight: 600; padding: 3px 10px; border-radius: 20px; white-space: nowrap;
+            display: inline-block; vertical-align: middle; margin-left: 5px;
         }
         .carrier-badge.solterra { background: linear-gradient(135deg, #488C9A, #293E4C); color: #fff; }
-        .carrier-badge.type { background: #e8f4f6; color: #293E4C; }
-        .carrier-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-        .carrier-stat { text-align: center; padding: 10px; background: #f8f9fa; border-radius: 10px; }
-        .carrier-stat .value { font-size: 1.1em; font-weight: 700; color: #293E4C; }
-        .carrier-stat .value.good { color: #059669; }
-        .carrier-stat .value.warning { color: #fbb040; }
-        .carrier-stat .value.poor { color: #ea580c; }
-        .carrier-stat .label { font-size: 0.75em; color: #6c757d; margin-top: 2px; }
+        .type-badge {
+            display: inline-block; background: linear-gradient(135deg, #e8f4f6, #d0e8ec); color: #293E4C;
+            padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: 600;
+        }
+        .rate-badge {
+            display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.8em; font-weight: 600;
+        }
+        .rate-badge.good { background: #d1fae5; color: #059669; }
+        .rate-badge.warning { background: #fef3c7; color: #92400e; }
+        .rate-badge.poor { background: #fee2e2; color: #dc2626; }
+        .rate-badge.neutral { background: #f3f4f6; color: #6c757d; }
+        .safety-count { font-weight: 600; }
+        .safety-count.good { color: #059669; }
+        .safety-count.poor { color: #dc2626; }
 
         /* Modal Styles */
         .breakdown-modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); }
@@ -456,7 +466,7 @@ $conn->close();
 
         @media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 992px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .charts-section { grid-template-columns: 1fr; } }
-        @media (max-width: 768px) { .page-header { padding: 24px; } .page-header h1 { font-size: 1.8em; } .stats-grid { grid-template-columns: 1fr; } .carrier-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) { .page-header { padding: 24px; } .page-header h1 { font-size: 1.8em; } .stats-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -672,69 +682,80 @@ $conn->close();
         </div>
     </div>
 
-    <!-- Carrier Cards -->
+    <!-- Carrier Table -->
     <?php if (!empty($display_carriers)): ?>
-    <div class="carrier-grid" id="carrier-grid">
-        <?php foreach ($display_carriers as $data):
-            $completed = $data['deliveries_on_time'] + $data['deliveries_late'];
-            $on_time_pct = $completed > 0 ? round(($data['deliveries_on_time'] / $completed) * 100) : null;
-            $type_labels = ['ftl' => 'FTL', 'ltl' => 'LTL', 'drayage' => 'Drayage', 'intermodal' => 'Intermodal', 'ocean' => 'Ocean', 'other' => 'Other'];
-            $card_filter = $data['is_solterra_managed'] ? 'solterra' : 'account';
-            $compliance = get_carrier_compliance_status($data);
-        ?>
-        <div class="carrier-card" data-filter-type="<?php echo $card_filter; ?>" onclick="window.location.href='carrier_details.php?carrier_id=<?php echo $data['carrier_id']; ?>'">
-            <div class="carrier-card-header">
-                <span class="carrier-name"><?php echo htmlspecialchars($data['carrier_name']); ?></span>
-                <span>
-                    <?php if ($isAdmin && $data['is_solterra_managed']): ?>
-                        <span class="carrier-badge solterra">Solterra</span>
-                    <?php endif; ?>
-                    <span class="carrier-badge type"><?php echo $type_labels[$data['carrier_type']] ?? ucfirst($data['carrier_type']); ?></span>
-                    <?php
-                    // Compliance badge: admins see on all, customer_admin sees on own carriers only
-                    $show_compliance = false;
-                    if ($isAdmin) {
-                        $show_compliance = true;
-                    } elseif ($role === 'customer_admin' && !$data['is_solterra_managed']) {
-                        $show_compliance = true;
-                    }
-                    if ($show_compliance && $compliance !== null):
-                    ?>
-                        <?php echo get_compliance_badge_html($data); ?>
-                    <?php endif; ?>
-                </span>
-            </div>
-            <div class="carrier-stats">
-                <div class="carrier-stat">
-                    <span class="value">$<?php echo number_format($data['total_freight_cost'], 0); ?></span>
-                    <span class="label">Freight Cost</span>
-                </div>
-                <div class="carrier-stat">
-                    <span class="value"><?php echo number_format($data['total_deliveries']); ?></span>
-                    <span class="label">Deliveries</span>
-                </div>
-                <div class="carrier-stat">
-                    <span class="value <?php echo $on_time_pct === null ? '' : ($on_time_pct >= 90 ? 'good' : ($on_time_pct >= 70 ? 'warning' : 'poor')); ?>">
-                        <?php echo $on_time_pct !== null ? $on_time_pct . '%' : 'N/A'; ?>
-                    </span>
-                    <span class="label">On-Time</span>
-                </div>
-                <div class="carrier-stat">
-                    <span class="value <?php echo $data['safety_incidents'] === 0 ? 'good' : 'poor'; ?>"><?php echo number_format($data['safety_incidents']); ?></span>
-                    <span class="label">Safety Incidents</span>
-                </div>
-                <?php if ($data['warranty_claims'] > 0): ?>
-                <div class="carrier-stat" style="grid-column: 1 / -1;">
-                    <span class="value poor"><?php echo number_format($data['warranty_claims']); ?></span>
-                    <span class="label">Warranty Claims (Carrier Responsible)</span>
-                </div>
-                <?php endif; ?>
-            </div>
-            <div class="carrier-card-overlay">
-                <span>View Details</span>
-            </div>
+    <?php
+        $type_labels = ['ftl' => 'FTL', 'ltl' => 'LTL', 'drayage' => 'Drayage', 'intermodal' => 'Intermodal', 'ocean' => 'Ocean', 'other' => 'Other'];
+    ?>
+    <div class="table-card">
+        <div class="table-card-header">
+            <div class="icon-badge"><i class="fas fa-truck"></i></div>
+            <h2>All Carriers</h2>
         </div>
-        <?php endforeach; ?>
+        <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Carrier</th>
+                    <th>Type</th>
+                    <th>Freight Cost</th>
+                    <th>Deliveries</th>
+                    <th>On-Time Rate</th>
+                    <th>Safety</th>
+                    <th>Compliance</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($display_carriers as $data):
+                    $completed = $data['deliveries_on_time'] + $data['deliveries_late'];
+                    $on_time_pct = $completed > 0 ? round(($data['deliveries_on_time'] / $completed) * 100) : null;
+                    $row_filter = $data['is_solterra_managed'] ? 'solterra' : 'account';
+                    $compliance = get_carrier_compliance_status($data);
+                    $show_compliance = $isAdmin || ($role === 'customer_admin' && !$data['is_solterra_managed']);
+                ?>
+                <tr data-filter-type="<?php echo $row_filter; ?>" onclick="window.location.href='carrier_details.php?carrier_id=<?php echo $data['carrier_id']; ?>'">
+                    <td>
+                        <strong><?php echo htmlspecialchars($data['carrier_name']); ?></strong>
+                        <?php if ($isAdmin && $data['is_solterra_managed']): ?>
+                            <span class="carrier-badge solterra">Solterra</span>
+                        <?php endif; ?>
+                        <?php if (!empty($data['short_name'])): ?>
+                            <br><small style="color:#6c757d;">(<?php echo htmlspecialchars($data['short_name']); ?>)</small>
+                        <?php endif; ?>
+                    </td>
+                    <td><span class="type-badge"><?php echo $type_labels[$data['carrier_type']] ?? ucfirst($data['carrier_type']); ?></span></td>
+                    <td><strong>$<?php echo number_format($data['total_freight_cost'], 0); ?></strong></td>
+                    <td><?php echo number_format($data['total_deliveries']); ?></td>
+                    <td>
+                        <?php if ($on_time_pct !== null): ?>
+                            <span class="rate-badge <?php echo $on_time_pct >= 90 ? 'good' : ($on_time_pct >= 70 ? 'warning' : 'poor'); ?>">
+                                <?php echo $on_time_pct; ?>%
+                            </span>
+                            <small style="color:#6c757d; margin-left:4px;">(<?php echo $data['deliveries_on_time']; ?>/<?php echo $completed; ?>)</small>
+                        <?php else: ?>
+                            <span class="rate-badge neutral">N/A</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <span class="safety-count <?php echo $data['safety_incidents'] === 0 ? 'good' : 'poor'; ?>">
+                            <?php echo number_format($data['safety_incidents']); ?>
+                        </span>
+                        <?php if ($data['warranty_claims'] > 0): ?>
+                            <br><small style="color:#dc2626;"><?php echo $data['warranty_claims']; ?> warranty claim<?php echo $data['warranty_claims'] !== 1 ? 's' : ''; ?></small>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if ($show_compliance && $compliance !== null): ?>
+                            <?php echo get_compliance_badge_html($data); ?>
+                        <?php else: ?>
+                            <span style="color:#999;">--</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
     </div>
     <?php else: ?>
     <div class="empty-state">
@@ -757,8 +778,8 @@ function openWarrantyModal() { var m = document.getElementById('warrantyModal');
 function closeWarrantyModal() { var m = document.getElementById('warrantyModal'); if (m) m.style.display = 'none'; }
 
 function scrollToCarriers() {
-    var grid = document.querySelector('.carrier-grid');
-    if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    var table = document.querySelector('.table-card');
+    if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 window.onclick = function(event) {
@@ -773,11 +794,11 @@ document.querySelectorAll('.filter-btn').forEach(function(btn) {
         document.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
         btn.classList.add('active');
         var filter = btn.dataset.filter;
-        document.querySelectorAll('.carrier-card').forEach(function(card) {
+        document.querySelectorAll('tr[data-filter-type]').forEach(function(row) {
             if (filter === 'all') {
-                card.style.display = '';
+                row.style.display = '';
             } else {
-                card.style.display = card.dataset.filterType === filter ? '' : 'none';
+                row.style.display = row.dataset.filterType === filter ? '' : 'none';
             }
         });
     });

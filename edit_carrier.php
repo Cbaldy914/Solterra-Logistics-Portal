@@ -219,8 +219,10 @@ $conn->close();
         .form-section-body { padding: 24px; }
 
         .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .form-row:last-child { margin-bottom: 0; }
         .form-row.single { grid-template-columns: 1fr; }
         .form-row.triple { grid-template-columns: repeat(3, 1fr); }
+        .form-row.quad { grid-template-columns: repeat(4, 1fr); }
         .form-group { display: flex; flex-direction: column; }
         .form-group label { font-weight: 500; color: #333; margin-bottom: 8px; font-size: 0.95rem; }
         .form-group label .required-star { color: #dc3545; margin-left: 4px; }
@@ -232,11 +234,30 @@ $conn->close();
         .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #488C9A; background: #fff; box-shadow: 0 0 0 3px rgba(72,140,154,0.1); }
         .form-group textarea { min-height: 80px; resize: vertical; }
         .form-group .help-text { font-size: 0.85rem; color: #6c757d; margin-top: 6px; }
+        .form-divider { height: 1px; background: linear-gradient(90deg, transparent, #e9ecef, transparent); margin: 4px 0 20px 0; }
 
         .checkbox-container { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #f8f9fa; border-radius: 10px; border: 2px solid #e9ecef; cursor: pointer; transition: all 0.2s ease; }
         .checkbox-container:hover { border-color: #488C9A; }
         .checkbox-container input[type="checkbox"] { width: auto; margin: 0; accent-color: #488C9A; }
         .checkbox-container label { margin: 0; cursor: pointer; font-weight: 500; color: #333; }
+
+        /* Compact Compliance */
+        .compliance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; align-items: end; }
+        .compliance-item { display: flex; flex-direction: column; }
+        .compliance-item > label:not(.compliance-toggle) { font-size: 0.85rem; font-weight: 500; color: #6c757d; margin-bottom: 6px; }
+        .compliance-item input[type="date"], .compliance-item select {
+            padding: 10px 12px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 0.9rem;
+            background: #fafafa; transition: all 0.2s; font-family: inherit; width: 100%; box-sizing: border-box;
+        }
+        .compliance-item input[type="date"]:focus, .compliance-item select:focus { border-color: #488C9A; background: #fff; outline: none; box-shadow: 0 0 0 3px rgba(72,140,154,0.1); }
+        .compliance-toggle { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #f8f9fa; border-radius: 8px; border: 2px solid #e9ecef; cursor: pointer; transition: all 0.2s; margin: 0; }
+        .compliance-toggle:hover { border-color: #488C9A; }
+        .compliance-toggle input[type="checkbox"] { accent-color: #488C9A; width: auto; margin: 0; }
+        .compliance-toggle span { font-weight: 500; color: #333; font-size: 0.85rem; white-space: nowrap; }
+        .conditional-field { display: none; }
+        .conditional-field.visible { display: flex; flex-direction: column; }
+
+        .current-logo { margin-top: 10px; max-width: 200px; border: 2px solid #e9ecef; border-radius: 10px; padding: 8px; background: #fafafa; }
 
         .btn-submit-container { display: flex; gap: 12px; margin-top: 8px; }
         .btn-submit {
@@ -247,17 +268,11 @@ $conn->close();
         }
         .btn-submit:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(72,140,154,0.4); }
 
-        .success-message, .error-message { padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; font-weight: 500; }
-        .success-message { color: #155724; background: linear-gradient(135deg, #d4edda, #c3e6cb); border: 1px solid #b1dfbb; }
-        .error-message { color: #721c24; background: linear-gradient(135deg, #f8d7da, #f5c6cb); border: 1px solid #f1b0b7; }
-
-        .conditional-field { display: none; }
-        .conditional-field.visible { display: block; }
-
-        .current-logo { margin-top: 10px; max-width: 200px; border: 2px solid #e9ecef; border-radius: 10px; padding: 8px; background: #fafafa; }
+        .error-message { padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; font-weight: 500; color: #721c24; background: linear-gradient(135deg, #f8d7da, #f5c6cb); border: 1px solid #f1b0b7; }
 
         @media (max-width: 768px) {
-            .form-row, .form-row.triple { grid-template-columns: 1fr; }
+            .form-row, .form-row.triple, .form-row.quad { grid-template-columns: 1fr; }
+            .compliance-grid { grid-template-columns: 1fr 1fr; }
             .page-header-card { padding: 24px; }
             .page-header-card h1 { font-size: 1.6em; }
         }
@@ -286,14 +301,14 @@ $conn->close();
     <form action="" method="POST" enctype="multipart/form-data">
         <input type="hidden" name="id" value="<?php echo $carrier_id; ?>">
 
-        <!-- Basic Information -->
+        <!-- Carrier Details (consolidated) -->
         <div class="form-section">
             <div class="form-section-header">
                 <div class="icon-badge"><i class="fas fa-truck"></i></div>
-                <h2>Basic Information</h2>
+                <h2>Carrier Details</h2>
             </div>
             <div class="form-section-body">
-                <div class="form-row">
+                <div class="form-row triple">
                     <div class="form-group">
                         <label for="name">Carrier Name <span class="required-star">*</span></label>
                         <input type="text" id="name" name="name" required value="<?php echo htmlspecialchars($carrier['name']); ?>">
@@ -301,27 +316,6 @@ $conn->close();
                     <div class="form-group">
                         <label for="short_name">Short Name <span class="optional-tag">(optional)</span></label>
                         <input type="text" id="short_name" name="short_name" value="<?php echo htmlspecialchars($carrier['short_name'] ?? ''); ?>">
-                        <span class="help-text">Common abbreviation</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Carrier Identification -->
-        <div class="form-section">
-            <div class="form-section-header">
-                <div class="icon-badge"><i class="fas fa-id-card"></i></div>
-                <h2>Carrier Identification</h2>
-            </div>
-            <div class="form-section-body">
-                <div class="form-row triple">
-                    <div class="form-group">
-                        <label for="mc_number">MC Number</label>
-                        <input type="text" id="mc_number" name="mc_number" value="<?php echo htmlspecialchars($carrier['mc_number'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label for="dot_number">DOT Number</label>
-                        <input type="text" id="dot_number" name="dot_number" value="<?php echo htmlspecialchars($carrier['dot_number'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
                         <label for="carrier_type">Carrier Type</label>
@@ -336,66 +330,59 @@ $conn->close();
                         </select>
                     </div>
                 </div>
-                <span class="help-text">FMCSA Motor Carrier (MC) number and USDOT number</span>
-            </div>
-        </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="mc_number">MC Number</label>
+                        <input type="text" id="mc_number" name="mc_number" value="<?php echo htmlspecialchars($carrier['mc_number'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="dot_number">DOT Number</label>
+                        <input type="text" id="dot_number" name="dot_number" value="<?php echo htmlspecialchars($carrier['dot_number'] ?? ''); ?>">
+                    </div>
+                </div>
 
-        <!-- Contact Information -->
-        <div class="form-section">
-            <div class="form-section-header">
-                <div class="icon-badge"><i class="fas fa-address-book"></i></div>
-                <h2>Contact Information</h2>
-            </div>
-            <div class="form-section-body">
+                <div class="form-divider"></div>
+
                 <div class="form-row">
                     <div class="form-group">
                         <label for="contact_person">Contact Person</label>
                         <input type="text" id="contact_person" name="contact_person" value="<?php echo htmlspecialchars($carrier['contact_person'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
-                        <label for="website">Website</label>
-                        <input type="url" id="website" name="website" value="<?php echo htmlspecialchars($carrier['website'] ?? ''); ?>">
+                        <label for="phone">Phone</label>
+                        <input type="tel" id="phone" name="phone" value="<?php echo htmlspecialchars($carrier['phone'] ?? ''); ?>">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="phone">Phone</label>
-                        <input type="tel" id="phone" name="phone" value="<?php echo htmlspecialchars($carrier['phone'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
                         <label for="email">Email</label>
                         <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($carrier['email'] ?? ''); ?>">
                     </div>
+                    <div class="form-group">
+                        <label for="website">Website</label>
+                        <input type="url" id="website" name="website" value="<?php echo htmlspecialchars($carrier['website'] ?? ''); ?>">
+                    </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- Address -->
-        <div class="form-section">
-            <div class="form-section-header">
-                <div class="icon-badge"><i class="fas fa-map-marker-alt"></i></div>
-                <h2>Address</h2>
-            </div>
-            <div class="form-section-body">
+                <div class="form-divider"></div>
+
                 <div class="form-row single">
                     <div class="form-group">
                         <label for="street_address">Street Address</label>
                         <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($carrier['street_address'] ?? ''); ?>">
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-row quad">
                     <div class="form-group">
                         <label for="city">City</label>
                         <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($carrier['city'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
-                        <label for="state">State/Province</label>
+                        <label for="state">State</label>
                         <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($carrier['state'] ?? ''); ?>">
                     </div>
-                </div>
-                <div class="form-row">
                     <div class="form-group">
-                        <label for="zip_code">Zip/Postal Code</label>
+                        <label for="zip_code">Zip Code</label>
                         <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($carrier['zip_code'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
@@ -413,7 +400,7 @@ $conn->close();
                 <h2>Additional Information</h2>
             </div>
             <div class="form-section-body">
-                <div class="form-row single">
+                <div class="form-row">
                     <div class="form-group">
                         <label for="logo_file">Company Logo <span class="optional-tag">(optional)</span></label>
                         <?php if (!empty($carrier['logo_url'])): ?>
@@ -425,63 +412,56 @@ $conn->close();
                         <input type="file" id="logo_file" name="logo_file" accept="image/*">
                         <span class="help-text">JPG, PNG, GIF, SVG - Max 5MB</span>
                     </div>
-                </div>
-
-                <?php if ($role === 'global_admin'): ?>
-                <div class="form-row single" style="margin-bottom: 16px;">
-                    <div class="checkbox-container">
-                        <input type="checkbox" id="is_solterra_managed" name="is_solterra_managed" <?php echo $carrier['is_solterra_managed'] ? 'checked' : ''; ?>>
-                        <label for="is_solterra_managed">Solterra-Managed Carrier</label>
-                    </div>
-                </div>
-                <?php endif; ?>
-
-                <div class="form-row single" style="margin-bottom: 16px;">
-                    <div class="checkbox-container">
-                        <input type="checkbox" id="is_active" name="is_active" <?php echo $carrier['is_active'] ? 'checked' : ''; ?>>
-                        <label for="is_active">Active Carrier</label>
-                    </div>
-                </div>
-
-                <div class="form-row single">
                     <div class="form-group">
                         <label for="notes">Notes <span class="optional-tag">(optional)</span></label>
                         <textarea id="notes" name="notes"><?php echo htmlspecialchars($carrier['notes'] ?? ''); ?></textarea>
                     </div>
                 </div>
+                <div class="form-row">
+                    <?php if ($role === 'global_admin'): ?>
+                    <div class="form-group">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="is_solterra_managed" name="is_solterra_managed" <?php echo $carrier['is_solterra_managed'] ? 'checked' : ''; ?>>
+                            <label for="is_solterra_managed">Solterra-Managed Carrier</label>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+                    <div class="form-group">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="is_active" name="is_active" <?php echo $carrier['is_active'] ? 'checked' : ''; ?>>
+                            <label for="is_active">Active Carrier</label>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Compliance Information -->
+        <!-- Compliance (compact) -->
         <div class="form-section">
             <div class="form-section-header">
                 <div class="icon-badge" style="background: linear-gradient(135deg, #059669, #047857);"><i class="fas fa-shield-alt"></i></div>
-                <h2>Compliance Information <span style="font-size:0.75em; color:#6c757d; font-weight:400; margin-left:8px;">(optional)</span></h2>
+                <h2>Compliance <span style="font-size:0.75em; color:#6c757d; font-weight:400; margin-left:8px;">(optional)</span></h2>
             </div>
-            <div class="form-section-body">
-                <div class="form-row" style="align-items:end;">
-                    <div class="form-group">
-                        <label style="visibility:hidden;">COI Status</label>
-                        <div class="checkbox-container">
+            <div class="form-section-body" style="padding: 16px 24px;">
+                <div class="compliance-grid">
+                    <div class="compliance-item">
+                        <label class="compliance-toggle">
                             <input type="checkbox" id="coi_on_file" name="coi_on_file" <?php echo !empty($carrier['coi_on_file']) ? 'checked' : ''; ?> onchange="toggleCoiDate()">
-                            <label for="coi_on_file">COI on File</label>
-                        </div>
+                            <span>COI on File</span>
+                        </label>
                     </div>
-                    <div class="form-group conditional-field" id="coi_date_field">
-                        <label for="coi_expiration_date">COI Expiration Date</label>
+                    <div class="compliance-item conditional-field" id="coi_date_field">
+                        <label for="coi_expiration_date">COI Expiration</label>
                         <input type="date" id="coi_expiration_date" name="coi_expiration_date" value="<?php echo htmlspecialchars($carrier['coi_expiration_date'] ?? ''); ?>">
                     </div>
-                </div>
-                <div class="form-row" style="align-items:end;">
-                    <div class="form-group">
-                        <label style="visibility:hidden;">Insurance</label>
-                        <div class="checkbox-container">
+                    <div class="compliance-item">
+                        <label class="compliance-toggle">
                             <input type="checkbox" id="insurance_minimum_met" name="insurance_minimum_met" <?php echo !empty($carrier['insurance_minimum_met']) ? 'checked' : ''; ?>>
-                            <label for="insurance_minimum_met">Insurance Minimum Met</label>
-                        </div>
+                            <span>Insurance Min. Met</span>
+                        </label>
                     </div>
-                    <div class="form-group">
-                        <label for="authority_status">Authority Status</label>
+                    <div class="compliance-item">
+                        <label for="authority_status">Authority</label>
                         <?php $as = $carrier['authority_status'] ?? ''; ?>
                         <select id="authority_status" name="authority_status">
                             <option value="">-- Select --</option>
@@ -490,10 +470,8 @@ $conn->close();
                             <option value="revoked" <?php echo $as === 'revoked' ? 'selected' : ''; ?>>Revoked</option>
                         </select>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="fmcsa_safety_rating">FMCSA Safety Rating</label>
+                    <div class="compliance-item">
+                        <label for="fmcsa_safety_rating">FMCSA Rating</label>
                         <?php $fr = $carrier['fmcsa_safety_rating'] ?? ''; ?>
                         <select id="fmcsa_safety_rating" name="fmcsa_safety_rating">
                             <option value="">-- Select --</option>
@@ -524,7 +502,6 @@ function toggleCoiDate() {
         field.classList.remove('visible');
     }
 }
-// Init on load
 document.addEventListener('DOMContentLoaded', function() {
     toggleCoiDate();
 });

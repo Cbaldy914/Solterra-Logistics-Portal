@@ -73,6 +73,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
     }
 }
 
+// Get Solterra abstraction ID early (cached, used in queries and later filtering)
+$solterra_id = get_solterra_carrier_id($conn);
+
 try {
     // Fetch carriers with compliance columns
     $select_cols = "id, account_id, name, short_name, mc_number, dot_number, carrier_type,
@@ -85,13 +88,13 @@ try {
         $sql = "SELECT $select_cols FROM carriers ORDER BY is_active DESC, is_solterra_managed DESC, name ASC";
         $stmt = $conn->prepare($sql);
     } elseif ($role === 'customer_admin') {
-        // customer_admin sees only their own account carriers (no Solterra sub-carriers)
+        // customer_admin sees their own account carriers + the Solterra abstraction record (as a normal carrier)
         $sql = "SELECT $select_cols FROM carriers
-                WHERE account_id = ? OR (account_id IS NULL AND is_solterra_managed = 0)
+                WHERE account_id = ? OR id = ?
                 ORDER BY is_active DESC, name ASC";
         $stmt = $conn->prepare($sql);
         if ($stmt) {
-            $stmt->bind_param("i", $account_id);
+            $stmt->bind_param("ii", $account_id, $solterra_id);
         }
     } else {
         // admin sees global + account carriers
@@ -124,7 +127,6 @@ try {
 }
 
 // For admin roles, hide the "Solterra Solutions" abstraction record(s) — admins manage real sub-carriers
-$solterra_id = get_solterra_carrier_id($conn);
 $solterra_profile = null;
 $isAdminForFilter = in_array($role, ['admin', 'global_admin'], true);
 if ($isAdminForFilter) {
