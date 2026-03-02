@@ -8,6 +8,8 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 require_once '../config.php';
+require_once __DIR__ . '/carrier_helpers.php';
+
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -15,6 +17,8 @@ if (!$conn) {
 
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
+$isAdmin = is_admin_role($role);
+$isCustomerRole = is_customer_role($role);
 
 // If a specific carrier is requested, redirect to details page
 if (isset($_GET['carrier_id']) && !empty($_GET['carrier_id'])) {
@@ -49,6 +53,7 @@ if ($role === 'global_admin') {
 $carriers_data = [];
 
 // Query 1: Carrier aggregates - deliveries, freight cost, miles, projects
+// Also fetch compliance columns for badge rendering
 $carrier_sql = "
     SELECT
         c.id as carrier_id,
@@ -56,6 +61,12 @@ $carrier_sql = "
         c.short_name,
         c.carrier_type,
         c.is_solterra_managed,
+        c.account_id as carrier_account_id,
+        c.coi_on_file,
+        c.coi_expiration_date,
+        c.insurance_minimum_met,
+        c.authority_status,
+        c.fmcsa_safety_rating,
         COUNT(DISTINCT d.id) as total_deliveries,
         COALESCE(SUM(d.freight_cost), 0) as total_freight_cost,
         COALESCE(SUM(d.miles), 0) as total_miles,
@@ -91,6 +102,12 @@ while ($row = $result->fetch_assoc()) {
         'short_name' => $row['short_name'],
         'carrier_type' => $row['carrier_type'],
         'is_solterra_managed' => (int)$row['is_solterra_managed'],
+        'carrier_account_id' => $row['carrier_account_id'],
+        'coi_on_file' => $row['coi_on_file'],
+        'coi_expiration_date' => $row['coi_expiration_date'],
+        'insurance_minimum_met' => $row['insurance_minimum_met'],
+        'authority_status' => $row['authority_status'],
+        'fmcsa_safety_rating' => $row['fmcsa_safety_rating'],
         'total_deliveries' => (int)$row['total_deliveries'],
         'total_freight_cost' => (float)$row['total_freight_cost'],
         'total_miles' => (float)$row['total_miles'],
@@ -196,16 +213,66 @@ while ($row = $warranty_result->fetch_assoc()) {
 }
 $stmt_warranty->close();
 
-// Calculate totals
-$total_freight_cost = array_sum(array_column($carriers_data, 'total_freight_cost'));
-$total_deliveries = array_sum(array_column($carriers_data, 'total_deliveries'));
-$active_carrier_count = count($carriers_data);
-$total_drivers_reported = array_sum(array_column($carriers_data, 'drivers_reported'));
-$total_warranty_claims = array_sum(array_column($carriers_data, 'warranty_claims'));
+// === CARRIER ABSTRACTION FOR CUSTOMER ROLES ===
+// For customer roles: aggregate all Solterra sub-carriers into one "Solterra Solutions" card
+$display_carriers = [];
+$solterra_carrier_id = get_solterra_carrier_id($conn);
+
+if ($isCustomerRole) {
+    $solterra_aggregate = null;
+
+    foreach ($carriers_data as $cid => $data) {
+        if ($data['is_solterra_managed']) {
+            // Aggregate into single Solterra card
+            if ($solterra_aggregate === null) {
+                $solterra_aggregate = $data;
+                $solterra_aggregate['carrier_id'] = $solterra_carrier_id ?: $cid;
+                $solterra_aggregate['carrier_name'] = 'Solterra Solutions';
+                $solterra_aggregate['short_name'] = 'Solterra';
+                $solterra_aggregate['is_solterra_managed'] = 0; // Hide badge for customers
+                // Null out compliance fields - aggregate compliance is meaningless
+                $solterra_aggregate['coi_on_file'] = 0;
+                $solterra_aggregate['coi_expiration_date'] = null;
+                $solterra_aggregate['insurance_minimum_met'] = 0;
+                $solterra_aggregate['authority_status'] = null;
+                $solterra_aggregate['fmcsa_safety_rating'] = null;
+                $solterra_aggregate['avg_days_late'] = null;
+            } else {
+                $solterra_aggregate['total_deliveries'] += $data['total_deliveries'];
+                $solterra_aggregate['total_freight_cost'] += $data['total_freight_cost'];
+                $solterra_aggregate['total_miles'] += $data['total_miles'];
+                $solterra_aggregate['project_count'] += $data['project_count'];
+                $solterra_aggregate['deliveries_on_time'] += $data['deliveries_on_time'];
+                $solterra_aggregate['deliveries_late'] += $data['deliveries_late'];
+                $solterra_aggregate['safety_incidents'] += $data['safety_incidents'];
+                $solterra_aggregate['drivers_reported'] += $data['drivers_reported'];
+                $solterra_aggregate['warranty_claims'] += $data['warranty_claims'];
+            }
+        } else {
+            // Customer's own carriers show normally
+            $display_carriers[$cid] = $data;
+        }
+    }
+
+    if ($solterra_aggregate !== null) {
+        // Insert Solterra at beginning
+        $display_carriers = [$solterra_aggregate['carrier_id'] => $solterra_aggregate] + $display_carriers;
+    }
+} else {
+    // Admin/global_admin: show all carriers individually
+    $display_carriers = $carriers_data;
+}
+
+// Calculate totals from display carriers
+$total_freight_cost = array_sum(array_column($display_carriers, 'total_freight_cost'));
+$total_deliveries = array_sum(array_column($display_carriers, 'total_deliveries'));
+$active_carrier_count = count($display_carriers);
+$total_drivers_reported = array_sum(array_column($display_carriers, 'drivers_reported'));
+$total_warranty_claims = array_sum(array_column($display_carriers, 'warranty_claims'));
 
 // Overall on-time rate
-$total_on_time = array_sum(array_column($carriers_data, 'deliveries_on_time'));
-$total_late = array_sum(array_column($carriers_data, 'deliveries_late'));
+$total_on_time = array_sum(array_column($display_carriers, 'deliveries_on_time'));
+$total_late = array_sum(array_column($display_carriers, 'deliveries_late'));
 $total_completed_deliveries = $total_on_time + $total_late;
 $overall_on_time_rate = $total_completed_deliveries > 0 ? round(($total_on_time / $total_completed_deliveries) * 100) : null;
 
@@ -255,6 +322,18 @@ $conn->close();
         }
         .page-header p { color: #6c757d; font-size: 1.1em; margin: 0; }
 
+        /* Filter Toggles (admin only) */
+        .filter-toggles {
+            display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap;
+        }
+        .filter-btn {
+            padding: 8px 18px; border-radius: 20px; border: 2px solid #e9ecef;
+            background: #fff; color: #6c757d; font-weight: 600; font-size: 0.85em;
+            cursor: pointer; transition: all 0.2s; font-family: inherit;
+        }
+        .filter-btn:hover { border-color: #488C9A; color: #488C9A; }
+        .filter-btn.active { background: linear-gradient(135deg, #488C9A, #293E4C); color: #fff; border-color: transparent; }
+
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
@@ -276,24 +355,15 @@ $conn->close();
         .stat-card-clickable { cursor: pointer; position: relative; }
         .stat-card-clickable::after {
             content: 'Click for breakdown';
-            position: absolute;
-            bottom: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 0.65em;
-            color: #488C9A;
-            opacity: 0;
-            transition: opacity 0.2s;
-            white-space: nowrap;
+            position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+            font-size: 0.65em; color: #488C9A; opacity: 0; transition: opacity 0.2s; white-space: nowrap;
         }
         .stat-card-clickable:hover::after { opacity: 1; }
         .stat-card.primary.stat-card-clickable::after { color: rgba(255,255,255,0.8); }
         .stat-icon {
-            width: 48px; height: 48px;
-            border-radius: 12px;
+            width: 48px; height: 48px; border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
-            margin: 0 auto 16px;
-            font-size: 1.5em;
+            margin: 0 auto 16px; font-size: 1.5em;
         }
         .stat-card.primary .stat-icon { background: rgba(255,255,255,0.2); color: #fff; }
         .stat-icon.blue { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #2563eb; }
@@ -309,235 +379,78 @@ $conn->close();
         .stat-value.poor { color: #ea580c; }
 
         .charts-section {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            margin-bottom: 40px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 40px;
         }
         .chart-card {
             background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-            border-radius: 20px;
-            padding: 24px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-            border: 1px solid rgba(72, 140, 154, 0.08);
+            border-radius: 20px; padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06); border: 1px solid rgba(72, 140, 154, 0.08);
         }
-        .chart-card h3 {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: #293E4C;
-            margin: 0 0 20px 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+        .chart-card h3 { font-size: 1.2em; font-weight: 600; color: #293E4C; margin: 0 0 20px 0; display: flex; align-items: center; gap: 10px; }
         .chart-card h3 i { color: #488C9A; }
-        .chart-container {
-            position: relative;
-            height: 280px;
-        }
+        .chart-container { position: relative; height: 280px; }
 
         .carrier-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 24px;
-            margin-bottom: 40px;
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px; margin-bottom: 40px;
         }
         .carrier-card {
-            background: #fff;
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-            border: 1px solid #e9ecef;
-            cursor: pointer;
-            transition: all 0.2s;
-            position: relative;
-            overflow: hidden;
+            background: #fff; border-radius: 16px; padding: 24px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef;
+            cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden;
         }
-        .carrier-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 32px rgba(72,140,154,0.15);
-        }
+        .carrier-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(72,140,154,0.15); }
         .carrier-card-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
             background: linear-gradient(45deg, rgba(72,140,154,0.95), rgba(41,62,76,0.95));
             display: flex; align-items: center; justify-content: center;
-            opacity: 0;
-            transition: opacity 0.2s;
-            border-radius: 16px;
+            opacity: 0; transition: opacity 0.2s; border-radius: 16px;
         }
         .carrier-card:hover .carrier-card-overlay { opacity: 1; }
         .carrier-card-overlay span { color: #fff; font-size: 1em; font-weight: 600; }
         .carrier-card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid #f1f3f4;
-            gap: 12px;
+            display: flex; justify-content: space-between; align-items: flex-start;
+            margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #f1f3f4; gap: 12px;
         }
-        .carrier-name {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: #293E4C;
-            flex: 1;
-            min-width: 0;
-        }
+        .carrier-name { font-size: 1.2em; font-weight: 600; color: #293E4C; flex: 1; min-width: 0; }
         .carrier-badge {
-            font-size: 0.75em;
-            font-weight: 600;
-            padding: 4px 10px;
-            border-radius: 20px;
-            white-space: nowrap;
-            flex-shrink: 0;
+            font-size: 0.75em; font-weight: 600; padding: 4px 10px; border-radius: 20px; white-space: nowrap; flex-shrink: 0;
         }
-        .carrier-badge.solterra {
-            background: linear-gradient(135deg, #488C9A, #293E4C);
-            color: #fff;
-        }
-        .carrier-badge.type {
-            background: #e8f4f6;
-            color: #293E4C;
-        }
-        .carrier-stats {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-        }
-        .carrier-stat {
-            text-align: center;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 10px;
-        }
-        .carrier-stat .value {
-            font-size: 1.1em;
-            font-weight: 700;
-            color: #293E4C;
-        }
+        .carrier-badge.solterra { background: linear-gradient(135deg, #488C9A, #293E4C); color: #fff; }
+        .carrier-badge.type { background: #e8f4f6; color: #293E4C; }
+        .carrier-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .carrier-stat { text-align: center; padding: 10px; background: #f8f9fa; border-radius: 10px; }
+        .carrier-stat .value { font-size: 1.1em; font-weight: 700; color: #293E4C; }
         .carrier-stat .value.good { color: #059669; }
         .carrier-stat .value.warning { color: #fbb040; }
         .carrier-stat .value.poor { color: #ea580c; }
-        .carrier-stat .label {
-            font-size: 0.75em;
-            color: #6c757d;
-            margin-top: 2px;
-        }
+        .carrier-stat .label { font-size: 0.75em; color: #6c757d; margin-top: 2px; }
 
         /* Modal Styles */
-        .breakdown-modal {
-            display: none;
-            position: fixed;
-            z-index: 10000;
-            left: 0; top: 0;
-            width: 100%; height: 100%;
-            overflow: auto;
-            background: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(5px);
-        }
-        .breakdown-modal-content {
-            background: white;
-            margin: 8% auto;
-            padding: 0;
-            width: 90%;
-            max-width: 600px;
-            border-radius: 20px;
-            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
-            animation: modalSlideIn 0.3s ease;
-            max-height: 80vh;
-            display: flex;
-            flex-direction: column;
-        }
-        @keyframes modalSlideIn {
-            from { transform: translateY(-50px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-        .breakdown-modal-header {
-            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
-            color: white;
-            padding: 24px;
-            border-radius: 20px 20px 0 0;
-            position: relative;
-            flex-shrink: 0;
-        }
-        .breakdown-modal-header h2 {
-            margin: 0;
-            font-size: 1.4em;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .breakdown-modal-close {
-            position: absolute;
-            top: 20px;
-            right: 24px;
-            font-size: 28px;
-            font-weight: bold;
-            color: white;
-            cursor: pointer;
-            transition: transform 0.2s ease;
-            border: none;
-            background: transparent;
-        }
+        .breakdown-modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); }
+        .breakdown-modal-content { background: white; margin: 8% auto; padding: 0; width: 90%; max-width: 600px; border-radius: 20px; box-shadow: 0 25px 50px rgba(0,0,0,0.25); animation: modalSlideIn 0.3s ease; max-height: 80vh; display: flex; flex-direction: column; }
+        @keyframes modalSlideIn { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .breakdown-modal-header { background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%); color: white; padding: 24px; border-radius: 20px 20px 0 0; position: relative; flex-shrink: 0; }
+        .breakdown-modal-header h2 { margin: 0; font-size: 1.4em; font-weight: 600; display: flex; align-items: center; gap: 12px; }
+        .breakdown-modal-close { position: absolute; top: 20px; right: 24px; font-size: 28px; font-weight: bold; color: white; cursor: pointer; transition: transform 0.2s ease; border: none; background: transparent; }
         .breakdown-modal-close:hover { transform: scale(1.1); }
-        .breakdown-modal-body {
-            padding: 24px;
-            overflow-y: auto;
-        }
-        .breakdown-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .breakdown-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            background: #f8f9fa;
-            border-radius: 10px;
-            transition: background 0.2s;
-        }
+        .breakdown-modal-body { padding: 24px; overflow-y: auto; }
+        .breakdown-list { display: flex; flex-direction: column; gap: 8px; }
+        .breakdown-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f8f9fa; border-radius: 10px; transition: background 0.2s; }
         .breakdown-item:hover { background: #e9ecef; }
         .breakdown-item-name { font-weight: 500; color: #293E4C; }
         .breakdown-item-value { font-weight: 700; color: #488C9A; }
         .breakdown-item-value.good { color: #059669; }
         .breakdown-item-value.poor { color: #E4572E; }
-        .breakdown-total {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px;
-            background: linear-gradient(135deg, #e8f4f6 0%, #d1e8ec 100%);
-            border-radius: 12px;
-            margin-top: 16px;
-            border: 1px solid rgba(72, 140, 154, 0.2);
-        }
+        .breakdown-total { display: flex; justify-content: space-between; align-items: center; padding: 16px; background: linear-gradient(135deg, #e8f4f6 0%, #d1e8ec 100%); border-radius: 12px; margin-top: 16px; border: 1px solid rgba(72,140,154,0.2); }
         .breakdown-total-label { font-weight: 600; color: #293E4C; }
         .breakdown-total-value { font-size: 1.3em; font-weight: 700; color: #488C9A; }
 
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #6c757d;
-        }
+        .empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
         .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
 
-        @media (max-width: 1400px) {
-            .stats-grid { grid-template-columns: repeat(3, 1fr); }
-        }
-        @media (max-width: 992px) {
-            .stats-grid { grid-template-columns: repeat(2, 1fr); }
-            .charts-section { grid-template-columns: 1fr; }
-        }
-        @media (max-width: 768px) {
-            .page-header { padding: 24px; }
-            .page-header h1 { font-size: 1.8em; }
-            .stats-grid { grid-template-columns: 1fr; }
-            .carrier-grid { grid-template-columns: 1fr; }
-        }
+        @media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 992px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .charts-section { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) { .page-header { padding: 24px; } .page-header h1 { font-size: 1.8em; } .stats-grid { grid-template-columns: 1fr; } .carrier-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -552,6 +465,15 @@ $conn->close();
         <h1>Carrier Overview</h1>
         <p>View all freight carriers across your portfolio with delivery performance and safety metrics</p>
     </div>
+
+    <!-- Filter Toggles (admin/global_admin only) -->
+    <?php if ($isAdmin): ?>
+    <div class="filter-toggles">
+        <button class="filter-btn active" data-filter="all">All Carriers</button>
+        <button class="filter-btn" data-filter="solterra">Solterra Managed</button>
+        <button class="filter-btn" data-filter="account">Account Carriers</button>
+    </div>
+    <?php endif; ?>
 
     <div class="stats-grid">
         <div class="stat-card primary stat-card-clickable" onclick="openCostModal()">
@@ -599,9 +521,9 @@ $conn->close();
             </div>
             <div class="breakdown-modal-body">
                 <div class="breakdown-list">
-                    <?php foreach ($carriers_data as $data): if ($data['total_freight_cost'] <= 0) continue; ?>
+                    <?php foreach ($display_carriers as $data): if ($data['total_freight_cost'] <= 0) continue; ?>
                     <div class="breakdown-item">
-                        <span class="breakdown-item-name"><?php echo htmlspecialchars($data['carrier_name']); ?><?php echo $data['is_solterra_managed'] ? ' (Solterra)' : ''; ?></span>
+                        <span class="breakdown-item-name"><?php echo htmlspecialchars($data['carrier_name']); ?></span>
                         <span class="breakdown-item-value">$<?php echo number_format($data['total_freight_cost'], 2); ?></span>
                     </div>
                     <?php endforeach; ?>
@@ -623,7 +545,7 @@ $conn->close();
             </div>
             <div class="breakdown-modal-body">
                 <div class="breakdown-list">
-                    <?php foreach ($carriers_data as $data): if ($data['total_deliveries'] <= 0) continue; ?>
+                    <?php foreach ($display_carriers as $data): if ($data['total_deliveries'] <= 0) continue; ?>
                     <div class="breakdown-item">
                         <span class="breakdown-item-name"><?php echo htmlspecialchars($data['carrier_name']); ?></span>
                         <span class="breakdown-item-value"><?php echo number_format($data['total_deliveries']); ?> deliveries</span>
@@ -648,7 +570,7 @@ $conn->close();
             <div class="breakdown-modal-body">
                 <p style="color:#6c757d; margin-bottom:16px; font-size:0.9em;">Percentage of deliveries that arrived on or before the anticipated delivery date.</p>
                 <div class="breakdown-list">
-                    <?php foreach ($carriers_data as $data):
+                    <?php foreach ($display_carriers as $data):
                         $completed = $data['deliveries_on_time'] + $data['deliveries_late'];
                         $on_time_pct = $completed > 0 ? round(($data['deliveries_on_time'] / $completed) * 100) : null;
                     ?>
@@ -682,7 +604,7 @@ $conn->close();
             </div>
             <div class="breakdown-modal-body">
                 <div class="breakdown-list">
-                    <?php foreach ($carriers_data as $data): ?>
+                    <?php foreach ($display_carriers as $data): ?>
                     <div class="breakdown-item">
                         <span class="breakdown-item-name"><?php echo htmlspecialchars($data['carrier_name']); ?></span>
                         <span class="breakdown-item-value <?php echo $data['drivers_reported'] === 0 ? 'good' : 'poor'; ?>">
@@ -711,9 +633,8 @@ $conn->close();
                 <button class="breakdown-modal-close" onclick="closeWarrantyModal()">&times;</button>
             </div>
             <div class="breakdown-modal-body">
-                <p style="color:#6c757d; margin-bottom:16px; font-size:0.9em;">Warranty claims where the carrier was identified as the responsible party.</p>
                 <div class="breakdown-list">
-                    <?php foreach ($carriers_data as $data): if ($data['warranty_claims'] <= 0) continue; ?>
+                    <?php foreach ($display_carriers as $data): if ($data['warranty_claims'] <= 0) continue; ?>
                     <div class="breakdown-item">
                         <span class="breakdown-item-name"><?php echo htmlspecialchars($data['carrier_name']); ?></span>
                         <span class="breakdown-item-value poor"><?php echo number_format($data['warranty_claims']); ?> claim<?php echo $data['warranty_claims'] !== 1 ? 's' : ''; ?></span>
@@ -746,21 +667,35 @@ $conn->close();
     </div>
 
     <!-- Carrier Cards -->
-    <?php if (!empty($carriers_data)): ?>
-    <div class="carrier-grid">
-        <?php foreach ($carriers_data as $data):
+    <?php if (!empty($display_carriers)): ?>
+    <div class="carrier-grid" id="carrier-grid">
+        <?php foreach ($display_carriers as $data):
             $completed = $data['deliveries_on_time'] + $data['deliveries_late'];
             $on_time_pct = $completed > 0 ? round(($data['deliveries_on_time'] / $completed) * 100) : null;
             $type_labels = ['ftl' => 'FTL', 'ltl' => 'LTL', 'drayage' => 'Drayage', 'intermodal' => 'Intermodal', 'ocean' => 'Ocean', 'other' => 'Other'];
+            $card_filter = $data['is_solterra_managed'] ? 'solterra' : 'account';
+            $compliance = get_carrier_compliance_status($data);
         ?>
-        <div class="carrier-card" onclick="window.location.href='carrier_details.php?carrier_id=<?php echo $data['carrier_id']; ?>'">
+        <div class="carrier-card" data-filter-type="<?php echo $card_filter; ?>" onclick="window.location.href='carrier_details.php?carrier_id=<?php echo $data['carrier_id']; ?>'">
             <div class="carrier-card-header">
                 <span class="carrier-name"><?php echo htmlspecialchars($data['carrier_name']); ?></span>
                 <span>
-                    <?php if ($data['is_solterra_managed']): ?>
+                    <?php if ($isAdmin && $data['is_solterra_managed']): ?>
                         <span class="carrier-badge solterra">Solterra</span>
                     <?php endif; ?>
                     <span class="carrier-badge type"><?php echo $type_labels[$data['carrier_type']] ?? ucfirst($data['carrier_type']); ?></span>
+                    <?php
+                    // Compliance badge: admins see on all, customer_admin sees on own carriers only
+                    $show_compliance = false;
+                    if ($isAdmin) {
+                        $show_compliance = true;
+                    } elseif ($role === 'customer_admin' && !$data['is_solterra_managed']) {
+                        $show_compliance = true;
+                    }
+                    if ($show_compliance && $compliance !== null):
+                    ?>
+                        <?php echo get_compliance_badge_html($data); ?>
+                    <?php endif; ?>
                 </span>
             </div>
             <div class="carrier-stats">
@@ -817,25 +752,34 @@ function closeWarrantyModal() { var m = document.getElementById('warrantyModal')
 
 function scrollToCarriers() {
     var grid = document.querySelector('.carrier-grid');
-    if (grid) {
-        grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 window.onclick = function(event) {
-    const modals = ['costModal', 'deliveriesModal', 'onTimeModal', 'driversModal', 'warrantyModal'];
-    modals.forEach(function(id) {
-        const modal = document.getElementById(id);
-        if (event.target === modal) {
-            modal.style.display = 'none';
-        }
-    });
+    if (event.target.classList.contains('breakdown-modal')) {
+        event.target.style.display = 'none';
+    }
 }
+
+// Filter toggles (admin only)
+document.querySelectorAll('.filter-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        var filter = btn.dataset.filter;
+        document.querySelectorAll('.carrier-card').forEach(function(card) {
+            if (filter === 'all') {
+                card.style.display = '';
+            } else {
+                card.style.display = card.dataset.filterType === filter ? '' : 'none';
+            }
+        });
+    });
+});
 
 document.addEventListener('DOMContentLoaded', function() {
     <?php
-    // Build chart data from carriers with deliveries
-    $chart_carriers = array_filter($carriers_data, function($d) { return $d['total_deliveries'] > 0 || $d['total_freight_cost'] > 0; });
+    $chart_carriers = array_filter($display_carriers, function($d) { return $d['total_deliveries'] > 0 || $d['total_freight_cost'] > 0; });
     ?>
     <?php if (!empty($chart_carriers)): ?>
     const carrierData = <?php echo json_encode(array_values($chart_carriers)); ?>;
@@ -852,29 +796,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (costCtx) {
         new Chart(costCtx, {
             type: 'doughnut',
-            data: {
-                labels: names,
-                datasets: [{
-                    data: costs,
-                    backgroundColor: colors.slice(0, names.length),
-                    borderWidth: 0
-                }]
-            },
+            data: { labels: names, datasets: [{ data: costs, backgroundColor: colors.slice(0, names.length), borderWidth: 0 }] },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: true, maintainAspectRatio: false,
                 plugins: {
                     legend: { position: 'right', labels: { padding: 15, usePointStyle: true } },
-                    tooltip: {
-                        callbacks: {
-                            label: function(ctx) {
-                                const val = ctx.raw;
-                                const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
-                                const pct = total > 0 ? ((val/total)*100).toFixed(1) : 0;
-                                return `${ctx.label}: $${val.toLocaleString()} (${pct}%)`;
-                            }
-                        }
-                    }
+                    tooltip: { callbacks: { label: function(ctx) { const val = ctx.raw; const total = ctx.dataset.data.reduce((a,b) => a+b, 0); const pct = total > 0 ? ((val/total)*100).toFixed(1) : 0; return `${ctx.label}: $${val.toLocaleString()} (${pct}%)`; } } }
                 },
                 cutout: '55%'
             }
@@ -885,30 +812,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (delCtx) {
         new Chart(delCtx, {
             type: 'bar',
-            data: {
-                labels: names,
-                datasets: [{
-                    label: 'Deliveries',
-                    data: deliveries,
-                    backgroundColor: colors.slice(0, names.length),
-                    borderRadius: 6
-                }]
-            },
+            data: { labels: names, datasets: [{ label: 'Deliveries', data: deliveries, backgroundColor: colors.slice(0, names.length), borderRadius: 6 }] },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: function(ctx) { return `${ctx.raw} deliveries`; }
-                        }
-                    }
-                },
-                scales: {
-                    y: { beginAtZero: true, ticks: { stepSize: 1 } },
-                    x: { grid: { display: false } }
-                }
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return `${ctx.raw} deliveries`; } } } },
+                scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
             }
         });
     }
