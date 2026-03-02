@@ -464,6 +464,14 @@ $conn->close();
         .empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
         .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
 
+        /* Table hint */
+        .table-hint {
+            display: flex; align-items: center; gap: 8px;
+            background: linear-gradient(135deg, #e8f4f6, #d0e8ec); padding: 8px 16px;
+            border-radius: 10px; font-size: 0.82em; color: #3a6d78; font-weight: 500;
+        }
+        .table-hint i { color: #488C9A; font-size: 1em; flex-shrink: 0; }
+
         /* Compare checkbox column */
         .compare-col { width: 40px; text-align: center; }
         .compare-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #488C9A; }
@@ -540,6 +548,8 @@ $conn->close();
             .stats-grid { grid-template-columns: 1fr; }
             .comparison-stats { grid-template-columns: 1fr !important; }
             .comparison-matrix { overflow-x: auto; }
+            .table-card-header { flex-wrap: wrap; }
+            .table-hint { margin-left: 0; margin-top: 8px; font-size: 0.78em; }
         }
     </style>
 </head>
@@ -765,6 +775,10 @@ $conn->close();
         <div class="table-card-header">
             <div class="icon-badge"><i class="fas fa-truck"></i></div>
             <h2>All Carriers</h2>
+            <div class="table-hint">
+                <i class="fas fa-info-circle"></i>
+                <span>Click a row to view carrier details, or select up to 4 carriers to compare side-by-side</span>
+            </div>
         </div>
         <div style="overflow-x: auto;">
         <table>
