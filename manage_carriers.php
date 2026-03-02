@@ -123,14 +123,23 @@ try {
     $errorMessage = $e->getMessage();
 }
 
-// For admin roles, hide the "Solterra Solutions" abstraction record — admins manage real sub-carriers
+// For admin roles, hide the "Solterra Solutions" abstraction record(s) — admins manage real sub-carriers
+$solterra_id = get_solterra_carrier_id($conn);
+$solterra_profile = null;
 $isAdminForFilter = in_array($role, ['admin', 'global_admin'], true);
 if ($isAdminForFilter) {
-    $solterra_id = get_solterra_carrier_id($conn);
+    $carriers = array_filter($carriers, function($c) {
+        return $c['name'] !== 'Solterra Solutions';
+    });
+    // Fetch the Solterra profile for the admin banner
     if ($solterra_id > 0) {
-        $carriers = array_filter($carriers, function($c) use ($solterra_id) {
-            return (int)$c['id'] !== (int)$solterra_id;
-        });
+        $stmtSol = $conn->prepare("SELECT id, name, contact_person, phone, email, website, logo_url FROM carriers WHERE id = ?");
+        if ($stmtSol) {
+            $stmtSol->bind_param("i", $solterra_id);
+            $stmtSol->execute();
+            $solterra_profile = $stmtSol->get_result()->fetch_assoc();
+            $stmtSol->close();
+        }
     }
 }
 
@@ -374,6 +383,95 @@ $isAdminRole = in_array($role, ['admin', 'global_admin'], true);
         }
         .contact-info { font-size: 0.9em; color: #666; }
 
+        /* Solterra Profile Banner */
+        .solterra-profile-banner {
+            background: linear-gradient(135deg, #f0f7f8 0%, #ffffff 100%);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        .solterra-profile-banner::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; bottom: 0;
+            width: 4px;
+            background: linear-gradient(180deg, #488C9A 0%, #293E4C 100%);
+        }
+        .solterra-profile-banner .banner-icon {
+            width: 48px; height: 48px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #488C9A, #293E4C);
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 1.2rem;
+            flex-shrink: 0;
+        }
+        .solterra-profile-banner .banner-logo {
+            width: 48px; height: 48px;
+            border-radius: 12px;
+            object-fit: contain;
+            border: 2px solid #e9ecef;
+            flex-shrink: 0;
+        }
+        .solterra-profile-banner .banner-content {
+            flex: 1; min-width: 0;
+        }
+        .solterra-profile-banner .banner-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #488C9A;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 4px 0;
+        }
+        .solterra-profile-banner .banner-name {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #293E4C;
+            margin: 0 0 4px 0;
+        }
+        .solterra-profile-banner .banner-details {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        .solterra-profile-banner .banner-details span {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .solterra-profile-banner .banner-details i {
+            color: #488C9A;
+            font-size: 0.8rem;
+        }
+        .solterra-profile-banner .btn-edit-profile {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #488C9A, #3a7a87);
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(72, 140, 154, 0.25);
+        }
+        .solterra-profile-banner .btn-edit-profile:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.35);
+            color: white;
+        }
+
         /* Filter toggles */
         .filter-toggles {
             display: flex;
@@ -489,6 +587,40 @@ $isAdminRole = in_array($role, ['admin', 'global_admin'], true);
         <div class="success-message">
             <strong><?php echo htmlspecialchars($successMessage); ?></strong>
         </div>
+    <?php endif; ?>
+
+    <?php if ($isAdminRole && $solterra_profile): ?>
+    <div class="solterra-profile-banner">
+        <?php if (!empty($solterra_profile['logo_url'])): ?>
+            <img src="<?php echo htmlspecialchars($solterra_profile['logo_url']); ?>" alt="Solterra" class="banner-logo">
+        <?php else: ?>
+            <div class="banner-icon"><i class="fas fa-building"></i></div>
+        <?php endif; ?>
+        <div class="banner-content">
+            <div class="banner-title">Customer Profile</div>
+            <div class="banner-name"><?php echo htmlspecialchars($solterra_profile['name']); ?></div>
+            <div class="banner-details">
+                <?php if (!empty($solterra_profile['contact_person'])): ?>
+                    <span><i class="fas fa-user"></i> <?php echo htmlspecialchars($solterra_profile['contact_person']); ?></span>
+                <?php endif; ?>
+                <?php if (!empty($solterra_profile['phone'])): ?>
+                    <span><i class="fas fa-phone"></i> <?php echo htmlspecialchars($solterra_profile['phone']); ?></span>
+                <?php endif; ?>
+                <?php if (!empty($solterra_profile['email'])): ?>
+                    <span><i class="fas fa-envelope"></i> <?php echo htmlspecialchars($solterra_profile['email']); ?></span>
+                <?php endif; ?>
+                <?php if (!empty($solterra_profile['website'])): ?>
+                    <span><i class="fas fa-globe"></i> <?php echo htmlspecialchars($solterra_profile['website']); ?></span>
+                <?php endif; ?>
+                <?php if (empty($solterra_profile['contact_person']) && empty($solterra_profile['phone']) && empty($solterra_profile['email']) && empty($solterra_profile['website'])): ?>
+                    <span style="color: #999; font-style: italic;">No contact details set — click Edit Profile to add them.</span>
+                <?php endif; ?>
+            </div>
+        </div>
+        <a href="edit_carrier.php?id=<?php echo (int)$solterra_profile['id']; ?>" class="btn-edit-profile">
+            <i class="fas fa-pen"></i> Edit Profile
+        </a>
+    </div>
     <?php endif; ?>
 
     <div class="table-card">
