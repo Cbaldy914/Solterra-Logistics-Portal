@@ -260,10 +260,10 @@ if ($isCustomerRole) {
     }
 } else {
     // Admin/global_admin: show all real operational carriers
-    // Hide the "Solterra Solutions" abstraction record — admins see actual sub-carriers instead
+    // Hide any "Solterra Solutions" abstraction record(s) — admins see actual sub-carriers instead
     foreach ($carriers_data as $cid => $data) {
-        if ($solterra_carrier_id > 0 && (int)$cid === (int)$solterra_carrier_id) {
-            continue; // Skip the abstraction carrier
+        if ($data['carrier_name'] === 'Solterra Solutions') {
+            continue; // Skip the abstraction carrier(s)
         }
         $display_carriers[$cid] = $data;
     }
