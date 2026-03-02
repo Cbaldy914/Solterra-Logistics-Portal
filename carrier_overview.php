@@ -464,9 +464,83 @@ $conn->close();
         .empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
         .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
 
+        /* Compare checkbox column */
+        .compare-col { width: 40px; text-align: center; }
+        .compare-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #488C9A; }
+
+        /* Floating compare bar */
+        .compare-bar { position: fixed; bottom: -80px; left: 50%; transform: translateX(-50%);
+            background: rgba(41, 62, 76, 0.95); backdrop-filter: blur(10px);
+            padding: 12px 24px; border-radius: 16px; display: flex; align-items: center; gap: 16px;
+            z-index: 9999; transition: bottom 0.3s ease; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .compare-bar.visible { bottom: 24px; }
+        .compare-bar-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+        .compare-chip { background: rgba(72,140,154,0.3); color: #fff; padding: 4px 12px;
+            border-radius: 20px; font-size: 0.8em; display: flex; align-items: center; gap: 6px; }
+        .compare-chip-remove { cursor: pointer; opacity: 0.7; font-size: 1.1em; }
+        .compare-chip-remove:hover { opacity: 1; }
+        .compare-btn { background: linear-gradient(135deg, #488C9A, #3a7a87); color: #fff;
+            border: none; padding: 10px 24px; border-radius: 12px; font-weight: 600;
+            cursor: pointer; font-family: inherit; transition: transform 0.2s; white-space: nowrap; }
+        .compare-btn:hover { transform: scale(1.05); }
+        .compare-count { color: rgba(255,255,255,0.8); font-size: 0.85em; white-space: nowrap; }
+
+        /* Comparison section */
+        .comparison-section { margin-top: 40px; margin-bottom: 40px; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .comparison-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .comparison-header h2 { font-size: 1.5em; color: #293E4C; margin: 0; }
+        .comparison-close-btn { background: #f3f4f6; border: 1px solid #e9ecef; padding: 8px 16px;
+            border-radius: 8px; cursor: pointer; font-family: inherit; font-weight: 500; transition: background 0.2s; }
+        .comparison-close-btn:hover { background: #e9ecef; }
+
+        /* Stat card columns */
+        .comparison-stats { display: grid; gap: 20px; margin-bottom: 32px; }
+        .comparison-stat-col { background: #fff; border-radius: 16px; padding: 20px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; }
+        .comparison-stat-col h3 { font-size: 1.1em; color: #293E4C; margin: 0 0 16px 0;
+            padding-bottom: 12px; border-bottom: 2px solid #488C9A; }
+        .comparison-stat-item { display: flex; justify-content: space-between; padding: 8px 0;
+            border-bottom: 1px solid #f1f3f4; }
+        .comparison-stat-item:last-child { border-bottom: none; }
+        .comparison-stat-item.best { background: rgba(5,150,105,0.05); border-left: 3px solid #059669; padding-left: 8px; border-radius: 4px; }
+
+        /* Comparison charts */
+        .comparison-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+        .comparison-chart-card { background: #fff; border-radius: 16px; padding: 24px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; }
+        .comparison-chart-card h3 { font-size: 1.1em; font-weight: 600; color: #293E4C; margin: 0 0 16px 0; }
+        .comparison-chart-card.full-width { grid-column: 1 / -1; }
+
+        /* Comparison matrix */
+        .comparison-matrix { background: #fff; border-radius: 16px; overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; }
+        .comparison-matrix table { width: 100%; border-collapse: collapse; }
+        .comparison-matrix thead th { padding: 14px 16px; background: linear-gradient(135deg, #488C9A, #3a7a87);
+            color: #fff; font-size: 0.85em; font-weight: 600; text-align: center; }
+        .comparison-matrix thead th:first-child { text-align: left; }
+        .comparison-matrix tbody td { padding: 12px 16px; border-bottom: 1px solid #f1f3f4;
+            text-align: center; font-size: 0.9em; }
+        .comparison-matrix tbody td:first-child { text-align: left; font-weight: 500; color: #293E4C; }
+        .comparison-matrix .group-header td { background: #f8f9fa; font-weight: 600; color: #488C9A;
+            font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .matrix-best { color: #059669; font-weight: 700; }
+        .matrix-worst { color: #dc2626; font-weight: 600; }
+
         @media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
-        @media (max-width: 992px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .charts-section { grid-template-columns: 1fr; } }
-        @media (max-width: 768px) { .page-header { padding: 24px; } .page-header h1 { font-size: 1.8em; } .stats-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 992px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-section { grid-template-columns: 1fr; }
+            .comparison-charts { grid-template-columns: 1fr; }
+            .comparison-charts .comparison-chart-card.full-width { grid-column: auto; }
+        }
+        @media (max-width: 768px) {
+            .page-header { padding: 24px; }
+            .page-header h1 { font-size: 1.8em; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .comparison-stats { grid-template-columns: 1fr !important; }
+            .comparison-matrix { overflow-x: auto; }
+        }
     </style>
 </head>
 <body>
@@ -696,6 +770,7 @@ $conn->close();
         <table>
             <thead>
                 <tr>
+                    <th class="compare-col"></th>
                     <th>Carrier</th>
                     <th>Type</th>
                     <th>Freight Cost</th>
@@ -713,7 +788,10 @@ $conn->close();
                     $compliance = get_carrier_compliance_status($data);
                     $show_compliance = $isAdmin || ($role === 'customer_admin' && !$data['is_solterra_managed']);
                 ?>
-                <tr data-filter-type="<?php echo $row_filter; ?>" onclick="window.location.href='carrier_details.php?carrier_id=<?php echo $data['carrier_id']; ?>'">
+                <tr data-filter-type="<?php echo $row_filter; ?>" data-carrier-id="<?php echo $data['carrier_id']; ?>" onclick="window.location.href='carrier_details.php?carrier_id=<?php echo $data['carrier_id']; ?>'">
+                    <td class="compare-col" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="compare-checkbox" data-carrier-id="<?php echo $data['carrier_id']; ?>" onclick="toggleCompare(<?php echo $data['carrier_id']; ?>, event)">
+                    </td>
                     <td>
                         <strong><?php echo htmlspecialchars($data['carrier_name']); ?></strong>
                         <?php if ($isAdmin && $data['is_solterra_managed']): ?>
@@ -757,12 +835,22 @@ $conn->close();
         </table>
         </div>
     </div>
+    <!-- Comparison Section (rendered by JS) -->
+    <div id="comparison-section" class="comparison-section" style="display:none;"></div>
+
     <?php else: ?>
     <div class="empty-state">
         <h3>No Carriers Found</h3>
         <p>No carrier data is available. <a href="add_carrier.php" style="color:#488C9A;">Add a carrier</a> to get started.</p>
     </div>
     <?php endif; ?>
+
+    <!-- Floating Compare Bar -->
+    <div id="compare-bar" class="compare-bar">
+        <span class="compare-count" id="compare-count"></span>
+        <div class="compare-bar-chips" id="compare-chips"></div>
+        <button class="compare-btn" onclick="renderComparison()"><i class="fas fa-columns" style="margin-right:6px;"></i>Compare</button>
+    </div>
 </main>
 
 <script>
@@ -801,6 +889,398 @@ document.querySelectorAll('.filter-btn').forEach(function(btn) {
                 row.style.display = row.dataset.filterType === filter ? '' : 'none';
             }
         });
+    });
+});
+
+// === Carrier Comparison Feature ===
+const allCarrierData = <?php echo json_encode(array_values($display_carriers)); ?>;
+const isAdminRole = <?php echo json_encode($isAdmin); ?>;
+const selectedCarriers = new Set();
+const MAX_COMPARE = 4;
+let comparisonCharts = [];
+
+function getCarrierById(id) {
+    return allCarrierData.find(c => c.carrier_id == id);
+}
+
+function toggleCompare(carrierId, event) {
+    if (event) event.stopPropagation();
+    if (selectedCarriers.has(carrierId)) {
+        selectedCarriers.delete(carrierId);
+    } else {
+        if (selectedCarriers.size >= MAX_COMPARE) return;
+        selectedCarriers.add(carrierId);
+    }
+    updateCompareBar();
+}
+
+function removeFromCompare(carrierId) {
+    selectedCarriers.delete(carrierId);
+    const cb = document.querySelector('.compare-checkbox[data-carrier-id="' + carrierId + '"]');
+    if (cb) cb.checked = false;
+    updateCompareBar();
+}
+
+function updateCompareBar() {
+    const bar = document.getElementById('compare-bar');
+    const countEl = document.getElementById('compare-count');
+    const chipsEl = document.getElementById('compare-chips');
+
+    // Sync checkboxes
+    document.querySelectorAll('.compare-checkbox').forEach(function(cb) {
+        const cid = parseInt(cb.dataset.carrierId);
+        cb.checked = selectedCarriers.has(cid);
+        // Disable unchecked boxes if max reached
+        if (selectedCarriers.size >= MAX_COMPARE && !selectedCarriers.has(cid)) {
+            cb.disabled = true;
+            cb.style.opacity = '0.4';
+        } else {
+            cb.disabled = false;
+            cb.style.opacity = '1';
+        }
+    });
+
+    if (selectedCarriers.size >= 2) {
+        bar.classList.add('visible');
+        countEl.textContent = selectedCarriers.size + ' selected';
+        chipsEl.innerHTML = '';
+        selectedCarriers.forEach(function(cid) {
+            const carrier = getCarrierById(cid);
+            if (!carrier) return;
+            const chip = document.createElement('span');
+            chip.className = 'compare-chip';
+            chip.innerHTML = (carrier.short_name || carrier.carrier_name) +
+                ' <span class="compare-chip-remove" onclick="removeFromCompare(' + cid + ')">&times;</span>';
+            chipsEl.appendChild(chip);
+        });
+    } else {
+        bar.classList.remove('visible');
+        // If comparison section is visible but we deselected below 2, hide it
+        var section = document.getElementById('comparison-section');
+        if (section && section.style.display !== 'none') {
+            section.style.display = 'none';
+        }
+    }
+}
+
+function closeComparison() {
+    document.getElementById('comparison-section').style.display = 'none';
+    selectedCarriers.clear();
+    document.querySelectorAll('.compare-checkbox').forEach(function(cb) {
+        cb.checked = false;
+        cb.disabled = false;
+        cb.style.opacity = '1';
+    });
+    updateCompareBar();
+    // Destroy charts
+    comparisonCharts.forEach(function(c) { c.destroy(); });
+    comparisonCharts = [];
+}
+
+function getBestWorst(values, higherIsBetter) {
+    // Filter out null/undefined values
+    var validIndices = [];
+    values.forEach(function(v, i) { if (v !== null && v !== undefined && !isNaN(v)) validIndices.push(i); });
+    if (validIndices.length < 2) return { best: -1, worst: -1 };
+
+    var bestIdx = validIndices[0], worstIdx = validIndices[0];
+    validIndices.forEach(function(i) {
+        if (higherIsBetter) {
+            if (values[i] > values[bestIdx]) bestIdx = i;
+            if (values[i] < values[worstIdx]) worstIdx = i;
+        } else {
+            if (values[i] < values[bestIdx]) bestIdx = i;
+            if (values[i] > values[worstIdx]) worstIdx = i;
+        }
+    });
+    // Only mark best/worst if they differ
+    if (values[bestIdx] === values[worstIdx]) return { best: -1, worst: -1 };
+    return { best: bestIdx, worst: worstIdx };
+}
+
+function renderComparison() {
+    var carriers = [];
+    selectedCarriers.forEach(function(cid) {
+        var c = getCarrierById(cid);
+        if (c) carriers.push(c);
+    });
+    if (carriers.length < 2) return;
+
+    // Destroy old charts
+    comparisonCharts.forEach(function(c) { c.destroy(); });
+    comparisonCharts = [];
+
+    var section = document.getElementById('comparison-section');
+    section.style.display = 'block';
+
+    var html = '<div class="comparison-header">' +
+        '<h2><i class="fas fa-columns" style="color:#488C9A;margin-right:8px;"></i>Carrier Comparison</h2>' +
+        '<button class="comparison-close-btn" onclick="closeComparison()"><i class="fas fa-times" style="margin-right:6px;"></i>Close Comparison</button>' +
+        '</div>';
+
+    html += renderStatCards(carriers);
+    html += '<div class="comparison-charts">' +
+        '<div class="comparison-chart-card"><h3><i class="fas fa-chart-bar" style="color:#488C9A;margin-right:8px;"></i>Freight Cost</h3><canvas id="cmp-cost-chart"></canvas></div>' +
+        '<div class="comparison-chart-card"><h3><i class="fas fa-chart-bar" style="color:#488C9A;margin-right:8px;"></i>Deliveries Breakdown</h3><canvas id="cmp-deliveries-chart"></canvas></div>' +
+        '<div class="comparison-chart-card full-width"><h3><i class="fas fa-chart-radar" style="color:#488C9A;margin-right:8px;"></i>Performance Radar</h3><div style="max-width:500px;margin:0 auto;"><canvas id="cmp-radar-chart"></canvas></div></div>' +
+        '</div>';
+
+    html += renderMatrix(carriers);
+    section.innerHTML = html;
+
+    // Scroll to section
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Render charts after DOM update
+    setTimeout(function() { renderCharts(carriers); }, 50);
+}
+
+function renderStatCards(carriers) {
+    var cols = carriers.length;
+    var html = '<div class="comparison-stats" style="grid-template-columns:repeat(' + cols + ',1fr);">';
+
+    // Compute values for best-highlighting
+    var costs = carriers.map(function(c) { return c.total_freight_cost; });
+    var deliveries = carriers.map(function(c) { return c.total_deliveries; });
+    var onTimeRates = carriers.map(function(c) {
+        var completed = c.deliveries_on_time + c.deliveries_late;
+        return completed > 0 ? Math.round((c.deliveries_on_time / completed) * 100) : null;
+    });
+    var incidents = carriers.map(function(c) { return c.safety_incidents; });
+    var costPerMile = carriers.map(function(c) { return c.total_miles > 0 ? c.total_freight_cost / c.total_miles : null; });
+
+    var bestCost = getBestWorst(costs, false);
+    var bestDeliveries = getBestWorst(deliveries, true);
+    var bestOnTime = getBestWorst(onTimeRates, true);
+    var bestIncidents = getBestWorst(incidents, false);
+    var bestCPM = getBestWorst(costPerMile, false);
+
+    carriers.forEach(function(c, i) {
+        var completed = c.deliveries_on_time + c.deliveries_late;
+        var otRate = completed > 0 ? Math.round((c.deliveries_on_time / completed) * 100) : null;
+        var cpm = c.total_miles > 0 ? (c.total_freight_cost / c.total_miles) : null;
+
+        html += '<div class="comparison-stat-col">';
+        html += '<h3>' + escapeHtml(c.carrier_name) + '</h3>';
+
+        // Freight Cost
+        html += '<div class="comparison-stat-item' + (bestCost.best === i ? ' best' : '') + '">' +
+            '<span style="color:#6c757d;">Freight Cost</span>' +
+            '<span style="font-weight:600;">$' + Number(c.total_freight_cost).toLocaleString() + '</span></div>';
+
+        // Deliveries
+        html += '<div class="comparison-stat-item' + (bestDeliveries.best === i ? ' best' : '') + '">' +
+            '<span style="color:#6c757d;">Deliveries</span>' +
+            '<span style="font-weight:600;">' + Number(c.total_deliveries).toLocaleString() + '</span></div>';
+
+        // On-Time Rate
+        var otClass = otRate === null ? '' : (otRate >= 90 ? 'color:#059669;' : (otRate >= 70 ? 'color:#fbb040;' : 'color:#dc2626;'));
+        html += '<div class="comparison-stat-item' + (bestOnTime.best === i ? ' best' : '') + '">' +
+            '<span style="color:#6c757d;">On-Time Rate</span>' +
+            '<span style="font-weight:600;' + otClass + '">' + (otRate !== null ? otRate + '%' : 'N/A') + '</span></div>';
+
+        // Safety Incidents
+        html += '<div class="comparison-stat-item' + (bestIncidents.best === i ? ' best' : '') + '">' +
+            '<span style="color:#6c757d;">Safety Incidents</span>' +
+            '<span style="font-weight:600;' + (c.safety_incidents === 0 ? 'color:#059669;' : 'color:#dc2626;') + '">' + c.safety_incidents + '</span></div>';
+
+        // Cost per Mile
+        html += '<div class="comparison-stat-item' + (bestCPM.best === i ? ' best' : '') + '">' +
+            '<span style="color:#6c757d;">Cost per Mile</span>' +
+            '<span style="font-weight:600;">' + (cpm !== null ? '$' + cpm.toFixed(2) : 'N/A') + '</span></div>';
+
+        html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+}
+
+function renderCharts(carriers) {
+    var chartColors = ['#488C9A', '#293E4C', '#fbb040', '#E4572E'];
+    var names = carriers.map(function(c) { return c.short_name || c.carrier_name; });
+
+    // 1. Freight Cost Bar Chart
+    var costCtx = document.getElementById('cmp-cost-chart');
+    if (costCtx) {
+        comparisonCharts.push(new Chart(costCtx, {
+            type: 'bar',
+            data: {
+                labels: names,
+                datasets: [{
+                    label: 'Freight Cost ($)',
+                    data: carriers.map(function(c) { return c.total_freight_cost; }),
+                    backgroundColor: chartColors.slice(0, carriers.length),
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return '$' + ctx.raw.toLocaleString(); } } } },
+                scales: { y: { beginAtZero: true, ticks: { callback: function(v) { return '$' + v.toLocaleString(); } } }, x: { grid: { display: false } } }
+            }
+        }));
+    }
+
+    // 2. Deliveries Breakdown (on-time vs late)
+    var delCtx = document.getElementById('cmp-deliveries-chart');
+    if (delCtx) {
+        comparisonCharts.push(new Chart(delCtx, {
+            type: 'bar',
+            data: {
+                labels: names,
+                datasets: [
+                    { label: 'On-Time', data: carriers.map(function(c) { return c.deliveries_on_time; }), backgroundColor: '#059669', borderRadius: 6 },
+                    { label: 'Late', data: carriers.map(function(c) { return c.deliveries_late; }), backgroundColor: '#dc2626', borderRadius: 6 }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { position: 'top' } },
+                scales: { y: { beginAtZero: true, stacked: false, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
+            }
+        }));
+    }
+
+    // 3. Radar Chart
+    var radarCtx = document.getElementById('cmp-radar-chart');
+    if (radarCtx) {
+        // Normalize metrics to 0-100
+        var maxDeliveries = Math.max.apply(null, carriers.map(function(c) { return c.total_deliveries; })) || 1;
+        var maxCPM = Math.max.apply(null, carriers.map(function(c) { return c.total_miles > 0 ? c.total_freight_cost / c.total_miles : 0; })) || 1;
+
+        var labels = ['On-Time Rate', 'Cost Efficiency', 'Safety Score', 'Volume'];
+        if (isAdminRole) labels.push('Compliance');
+
+        var datasets = carriers.map(function(c, i) {
+            var completed = c.deliveries_on_time + c.deliveries_late;
+            var otRate = completed > 0 ? Math.round((c.deliveries_on_time / completed) * 100) : 0;
+            var cpm = c.total_miles > 0 ? c.total_freight_cost / c.total_miles : maxCPM;
+            var costEff = Math.round(Math.max(0, (1 - cpm / maxCPM) * 100));
+            var safetyScore = Math.max(0, 100 - c.safety_incidents * 20);
+            var volume = Math.round((c.total_deliveries / maxDeliveries) * 100);
+
+            var dataPoints = [otRate, costEff, safetyScore, volume];
+
+            if (isAdminRole) {
+                var compScore = 50; // default
+                if (c.authority_status === 'Active' && c.coi_on_file && c.insurance_minimum_met) compScore = 100;
+                else if (!c.coi_on_file || c.authority_status === 'Inactive') compScore = 0;
+                dataPoints.push(compScore);
+            }
+
+            var color = chartColors[i % chartColors.length];
+            return {
+                label: c.short_name || c.carrier_name,
+                data: dataPoints,
+                borderColor: color,
+                backgroundColor: color + '20',
+                pointBackgroundColor: color,
+                borderWidth: 2
+            };
+        });
+
+        comparisonCharts.push(new Chart(radarCtx, {
+            type: 'radar',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true,
+                scales: { r: { beginAtZero: true, max: 100, ticks: { stepSize: 25 } } },
+                plugins: { legend: { position: 'top' } }
+            }
+        }));
+    }
+}
+
+function renderMatrix(carriers) {
+    var cols = carriers.length;
+    var html = '<div class="comparison-matrix"><div style="overflow-x:auto;"><table><thead><tr><th>Metric</th>';
+    carriers.forEach(function(c) {
+        html += '<th>' + escapeHtml(c.short_name || c.carrier_name) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    function addGroupHeader(label) {
+        html += '<tr class="group-header"><td colspan="' + (cols + 1) + '">' + label + '</td></tr>';
+    }
+
+    function addRow(label, values, higherIsBetter, formatter) {
+        var bw = getBestWorst(values, higherIsBetter);
+        html += '<tr><td>' + label + '</td>';
+        values.forEach(function(v, i) {
+            var cls = '';
+            if (i === bw.best) cls = 'matrix-best';
+            else if (i === bw.worst) cls = 'matrix-worst';
+            html += '<td class="' + cls + '">' + (formatter ? formatter(v) : v) + '</td>';
+        });
+        html += '</tr>';
+    }
+
+    var fmtDollar = function(v) { return v !== null && v !== undefined ? '$' + Number(v).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0}) : 'N/A'; };
+    var fmtDollar2 = function(v) { return v !== null && v !== undefined ? '$' + Number(v).toFixed(2) : 'N/A'; };
+    var fmtNum = function(v) { return v !== null && v !== undefined ? Number(v).toLocaleString() : 'N/A'; };
+    var fmtPct = function(v) { return v !== null && v !== undefined ? v + '%' : 'N/A'; };
+    var fmtDays = function(v) { return v !== null && v !== undefined && v > 0 ? Number(v).toFixed(1) + ' days' : '0'; };
+
+    // Volume & Cost
+    addGroupHeader('Volume & Cost');
+    addRow('Freight Cost', carriers.map(function(c) { return c.total_freight_cost; }), false, fmtDollar);
+    addRow('Deliveries', carriers.map(function(c) { return c.total_deliveries; }), true, fmtNum);
+    addRow('Projects', carriers.map(function(c) { return c.project_count; }), true, fmtNum);
+    addRow('Total Miles', carriers.map(function(c) { return c.total_miles; }), true, fmtNum);
+    addRow('Cost per Mile', carriers.map(function(c) { return c.total_miles > 0 ? c.total_freight_cost / c.total_miles : null; }), false, fmtDollar2);
+
+    // Performance
+    addGroupHeader('Performance');
+    addRow('On-Time Rate', carriers.map(function(c) {
+        var completed = c.deliveries_on_time + c.deliveries_late;
+        return completed > 0 ? Math.round((c.deliveries_on_time / completed) * 100) : null;
+    }), true, fmtPct);
+    addRow('On-Time Count', carriers.map(function(c) { return c.deliveries_on_time; }), true, fmtNum);
+    addRow('Late Count', carriers.map(function(c) { return c.deliveries_late; }), false, fmtNum);
+    addRow('Avg Days Late', carriers.map(function(c) { return c.avg_days_late; }), false, fmtDays);
+
+    // Risk & Safety
+    addGroupHeader('Risk & Safety');
+    addRow('Safety Incidents', carriers.map(function(c) { return c.safety_incidents; }), false, fmtNum);
+    addRow('Drivers Reported', carriers.map(function(c) { return c.drivers_reported; }), false, fmtNum);
+    addRow('Warranty Claims', carriers.map(function(c) { return c.warranty_claims; }), false, fmtNum);
+
+    // Compliance (admin only)
+    if (isAdminRole) {
+        addGroupHeader('Compliance');
+        addRow('COI on File', carriers.map(function(c) { return c.coi_on_file ? 'Yes' : 'No'; }), null, null);
+        addRow('Authority Status', carriers.map(function(c) { return c.authority_status || '--'; }), null, null);
+        addRow('FMCSA Rating', carriers.map(function(c) { return c.fmcsa_safety_rating || '--'; }), null, null);
+    }
+
+    html += '</tbody></table></div></div>';
+    return html;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+}
+
+// Integration with filter toggles: deselect hidden carriers
+document.querySelectorAll('.filter-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        setTimeout(function() {
+            document.querySelectorAll('tr[data-filter-type]').forEach(function(row) {
+                if (row.style.display === 'none') {
+                    var cid = parseInt(row.dataset.carrierId);
+                    if (selectedCarriers.has(cid)) {
+                        selectedCarriers.delete(cid);
+                        var cb = row.querySelector('.compare-checkbox');
+                        if (cb) cb.checked = false;
+                    }
+                }
+            });
+            updateCompareBar();
+        }, 10);
     });
 });
 
