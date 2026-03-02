@@ -261,6 +261,122 @@ CREATE TABLE `customer_account_users` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `carriers`
+--
+
+CREATE TABLE `carriers` (
+  `id` int(11) NOT NULL,
+  `account_id` int(11) DEFAULT NULL COMMENT 'NULL = global (visible to all accounts)',
+  `name` varchar(255) NOT NULL,
+  `short_name` varchar(100) DEFAULT NULL,
+  `mc_number` varchar(50) DEFAULT NULL COMMENT 'FMCSA Motor Carrier number',
+  `dot_number` varchar(50) DEFAULT NULL COMMENT 'USDOT number',
+  `carrier_type` enum('ftl','ltl','drayage','intermodal','ocean','other') DEFAULT 'ftl',
+  `is_solterra_managed` tinyint(1) DEFAULT 0 COMMENT 'Flag for Solterra-as-carrier',
+  `contact_person` varchar(255) DEFAULT NULL,
+  `phone` varchar(50) DEFAULT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  `website` varchar(255) DEFAULT NULL,
+  `street_address` varchar(255) DEFAULT NULL,
+  `city` varchar(100) DEFAULT NULL,
+  `state` varchar(50) DEFAULT NULL,
+  `zip_code` varchar(20) DEFAULT NULL,
+  `country` varchar(100) DEFAULT 'USA',
+  `address` text DEFAULT NULL,
+  `logo_url` varchar(500) DEFAULT NULL,
+  `is_active` tinyint(1) DEFAULT 1,
+  `notes` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+--
+--
+
+--
+-- Triggers `carriers`
+--
+DELIMITER $$
+CREATE TRIGGER `update_carrier_address_on_insert` BEFORE INSERT ON `carriers` FOR EACH ROW BEGIN
+    IF NEW.street_address IS NOT NULL OR NEW.city IS NOT NULL OR NEW.state IS NOT NULL OR NEW.zip_code IS NOT NULL THEN
+        SET NEW.address = CONCAT_WS(', ',
+            NULLIF(NEW.street_address, ''),
+            NULLIF(NEW.city, ''),
+            CASE
+                WHEN NEW.state IS NOT NULL AND NEW.zip_code IS NOT NULL
+                THEN CONCAT(NEW.state, ' ', NEW.zip_code)
+                WHEN NEW.state IS NOT NULL
+                THEN NEW.state
+                WHEN NEW.zip_code IS NOT NULL
+                THEN NEW.zip_code
+                ELSE NULL
+            END,
+            NULLIF(NEW.country, '')
+        );
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `update_carrier_address_on_update` BEFORE UPDATE ON `carriers` FOR EACH ROW BEGIN
+    IF NEW.street_address IS NOT NULL OR NEW.city IS NOT NULL OR NEW.state IS NOT NULL OR NEW.zip_code IS NOT NULL THEN
+        SET NEW.address = CONCAT_WS(', ',
+            NULLIF(NEW.street_address, ''),
+            NULLIF(NEW.city, ''),
+            CASE
+                WHEN NEW.state IS NOT NULL AND NEW.zip_code IS NOT NULL
+                THEN CONCAT(NEW.state, ' ', NEW.zip_code)
+                WHEN NEW.state IS NOT NULL
+                THEN NEW.state
+                WHEN NEW.zip_code IS NOT NULL
+                THEN NEW.zip_code
+                ELSE NULL
+            END,
+            NULLIF(NEW.country, '')
+        );
+    END IF;
+END
+$$
+DELIMITER ;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `carrier_requests`
+--
+
+CREATE TABLE `carrier_requests` (
+  `id` int(11) NOT NULL,
+  `account_id` int(11) DEFAULT NULL,
+  `name` varchar(255) NOT NULL,
+  `short_name` varchar(100) DEFAULT NULL,
+  `mc_number` varchar(50) DEFAULT NULL,
+  `dot_number` varchar(50) DEFAULT NULL,
+  `carrier_type` enum('ftl','ltl','drayage','intermodal','ocean','other') DEFAULT 'ftl',
+  `is_solterra_managed` tinyint(1) DEFAULT 0,
+  `contact_person` varchar(255) DEFAULT NULL,
+  `phone` varchar(50) DEFAULT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  `website` varchar(255) DEFAULT NULL,
+  `street_address` varchar(255) DEFAULT NULL,
+  `city` varchar(100) DEFAULT NULL,
+  `state` varchar(50) DEFAULT NULL,
+  `zip_code` varchar(20) DEFAULT NULL,
+  `country` varchar(100) DEFAULT 'USA',
+  `logo_url` varchar(500) DEFAULT NULL,
+  `notes` text DEFAULT NULL,
+  `status` enum('pending','approved','rejected') DEFAULT 'pending',
+  `requested_by` int(11) NOT NULL,
+  `reviewed_by` int(11) DEFAULT NULL,
+  `rejection_reason` text DEFAULT NULL,
+  `approved_carrier_id` int(11) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `deliveries`
 --
 
@@ -270,6 +386,8 @@ CREATE TABLE `deliveries` (
   `data_source` enum('manual','schedule_import') DEFAULT 'manual',
   `project_id` int(11) DEFAULT NULL,
   `supplier` varchar(255) NOT NULL,
+  `carrier_id` int(11) DEFAULT NULL COMMENT 'FK to carriers.id',
+  `carrier_reference_number` varchar(100) DEFAULT NULL COMMENT 'Carrier tracking/reference number',
   `origin_type` enum('manufacturer','warehouse','project') DEFAULT NULL,
   `origin_id` int(11) DEFAULT NULL,
   `wattage` int(11) NOT NULL,
@@ -2212,6 +2330,24 @@ ALTER TABLE `customer_account_users`
   ADD KEY `fk_cau_account` (`account_id`);
 
 --
+-- Indexes for table `carriers`
+--
+ALTER TABLE `carriers`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_carriers_account` (`account_id`),
+  ADD KEY `idx_carriers_active` (`is_active`),
+  ADD KEY `idx_carriers_solterra` (`is_solterra_managed`);
+
+--
+-- Indexes for table `carrier_requests`
+--
+ALTER TABLE `carrier_requests`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_carrier_requests_account` (`account_id`),
+  ADD KEY `idx_carrier_requests_status` (`status`),
+  ADD KEY `idx_carrier_requests_requested_by` (`requested_by`);
+
+--
 -- Indexes for table `deliveries`
 --
 ALTER TABLE `deliveries`
@@ -2226,7 +2362,8 @@ ALTER TABLE `deliveries`
   ADD KEY `idx_deliveries_container` (`container_number`),
   ADD KEY `fk_deliveries_origin_port` (`origin_port_id`),
   ADD KEY `idx_deliveries_status_project` (`status_of_delivery`,`project_id`),
-  ADD KEY `idx_deliveries_customs_hold_started` (`customs_hold_started_date`);
+  ADD KEY `idx_deliveries_customs_hold_started` (`customs_hold_started_date`),
+  ADD KEY `fk_deliveries_carrier` (`carrier_id`);
 
 --
 -- Indexes for table `delivery_milestone_instances`
@@ -2971,6 +3108,18 @@ ALTER TABLE `login_attempts`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `carriers`
+--
+ALTER TABLE `carriers`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `carrier_requests`
+--
+ALTER TABLE `carrier_requests`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `manufacturers`
 --
 ALTER TABLE `manufacturers`
@@ -3407,6 +3556,7 @@ ALTER TABLE `customer_account_users`
 --
 ALTER TABLE `deliveries`
   ADD CONSTRAINT `deliveries_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_deliveries_carrier` FOREIGN KEY (`carrier_id`) REFERENCES `carriers` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_deliveries_origin_port` FOREIGN KEY (`origin_port_id`) REFERENCES `warehouses` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_deliveries_port_of_entry` FOREIGN KEY (`port_of_entry_id`) REFERENCES `warehouses` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_deliveries_warehouse` FOREIGN KEY (`warehouse_id`) REFERENCES `warehouses` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
