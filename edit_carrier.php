@@ -459,8 +459,9 @@ $conn->close();
                 <h2>Compliance Information <span style="font-size:0.75em; color:#6c757d; font-weight:400; margin-left:8px;">(optional)</span></h2>
             </div>
             <div class="form-section-body">
-                <div class="form-row">
+                <div class="form-row" style="align-items:end;">
                     <div class="form-group">
+                        <label style="visibility:hidden;">COI Status</label>
                         <div class="checkbox-container">
                             <input type="checkbox" id="coi_on_file" name="coi_on_file" <?php echo !empty($carrier['coi_on_file']) ? 'checked' : ''; ?> onchange="toggleCoiDate()">
                             <label for="coi_on_file">COI on File</label>
@@ -471,8 +472,9 @@ $conn->close();
                         <input type="date" id="coi_expiration_date" name="coi_expiration_date" value="<?php echo htmlspecialchars($carrier['coi_expiration_date'] ?? ''); ?>">
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-row" style="align-items:end;">
                     <div class="form-group">
+                        <label style="visibility:hidden;">Insurance</label>
                         <div class="checkbox-container">
                             <input type="checkbox" id="insurance_minimum_met" name="insurance_minimum_met" <?php echo !empty($carrier['insurance_minimum_met']) ? 'checked' : ''; ?>>
                             <label for="insurance_minimum_met">Insurance Minimum Met</label>
@@ -489,7 +491,7 @@ $conn->close();
                         </select>
                     </div>
                 </div>
-                <div class="form-row single">
+                <div class="form-row">
                     <div class="form-group">
                         <label for="fmcsa_safety_rating">FMCSA Safety Rating</label>
                         <?php $fr = $carrier['fmcsa_safety_rating'] ?? ''; ?>

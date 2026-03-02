@@ -123,6 +123,17 @@ try {
     $errorMessage = $e->getMessage();
 }
 
+// For admin roles, hide the "Solterra Solutions" abstraction record — admins manage real sub-carriers
+$isAdminForFilter = in_array($role, ['admin', 'global_admin'], true);
+if ($isAdminForFilter) {
+    $solterra_id = get_solterra_carrier_id($conn);
+    if ($solterra_id > 0) {
+        $carriers = array_filter($carriers, function($c) use ($solterra_id) {
+            return (int)$c['id'] !== (int)$solterra_id;
+        });
+    }
+}
+
 $conn->close();
 
 $carrier_type_labels = [
