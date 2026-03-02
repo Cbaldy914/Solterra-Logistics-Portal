@@ -80,7 +80,20 @@ function determineDocumentSubType($document_type, $context = []) {
                 }
             }
             return 'Warehouse Documents';
-            
+
+        case 'carrier_documents':
+            if (isset($context['carrier_doc_type'])) {
+                switch (strtolower($context['carrier_doc_type'])) {
+                    case 'coi':
+                        return 'COI';
+                    case 'insurance_cert':
+                        return 'Insurance Certificate';
+                    case 'carrier_contract':
+                        return 'Carrier Contract';
+                }
+            }
+            return 'Other';
+
         default:
             return null;
     }
@@ -177,8 +190,8 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
     }
     
     // Validate that at least one context is provided
-    if (empty($document_data['project_id']) && empty($document_data['warehouse_id']) && empty($document_data['entity_context'])) {
-        throw new Exception("At least one of project_id, warehouse_id, or entity_context must be provided");
+    if (empty($document_data['project_id']) && empty($document_data['warehouse_id']) && empty($document_data['carrier_id']) && empty($document_data['entity_context'])) {
+        throw new Exception("At least one of project_id, warehouse_id, carrier_id, or entity_context must be provided");
     }
     
     // Either tmp_name (for upload) or file_path (for existing file) should be provided
@@ -208,12 +221,12 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
     // Insert into database
     $stmt = $conn->prepare("
         INSERT INTO project_documents (
-            project_id, document_type, document_sub_type, delivery_id, warehouse_id, 
-            pallet_id, module_id, project_invoice_id, entity_context, file_name, original_file_name, 
+            project_id, document_type, document_sub_type, delivery_id, warehouse_id,
+            pallet_id, module_id, project_invoice_id, carrier_id, entity_context, file_name, original_file_name,
             file_path, file_size, mime_type, uploaded_by, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    
+
     // Extract values into variables for bind_param (required for pass-by-reference)
     $project_id = $document_data['project_id'];
     $document_type = $document_data['document_type'];
@@ -224,13 +237,14 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
     $module_id = $document_data['module_id'] ?? null;
     $entity_context = $document_data['entity_context'] ?? null;
     $project_invoice_id = $document_data['project_invoice_id'] ?? null;
+    $carrier_id = $document_data['carrier_id'] ?? null;
     $original_name = $document_data['original_name'];
     $file_size = $document_data['file_size'];
     $mime_type = $document_data['mime_type'];
     $uploaded_by = $document_data['uploaded_by'];
     $description = $document_data['description'] ?? '';
-    
-    $stmt->bind_param("issiiiiissssisis",
+
+    $stmt->bind_param("issiiiiiissssisis",
         $project_id,
         $document_type,
         $document_sub_type,
@@ -239,6 +253,7 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
         $pallet_id,
         $module_id,
         $project_invoice_id,
+        $carrier_id,
         $entity_context,
         $server_filename,
         $original_name,
@@ -338,7 +353,13 @@ function getProjectDocuments($conn, $filters = []) {
         $params[] = $filters['delivery_id'];
         $param_types .= "i";
     }
-    
+
+    if (isset($filters['carrier_id'])) {
+        $where_conditions[] = "pd.carrier_id = ?";
+        $params[] = $filters['carrier_id'];
+        $param_types .= "i";
+    }
+
     // Build query
     $sql = "
         SELECT 
@@ -488,9 +509,9 @@ function importExistingFileToProjectDocuments($conn, $document_data, $source_pat
     $stmt = $conn->prepare("
         INSERT INTO project_documents (
             project_id, document_type, document_sub_type, delivery_id, warehouse_id,
-            pallet_id, module_id, project_invoice_id, entity_context, file_name, original_file_name,
+            pallet_id, module_id, project_invoice_id, carrier_id, entity_context, file_name, original_file_name,
             file_path, file_size, mime_type, uploaded_by, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
 
     $project_id = $document_data['project_id'];
@@ -501,13 +522,14 @@ function importExistingFileToProjectDocuments($conn, $document_data, $source_pat
     $pallet_id = $document_data['pallet_id'] ?? null;
     $module_id = $document_data['module_id'] ?? null;
     $project_invoice_id = $document_data['project_invoice_id'] ?? null;
+    $carrier_id = $document_data['carrier_id'] ?? null;
     $entity_context = $document_data['entity_context'] ?? null;
     $original_name = $document_data['original_name'];
     $uploaded_by = $document_data['uploaded_by'];
     $description = $document_data['description'] ?? '';
 
     $stmt->bind_param(
-        "issiiiiissssisis",
+        "issiiiiiissssisis",
         $project_id,
         $document_type,
         $document_sub_type,
@@ -516,6 +538,7 @@ function importExistingFileToProjectDocuments($conn, $document_data, $source_pat
         $pallet_id,
         $module_id,
         $project_invoice_id,
+        $carrier_id,
         $entity_context,
         $server_filename,
         $original_name,

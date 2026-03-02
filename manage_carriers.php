@@ -8,6 +8,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 
 require_once '../config.php';
+require_once 'carrier_helpers.php';
 $conn = getDBConnection();
 
 $dashboard_link = 'dashboard.php';
@@ -31,7 +32,6 @@ if ($role !== 'global_admin') {
 }
 
 $carriers = [];
-$carrier_requests = [];
 $errorMessage = '';
 $successMessage = '';
 
@@ -74,19 +74,28 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 }
 
 try {
-    // Fetch carriers - global_admin sees all, others see global + their account carriers
+    // Fetch carriers with compliance columns
+    $select_cols = "id, account_id, name, short_name, mc_number, dot_number, carrier_type,
+                    is_solterra_managed, contact_person, phone, email, website,
+                    street_address, city, state, zip_code, country,
+                    is_active, created_at,
+                    coi_on_file, coi_expiration_date, insurance_minimum_met, authority_status, fmcsa_safety_rating";
+
     if ($role === 'global_admin') {
-        $sql = "SELECT id, account_id, name, short_name, mc_number, dot_number, carrier_type,
-                       is_solterra_managed, contact_person, phone, email, website,
-                       address, is_active, created_at
-                FROM carriers
-                ORDER BY is_active DESC, is_solterra_managed DESC, name ASC";
+        $sql = "SELECT $select_cols FROM carriers ORDER BY is_active DESC, is_solterra_managed DESC, name ASC";
         $stmt = $conn->prepare($sql);
+    } elseif ($role === 'customer_admin') {
+        // customer_admin sees only their own account carriers (no Solterra sub-carriers)
+        $sql = "SELECT $select_cols FROM carriers
+                WHERE account_id = ? OR (account_id IS NULL AND is_solterra_managed = 0)
+                ORDER BY is_active DESC, name ASC";
+        $stmt = $conn->prepare($sql);
+        if ($stmt) {
+            $stmt->bind_param("i", $account_id);
+        }
     } else {
-        $sql = "SELECT id, account_id, name, short_name, mc_number, dot_number, carrier_type,
-                       is_solterra_managed, contact_person, phone, email, website,
-                       address, is_active, created_at
-                FROM carriers
+        // admin sees global + account carriers
+        $sql = "SELECT $select_cols FROM carriers
                 WHERE account_id IS NULL OR account_id = ?
                 ORDER BY is_active DESC, is_solterra_managed DESC, name ASC";
         $stmt = $conn->prepare($sql);
@@ -114,47 +123,6 @@ try {
     $errorMessage = $e->getMessage();
 }
 
-// Fetch carrier requests
-try {
-    $request_where = "WHERE cr.status = 'pending'";
-    $request_params = [];
-    $request_types = '';
-    if ($role === 'admin') {
-        $request_where .= " AND cr.account_id = ?";
-        $request_params[] = $account_id;
-        $request_types = 'i';
-    } elseif ($role === 'customer_admin') {
-        $request_where .= " AND cr.account_id = ?";
-        $request_params[] = $account_id;
-        $request_types = 'i';
-    }
-
-    $request_sql = "SELECT cr.id, cr.name, cr.carrier_type, cr.status, cr.created_at, cr.rejection_reason,
-                           ca.name AS account_name,
-                           u.username, u.first_name, u.last_name
-                    FROM carrier_requests cr
-                    JOIN customer_accounts ca ON ca.id = cr.account_id
-                    JOIN users u ON u.id = cr.requested_by
-                    $request_where
-                    ORDER BY cr.created_at DESC";
-    $stmtReq = $conn->prepare($request_sql);
-    if ($stmtReq) {
-        if (!empty($request_params)) {
-            $stmtReq->bind_param($request_types, ...$request_params);
-        }
-        $stmtReq->execute();
-        $resultReq = $stmtReq->get_result();
-        while ($row = $resultReq->fetch_assoc()) {
-            $carrier_requests[] = $row;
-        }
-        $stmtReq->close();
-    }
-} catch (Exception $e) {
-    if ($errorMessage === '') {
-        $errorMessage = $e->getMessage();
-    }
-}
-
 $conn->close();
 
 $carrier_type_labels = [
@@ -165,6 +133,8 @@ $carrier_type_labels = [
     'ocean' => 'Ocean',
     'other' => 'Other',
 ];
+
+$isAdminRole = in_array($role, ['admin', 'global_admin'], true);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -290,10 +260,6 @@ $carrier_type_labels = [
             background: linear-gradient(135deg, #f8d7da, #f5c6cb);
             color: #721c24;
         }
-        .status-pending {
-            background: linear-gradient(135deg, #fff3cd, #ffeeba);
-            color: #856404;
-        }
         .solterra-badge {
             display: inline-block;
             background: linear-gradient(135deg, #488C9A, #293E4C);
@@ -316,20 +282,6 @@ $carrier_type_labels = [
         }
 
         /* Action Buttons */
-        .action-buttons.edit {
-            background: linear-gradient(135deg, #488C9A, #3a7a87);
-            color: white;
-            padding: 6px 14px;
-            text-decoration: none;
-            border-radius: 8px;
-            font-size: 0.85em;
-            font-weight: 600;
-            transition: all 0.2s ease;
-        }
-        .action-buttons.edit:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
-        }
         .actions-cell { position: relative; text-align: center; width: 60px; }
         .dropdown { position: relative; display: inline-block; }
         .kebab-trigger {
@@ -411,10 +363,38 @@ $carrier_type_labels = [
         }
         .contact-info { font-size: 0.9em; color: #666; }
 
+        /* Filter toggles */
+        .filter-toggles {
+            display: flex;
+            gap: 8px;
+            margin-left: auto;
+        }
+        .filter-btn {
+            padding: 6px 16px;
+            border-radius: 20px;
+            border: 2px solid #e9ecef;
+            background: #fff;
+            color: #6c757d;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .filter-btn:hover {
+            border-color: #488C9A;
+            color: #488C9A;
+        }
+        .filter-btn.active {
+            background: linear-gradient(135deg, #488C9A, #3a7a87);
+            color: white;
+            border-color: #488C9A;
+        }
+
         @media (max-width: 768px) {
             .page-header-card { padding: 24px; }
             .page-header-card h1 { font-size: 1.6em; }
             .page-header-content { flex-direction: column; align-items: flex-start; }
+            .filter-toggles { margin-left: 0; }
         }
     </style>
     <script>
@@ -456,6 +436,21 @@ $carrier_type_labels = [
         window.addEventListener('scroll', function() {
             document.querySelectorAll('.dropdown-menu.show').forEach(menu => menu.classList.remove('show'));
         }, true);
+
+        function filterCarriers(filterType) {
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            document.querySelectorAll('tr[data-carrier-type]').forEach(row => {
+                if (filterType === 'all') {
+                    row.style.display = '';
+                } else if (filterType === 'solterra') {
+                    row.style.display = row.dataset.carrierType === 'solterra' ? '' : 'none';
+                } else if (filterType === 'account') {
+                    row.style.display = row.dataset.carrierType === 'account' ? '' : 'none';
+                }
+            });
+        }
     </script>
 </head>
 <body>
@@ -485,71 +480,17 @@ $carrier_type_labels = [
         </div>
     <?php endif; ?>
 
-    <?php if (!empty($carrier_requests)): ?>
-        <div class="table-card">
-        <div class="table-card-header">
-            <div class="icon-badge"><i class="fas fa-clipboard-list"></i></div>
-            <h2>Carrier Requests</h2>
-        </div>
-        <div class="table-responsive">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Carrier</th>
-                        <th>Type</th>
-                        <?php if ($role === 'global_admin'): ?>
-                            <th>Account</th>
-                        <?php endif; ?>
-                        <th>Requested By</th>
-                        <th>Submitted</th>
-                        <th>Status</th>
-                        <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
-                            <th>Actions</th>
-                        <?php endif; ?>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($carrier_requests as $request): ?>
-                        <?php
-                            $requested_by = trim(($request['first_name'] ?? '') . ' ' . ($request['last_name'] ?? ''));
-                            if ($requested_by === '') {
-                                $requested_by = $request['username'] ?? 'Unknown';
-                            }
-                            $status_class = $request['status'] === 'approved' ? 'status-active' : ($request['status'] === 'rejected' ? 'status-inactive' : 'status-pending');
-                        ?>
-                        <tr>
-                            <td><strong><?php echo htmlspecialchars($request['name']); ?></strong></td>
-                            <td><span class="type-badge"><?php echo htmlspecialchars($carrier_type_labels[$request['carrier_type']] ?? ucfirst($request['carrier_type'])); ?></span></td>
-                            <?php if ($role === 'global_admin'): ?>
-                                <td><?php echo htmlspecialchars($request['account_name']); ?></td>
-                            <?php endif; ?>
-                            <td><?php echo htmlspecialchars($requested_by); ?></td>
-                            <td><?php echo htmlspecialchars(date('M j, Y', strtotime($request['created_at']))); ?></td>
-                            <td>
-                                <span class="status-badge <?php echo $status_class; ?>">
-                                    <?php echo htmlspecialchars(ucfirst($request['status'])); ?>
-                                </span>
-                                <?php if ($role === 'customer_admin' && $request['status'] === 'rejected' && !empty($request['rejection_reason'])): ?>
-                                    <br><small style="color: #666;">Reason: <?php echo htmlspecialchars($request['rejection_reason']); ?></small>
-                                <?php endif; ?>
-                            </td>
-                            <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
-                                <td>
-                                    <a href="add_carrier.php?request_id=<?php echo (int)$request['id']; ?>" class="action-buttons edit">Review</a>
-                                </td>
-                            <?php endif; ?>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-        </div>
-    <?php endif; ?>
-
     <div class="table-card">
     <div class="table-card-header">
         <div class="icon-badge"><i class="fas fa-truck"></i></div>
         <h2>All Carriers</h2>
+        <?php if ($isAdminRole): ?>
+        <div class="filter-toggles">
+            <button class="filter-btn active" onclick="filterCarriers('all')">All</button>
+            <button class="filter-btn" onclick="filterCarriers('solterra')">Solterra Managed</button>
+            <button class="filter-btn" onclick="filterCarriers('account')">Account Carriers</button>
+        </div>
+        <?php endif; ?>
     </div>
     <div class="table-responsive">
         <table>
@@ -559,7 +500,7 @@ $carrier_type_labels = [
                     <th>MC# / DOT#</th>
                     <th>Type</th>
                     <th>Contact Information</th>
-                    <th>Address</th>
+                    <th>Compliance</th>
                     <th>Status</th>
                     <th style="width:60px;"></th>
                 </tr>
@@ -567,10 +508,25 @@ $carrier_type_labels = [
             <tbody>
                 <?php if (!empty($carriers)): ?>
                     <?php foreach ($carriers as $c): ?>
-                        <tr>
+                        <?php
+                            $filter_type = !empty($c['is_solterra_managed']) ? 'solterra' : (!empty($c['account_id']) ? 'account' : 'global');
+                            $is_own_carrier = ($role === 'customer_admin' && !empty($c['account_id']) && (int)$c['account_id'] === (int)$account_id);
+                            $can_edit_delete = in_array($role, ['admin', 'global_admin'], true) || $is_own_carrier;
+                            $show_compliance = $isAdminRole || $is_own_carrier;
+
+                            // Build address string
+                            $addr_parts = array_filter([
+                                $c['street_address'] ?? '',
+                                $c['city'] ?? '',
+                                $c['state'] ?? '',
+                                $c['zip_code'] ?? ''
+                            ]);
+                            $address_str = !empty($addr_parts) ? implode(', ', $addr_parts) : '';
+                        ?>
+                        <tr data-carrier-type="<?php echo $filter_type; ?>">
                             <td>
                                 <strong><?php echo htmlspecialchars($c['name']); ?></strong>
-                                <?php if ($c['is_solterra_managed']): ?>
+                                <?php if ($isAdminRole && $c['is_solterra_managed']): ?>
                                     <span class="solterra-badge">Solterra</span>
                                 <?php endif; ?>
                                 <?php if (!empty($c['short_name'])): ?>
@@ -600,17 +556,19 @@ $carrier_type_labels = [
                                     <?php echo htmlspecialchars($c['email']); ?>
                                 <?php endif; ?>
                             </td>
-                            <td><?php echo htmlspecialchars($c['address'] ?? 'Not specified'); ?></td>
+                            <td>
+                                <?php if ($show_compliance): ?>
+                                    <?php echo get_compliance_badge_html($c); ?>
+                                <?php else: ?>
+                                    <span style="color: #999;">--</span>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <span class="status-badge <?php echo $c['is_active'] ? 'status-active' : 'status-inactive'; ?>">
                                     <?php echo $c['is_active'] ? 'Active' : 'Inactive'; ?>
                                 </span>
                             </td>
                             <td class="actions-cell" onclick="event.stopPropagation();">
-                                <?php
-                                    $is_own_carrier = ($role === 'customer_admin' && !empty($c['account_id']) && (int)$c['account_id'] === (int)$account_id);
-                                    $can_edit_delete = in_array($role, ['admin', 'global_admin'], true) || $is_own_carrier;
-                                ?>
                                 <div class="dropdown">
                                     <button class="kebab-trigger" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $c['id']; ?>')" title="More actions">&#8942;</button>
                                     <div id="dropdown-menu-<?php echo $c['id']; ?>" class="dropdown-menu">

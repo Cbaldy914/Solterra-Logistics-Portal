@@ -58,12 +58,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $is_active = isset($_POST['is_active']) ? 1 : 0;
         $notes = trim($_POST['notes'] ?? '');
 
+        // Compliance fields
+        $coi_on_file = isset($_POST['coi_on_file']) ? 1 : 0;
+        $coi_expiration_date = !empty($_POST['coi_expiration_date']) ? $_POST['coi_expiration_date'] : null;
+        $insurance_minimum_met = isset($_POST['insurance_minimum_met']) ? 1 : 0;
+        $authority_status = !empty($_POST['authority_status']) ? $_POST['authority_status'] : null;
+        $fmcsa_safety_rating = !empty($_POST['fmcsa_safety_rating']) ? $_POST['fmcsa_safety_rating'] : null;
+
         if ($name === '') {
             throw new Exception("Carrier Name is required.");
         }
         $valid_types = ['ftl','ltl','drayage','intermodal','ocean','other'];
         if (!in_array($carrier_type, $valid_types, true)) {
             $carrier_type = 'ftl';
+        }
+        $valid_authority = ['active','inactive','revoked'];
+        if ($authority_status !== null && !in_array($authority_status, $valid_authority, true)) {
+            $authority_status = null;
+        }
+        $valid_ratings = ['satisfactory','conditional','unsatisfactory','not_rated'];
+        if ($fmcsa_safety_rating !== null && !in_array($fmcsa_safety_rating, $valid_ratings, true)) {
+            $fmcsa_safety_rating = null;
         }
 
         // Fetch existing logo
@@ -127,6 +142,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 contact_person = ?, phone = ?, email = ?, website = ?,
                 street_address = ?, city = ?, state = ?, zip_code = ?, country = ?,
                 logo_url = ?, is_active = ?, notes = ?,
+                coi_on_file = ?, coi_expiration_date = ?, insurance_minimum_met = ?,
+                authority_status = ?, fmcsa_safety_rating = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ");
@@ -135,12 +152,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $stmt->bind_param(
-            "sssssissssssssssissi",
+            "sssssissssssssssisisiss" . "i",
             $name, $short_name, $mc_number, $dot_number, $carrier_type,
             $is_solterra_managed,
             $contact_person, $phone, $email, $website,
             $street_address, $city, $state, $zip_code, $country,
             $logo_url, $is_active, $notes,
+            $coi_on_file, $coi_expiration_date, $insurance_minimum_met,
+            $authority_status, $fmcsa_safety_rating,
             $carrier_id
         );
 
@@ -181,120 +200,66 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        main {
-            max-width: 800px;
+        .page-header-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px; padding: 32px; margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08);
+            position: relative; overflow: hidden;
         }
-        form label {
-            display: block;
-            margin-top: 15px;
-            font-weight: 600;
-            color: #333;
+        .page-header-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
+        .page-header-card h1 { font-size: 2.2em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 8px 0; line-height: 1.2; }
+        .page-header-card .subtitle { color: #6c757d; font-size: 1.05em; font-weight: 500; margin: 0; }
+
+        .form-section { background: #fff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-bottom: 24px; overflow: hidden; border: 1px solid #e9ecef; }
+        .form-section-header { display: flex; align-items: center; gap: 12px; padding: 20px 24px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-bottom: 1px solid #e9ecef; }
+        .form-section-header .icon-badge { background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%); color: #fff; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+        .form-section-header h2 { margin: 0; font-size: 1.15rem; font-weight: 600; color: #293E4C; }
+        .form-section-body { padding: 24px; }
+
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .form-row.single { grid-template-columns: 1fr; }
+        .form-row.triple { grid-template-columns: repeat(3, 1fr); }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { font-weight: 500; color: #333; margin-bottom: 8px; font-size: 0.95rem; }
+        .form-group label .required-star { color: #dc3545; margin-left: 4px; }
+        .form-group label .optional-tag { color: #6c757d; font-weight: 400; font-size: 0.85rem; margin-left: 8px; }
+        .form-group input, .form-group select, .form-group textarea {
+            padding: 12px 16px; border: 2px solid #e9ecef; border-radius: 10px; font-size: 1rem;
+            transition: all 0.2s ease; background: #fafafa; font-family: inherit; box-sizing: border-box; width: 100%;
         }
-        form input[type="text"],
-        form input[type="email"],
-        form input[type="tel"],
-        form input[type="url"],
-        form input[type="file"],
-        form select,
-        form textarea {
-            width: 100%;
-            padding: 10px;
-            margin-top: 5px;
-            border-radius: 4px;
-            border: 1px solid #ccc;
-            box-sizing: border-box;
-        }
-        form textarea {
-            height: 80px;
-            resize: vertical;
-        }
-        .address-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr;
-            gap: 15px;
-            margin-top: 5px;
-        }
-        .address-grid input {
-            margin-top: 0;
-        }
-        .contact-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 5px;
-        }
-        .contact-grid input {
-            margin-top: 0;
-        }
-        .carrier-id-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 15px;
-            margin-top: 5px;
-        }
-        .carrier-id-grid input,
-        .carrier-id-grid select {
-            margin-top: 0;
-        }
-        .checkbox-container {
-            display: flex;
-            align-items: center;
-            margin-top: 10px;
-        }
-        .checkbox-container input[type="checkbox"] {
-            width: auto;
-            margin-right: 8px;
-        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #488C9A; background: #fff; box-shadow: 0 0 0 3px rgba(72,140,154,0.1); }
+        .form-group textarea { min-height: 80px; resize: vertical; }
+        .form-group .help-text { font-size: 0.85rem; color: #6c757d; margin-top: 6px; }
+
+        .checkbox-container { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #f8f9fa; border-radius: 10px; border: 2px solid #e9ecef; cursor: pointer; transition: all 0.2s ease; }
+        .checkbox-container:hover { border-color: #488C9A; }
+        .checkbox-container input[type="checkbox"] { width: auto; margin: 0; accent-color: #488C9A; }
+        .checkbox-container label { margin: 0; cursor: pointer; font-weight: 500; color: #333; }
+
+        .btn-submit-container { display: flex; gap: 12px; margin-top: 8px; }
         .btn-submit {
-            background: #293E4C;
-            color: #fff;
-            border: none;
-            padding: 12px 20px;
-            cursor: pointer;
-            border-radius: 4px;
-            font-size: 1rem;
-            font-weight: 600;
-            margin-top: 20px;
-            display: inline-block;
-            transition: background-color 0.3s ease;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%); color: #fff; border: none;
+            padding: 14px 28px; cursor: pointer; border-radius: 12px; font-size: 1rem; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 8px; transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(72,140,154,0.3);
         }
-        .btn-submit:hover {
-            background: #488C9A;
-        }
-        .section-title {
-            margin-top: 30px;
-            margin-bottom: 15px;
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #333;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 5px;
-        }
-        .error-message {
-            color: #721c24;
-            background-color: #f8d7da;
-            border: 1px solid #f5c6cb;
-            padding: 15px;
-            margin: 20px 0;
-            text-align: center;
-            border-radius: 4px;
-        }
-        .form-note {
-            font-size: 0.9em;
-            color: #666;
-            font-style: italic;
-            margin-top: 3px;
-        }
-        .current-logo {
-            margin-top: 10px;
-            max-width: 200px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 5px;
-        }
-        form br {
-            display: none;
+        .btn-submit:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(72,140,154,0.4); }
+
+        .success-message, .error-message { padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; font-weight: 500; }
+        .success-message { color: #155724; background: linear-gradient(135deg, #d4edda, #c3e6cb); border: 1px solid #b1dfbb; }
+        .error-message { color: #721c24; background: linear-gradient(135deg, #f8d7da, #f5c6cb); border: 1px solid #f1b0b7; }
+
+        .conditional-field { display: none; }
+        .conditional-field.visible { display: block; }
+
+        .current-logo { margin-top: 10px; max-width: 200px; border: 2px solid #e9ecef; border-radius: 10px; padding: 8px; background: #fafafa; }
+
+        @media (max-width: 768px) {
+            .form-row, .form-row.triple { grid-template-columns: 1fr; }
+            .page-header-card { padding: 24px; }
+            .page-header-card h1 { font-size: 1.6em; }
         }
     </style>
 </head>
@@ -309,133 +274,259 @@ $conn->close();
         ]);
     ?>
 
-    <h1>Edit Carrier</h1>
+    <div class="page-header-card">
+        <h1>Edit Carrier</h1>
+        <p class="subtitle">Update carrier details for <strong><?php echo htmlspecialchars($carrier['name']); ?></strong></p>
+    </div>
 
     <?php if (!empty($errorMessage)): ?>
-        <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
+        <div class="error-message"><i class="fas fa-times-circle"></i> <?php echo htmlspecialchars($errorMessage); ?></div>
     <?php endif; ?>
 
     <form action="" method="POST" enctype="multipart/form-data">
         <input type="hidden" name="id" value="<?php echo $carrier_id; ?>">
 
-        <div class="section-title">Basic Information</div>
-
-        <label for="name">Carrier Name: <span style="color: red;">*</span></label>
-        <input type="text" id="name" name="name" required value="<?php echo htmlspecialchars($carrier['name']); ?>">
-
-        <label for="short_name">Short Name/Abbreviation:</label>
-        <input type="text" id="short_name" name="short_name" value="<?php echo htmlspecialchars($carrier['short_name'] ?? ''); ?>">
-        <div class="form-note">Optional short name or common abbreviation</div>
-
-        <div class="section-title">Carrier Identification</div>
-
-        <div class="carrier-id-grid">
-            <div>
-                <label for="mc_number" style="margin-top: 0; font-size: 0.9em; color: #666;">MC Number:</label>
-                <input type="text" id="mc_number" name="mc_number" value="<?php echo htmlspecialchars($carrier['mc_number'] ?? ''); ?>">
+        <!-- Basic Information -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge"><i class="fas fa-truck"></i></div>
+                <h2>Basic Information</h2>
             </div>
-            <div>
-                <label for="dot_number" style="margin-top: 0; font-size: 0.9em; color: #666;">DOT Number:</label>
-                <input type="text" id="dot_number" name="dot_number" value="<?php echo htmlspecialchars($carrier['dot_number'] ?? ''); ?>">
-            </div>
-            <div>
-                <label for="carrier_type" style="margin-top: 0; font-size: 0.9em; color: #666;">Carrier Type:</label>
-                <?php $ct = $carrier['carrier_type'] ?? 'ftl'; ?>
-                <select id="carrier_type" name="carrier_type">
-                    <option value="ftl" <?php echo $ct === 'ftl' ? 'selected' : ''; ?>>FTL (Full Truckload)</option>
-                    <option value="ltl" <?php echo $ct === 'ltl' ? 'selected' : ''; ?>>LTL (Less Than Truckload)</option>
-                    <option value="drayage" <?php echo $ct === 'drayage' ? 'selected' : ''; ?>>Drayage</option>
-                    <option value="intermodal" <?php echo $ct === 'intermodal' ? 'selected' : ''; ?>>Intermodal</option>
-                    <option value="ocean" <?php echo $ct === 'ocean' ? 'selected' : ''; ?>>Ocean Freight</option>
-                    <option value="other" <?php echo $ct === 'other' ? 'selected' : ''; ?>>Other</option>
-                </select>
-            </div>
-        </div>
-        <div class="form-note">FMCSA Motor Carrier (MC) number and USDOT number</div>
-
-        <div class="section-title">Contact Information</div>
-
-        <label for="contact_person">Contact Person:</label>
-        <input type="text" id="contact_person" name="contact_person" value="<?php echo htmlspecialchars($carrier['contact_person'] ?? ''); ?>">
-
-        <div class="contact-grid">
-            <div>
-                <label for="phone" style="margin-top: 0; font-size: 0.9em; color: #666;">Phone:</label>
-                <input type="tel" id="phone" name="phone" value="<?php echo htmlspecialchars($carrier['phone'] ?? ''); ?>">
-            </div>
-            <div>
-                <label for="email" style="margin-top: 0; font-size: 0.9em; color: #666;">Email:</label>
-                <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($carrier['email'] ?? ''); ?>">
+            <div class="form-section-body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="name">Carrier Name <span class="required-star">*</span></label>
+                        <input type="text" id="name" name="name" required value="<?php echo htmlspecialchars($carrier['name']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="short_name">Short Name <span class="optional-tag">(optional)</span></label>
+                        <input type="text" id="short_name" name="short_name" value="<?php echo htmlspecialchars($carrier['short_name'] ?? ''); ?>">
+                        <span class="help-text">Common abbreviation</span>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <label for="website">Website:</label>
-        <input type="url" id="website" name="website" value="<?php echo htmlspecialchars($carrier['website'] ?? ''); ?>">
-
-        <div class="section-title">Address</div>
-        <div class="form-note">Carrier address (optional)</div>
-
-        <div class="address-grid">
-            <div>
-                <label for="street_address" style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
-                <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($carrier['street_address'] ?? ''); ?>">
+        <!-- Carrier Identification -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge"><i class="fas fa-id-card"></i></div>
+                <h2>Carrier Identification</h2>
             </div>
-            <div>
-                <label for="city" style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
-                <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($carrier['city'] ?? ''); ?>">
-            </div>
-            <div>
-                <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State/Province:</label>
-                <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($carrier['state'] ?? ''); ?>">
-            </div>
-            <div>
-                <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip/Postal Code:</label>
-                <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($carrier['zip_code'] ?? ''); ?>">
+            <div class="form-section-body">
+                <div class="form-row triple">
+                    <div class="form-group">
+                        <label for="mc_number">MC Number</label>
+                        <input type="text" id="mc_number" name="mc_number" value="<?php echo htmlspecialchars($carrier['mc_number'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="dot_number">DOT Number</label>
+                        <input type="text" id="dot_number" name="dot_number" value="<?php echo htmlspecialchars($carrier['dot_number'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="carrier_type">Carrier Type</label>
+                        <?php $ct = $carrier['carrier_type'] ?? 'ftl'; ?>
+                        <select id="carrier_type" name="carrier_type">
+                            <option value="ftl" <?php echo $ct === 'ftl' ? 'selected' : ''; ?>>FTL (Full Truckload)</option>
+                            <option value="ltl" <?php echo $ct === 'ltl' ? 'selected' : ''; ?>>LTL (Less Than Truckload)</option>
+                            <option value="drayage" <?php echo $ct === 'drayage' ? 'selected' : ''; ?>>Drayage</option>
+                            <option value="intermodal" <?php echo $ct === 'intermodal' ? 'selected' : ''; ?>>Intermodal</option>
+                            <option value="ocean" <?php echo $ct === 'ocean' ? 'selected' : ''; ?>>Ocean Freight</option>
+                            <option value="other" <?php echo $ct === 'other' ? 'selected' : ''; ?>>Other</option>
+                        </select>
+                    </div>
+                </div>
+                <span class="help-text">FMCSA Motor Carrier (MC) number and USDOT number</span>
             </div>
         </div>
 
-        <label for="country">Country:</label>
-        <input type="text" id="country" name="country" value="<?php echo htmlspecialchars($carrier['country'] ?? 'USA'); ?>">
-
-        <div class="section-title">Additional Information</div>
-
-        <label for="logo_file">Company Logo:</label>
-        <?php if (!empty($carrier['logo_url'])): ?>
-            <div>
-                <img src="<?php echo htmlspecialchars($carrier['logo_url']); ?>" alt="Current Logo" class="current-logo">
-                <div class="form-note">Current logo (upload a new file to replace)</div>
+        <!-- Contact Information -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge"><i class="fas fa-address-book"></i></div>
+                <h2>Contact Information</h2>
             </div>
-        <?php endif; ?>
-        <input type="file" id="logo_file" name="logo_file" accept="image/*">
-        <div class="form-note">Optional company logo (JPG, PNG, GIF, SVG - Max 5MB)</div>
-
-        <?php if ($role === 'global_admin'): ?>
-            <div class="checkbox-container">
-                <input type="checkbox" id="is_solterra_managed" name="is_solterra_managed" <?php echo $carrier['is_solterra_managed'] ? 'checked' : ''; ?>>
-                <label for="is_solterra_managed" style="margin-top: 0;">Solterra-Managed Carrier</label>
+            <div class="form-section-body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="contact_person">Contact Person</label>
+                        <input type="text" id="contact_person" name="contact_person" value="<?php echo htmlspecialchars($carrier['contact_person'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="website">Website</label>
+                        <input type="url" id="website" name="website" value="<?php echo htmlspecialchars($carrier['website'] ?? ''); ?>">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="phone">Phone</label>
+                        <input type="tel" id="phone" name="phone" value="<?php echo htmlspecialchars($carrier['phone'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($carrier['email'] ?? ''); ?>">
+                    </div>
+                </div>
             </div>
-            <div class="form-note">Check if this carrier is managed by Solterra Solutions</div>
-        <?php endif; ?>
-
-        <div class="checkbox-container">
-            <input type="checkbox" id="is_active" name="is_active" <?php echo $carrier['is_active'] ? 'checked' : ''; ?>>
-            <label for="is_active" style="margin-top: 0;">Active Carrier</label>
         </div>
-        <div class="form-note">Uncheck to mark as inactive</div>
 
-        <label for="notes">Notes:</label>
-        <textarea id="notes" name="notes"><?php echo htmlspecialchars($carrier['notes'] ?? ''); ?></textarea>
+        <!-- Address -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge"><i class="fas fa-map-marker-alt"></i></div>
+                <h2>Address</h2>
+            </div>
+            <div class="form-section-body">
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label for="street_address">Street Address</label>
+                        <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($carrier['street_address'] ?? ''); ?>">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="city">City</label>
+                        <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($carrier['city'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="state">State/Province</label>
+                        <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($carrier['state'] ?? ''); ?>">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="zip_code">Zip/Postal Code</label>
+                        <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($carrier['zip_code'] ?? ''); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="country">Country</label>
+                        <input type="text" id="country" name="country" value="<?php echo htmlspecialchars($carrier['country'] ?? 'USA'); ?>">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Information -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge"><i class="fas fa-cog"></i></div>
+                <h2>Additional Information</h2>
+            </div>
+            <div class="form-section-body">
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label for="logo_file">Company Logo <span class="optional-tag">(optional)</span></label>
+                        <?php if (!empty($carrier['logo_url'])): ?>
+                            <div style="margin-bottom: 12px;">
+                                <img src="<?php echo htmlspecialchars($carrier['logo_url']); ?>" alt="Current Logo" class="current-logo">
+                                <span class="help-text">Current logo (upload a new file to replace)</span>
+                            </div>
+                        <?php endif; ?>
+                        <input type="file" id="logo_file" name="logo_file" accept="image/*">
+                        <span class="help-text">JPG, PNG, GIF, SVG - Max 5MB</span>
+                    </div>
+                </div>
+
+                <?php if ($role === 'global_admin'): ?>
+                <div class="form-row single" style="margin-bottom: 16px;">
+                    <div class="checkbox-container">
+                        <input type="checkbox" id="is_solterra_managed" name="is_solterra_managed" <?php echo $carrier['is_solterra_managed'] ? 'checked' : ''; ?>>
+                        <label for="is_solterra_managed">Solterra-Managed Carrier</label>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <div class="form-row single" style="margin-bottom: 16px;">
+                    <div class="checkbox-container">
+                        <input type="checkbox" id="is_active" name="is_active" <?php echo $carrier['is_active'] ? 'checked' : ''; ?>>
+                        <label for="is_active">Active Carrier</label>
+                    </div>
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label for="notes">Notes <span class="optional-tag">(optional)</span></label>
+                        <textarea id="notes" name="notes"><?php echo htmlspecialchars($carrier['notes'] ?? ''); ?></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Compliance Information -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge" style="background: linear-gradient(135deg, #059669, #047857);"><i class="fas fa-shield-alt"></i></div>
+                <h2>Compliance Information <span style="font-size:0.75em; color:#6c757d; font-weight:400; margin-left:8px;">(optional)</span></h2>
+            </div>
+            <div class="form-section-body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="coi_on_file" name="coi_on_file" <?php echo !empty($carrier['coi_on_file']) ? 'checked' : ''; ?> onchange="toggleCoiDate()">
+                            <label for="coi_on_file">COI on File</label>
+                        </div>
+                    </div>
+                    <div class="form-group conditional-field" id="coi_date_field">
+                        <label for="coi_expiration_date">COI Expiration Date</label>
+                        <input type="date" id="coi_expiration_date" name="coi_expiration_date" value="<?php echo htmlspecialchars($carrier['coi_expiration_date'] ?? ''); ?>">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="insurance_minimum_met" name="insurance_minimum_met" <?php echo !empty($carrier['insurance_minimum_met']) ? 'checked' : ''; ?>>
+                            <label for="insurance_minimum_met">Insurance Minimum Met</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="authority_status">Authority Status</label>
+                        <?php $as = $carrier['authority_status'] ?? ''; ?>
+                        <select id="authority_status" name="authority_status">
+                            <option value="">-- Select --</option>
+                            <option value="active" <?php echo $as === 'active' ? 'selected' : ''; ?>>Active</option>
+                            <option value="inactive" <?php echo $as === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
+                            <option value="revoked" <?php echo $as === 'revoked' ? 'selected' : ''; ?>>Revoked</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label for="fmcsa_safety_rating">FMCSA Safety Rating</label>
+                        <?php $fr = $carrier['fmcsa_safety_rating'] ?? ''; ?>
+                        <select id="fmcsa_safety_rating" name="fmcsa_safety_rating">
+                            <option value="">-- Select --</option>
+                            <option value="satisfactory" <?php echo $fr === 'satisfactory' ? 'selected' : ''; ?>>Satisfactory</option>
+                            <option value="conditional" <?php echo $fr === 'conditional' ? 'selected' : ''; ?>>Conditional</option>
+                            <option value="unsatisfactory" <?php echo $fr === 'unsatisfactory' ? 'selected' : ''; ?>>Unsatisfactory</option>
+                            <option value="not_rated" <?php echo $fr === 'not_rated' ? 'selected' : ''; ?>>Not Rated</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="btn-submit-container">
-            <input type="submit" value="Update Carrier" class="btn-submit">
+            <button type="submit" class="btn-submit"><i class="fas fa-save"></i> Update Carrier</button>
         </div>
     </form>
-
 </main>
 
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
-
 <script>
+function toggleCoiDate() {
+    var checked = document.getElementById('coi_on_file').checked;
+    var field = document.getElementById('coi_date_field');
+    if (checked) {
+        field.classList.add('visible');
+    } else {
+        field.classList.remove('visible');
+    }
+}
+// Init on load
+document.addEventListener('DOMContentLoaded', function() {
+    toggleCoiDate();
+});
+
 function initializeAddressAutocomplete() {
     const streetAddressInput = document.getElementById('street_address');
     const cityInput = document.getElementById('city');
@@ -443,69 +534,36 @@ function initializeAddressAutocomplete() {
     const zipInput = document.getElementById('zip_code');
     const countryInput = document.getElementById('country');
 
-    const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
-        types: ['address']
-    });
+    const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, { types: ['address'] });
 
     autocomplete.addListener('place_changed', function() {
         const place = autocomplete.getPlace();
-
-        streetAddressInput.value = '';
-        cityInput.value = '';
-        stateInput.value = '';
-        zipInput.value = '';
+        streetAddressInput.value = ''; cityInput.value = ''; stateInput.value = ''; zipInput.value = '';
         if (countryInput) countryInput.value = '';
+        if (!place.geometry) return;
 
-        if (!place.geometry) {
-            return;
-        }
-
-        let streetNumber = '';
-        let route = '';
+        let streetNumber = '', route = '';
         for (let i = 0; i < place.address_components.length; i++) {
             const addressType = place.address_components[i].types[0];
             const val = place.address_components[i].long_name;
-
             switch (addressType) {
-                case 'street_number':
-                    streetNumber = val;
-                    break;
-                case 'route':
-                    route = val;
-                    break;
-                case 'locality':
-                case 'administrative_area_level_3':
-                case 'sublocality_level_1':
-                    if (!cityInput.value) cityInput.value = val;
-                    break;
+                case 'street_number': streetNumber = val; break;
+                case 'route': route = val; break;
+                case 'locality': case 'administrative_area_level_3': case 'sublocality_level_1':
+                    if (!cityInput.value) cityInput.value = val; break;
                 case 'administrative_area_level_1':
-                    const isUS = place.address_components.some(comp =>
-                        comp.types.includes('country') && comp.short_name === 'US'
-                    );
-                    stateInput.value = isUS ? place.address_components[i].short_name : val;
-                    break;
-                case 'postal_code':
-                    zipInput.value = val;
-                    break;
+                    const isUS = place.address_components.some(comp => comp.types.includes('country') && comp.short_name === 'US');
+                    stateInput.value = isUS ? place.address_components[i].short_name : val; break;
+                case 'postal_code': zipInput.value = val; break;
                 case 'country':
-                    if (countryInput) {
-                        const shortName = place.address_components[i].short_name;
-                        countryInput.value = (shortName === 'US') ? 'USA' : val;
-                    }
-                    break;
+                    if (countryInput) { const sn = place.address_components[i].short_name; countryInput.value = (sn === 'US') ? 'USA' : val; } break;
             }
         }
-
-        if (streetNumber && route) {
-            streetAddressInput.value = (streetNumber + ' ' + route).trim();
-        } else if (route) {
-            streetAddressInput.value = route;
-        }
+        if (streetNumber && route) { streetAddressInput.value = (streetNumber + ' ' + route).trim(); }
+        else if (route) { streetAddressInput.value = route; }
     });
 }
-
 google.maps.event.addDomListener(window, 'load', initializeAddressAutocomplete);
 </script>
-
 </body>
 </html>
