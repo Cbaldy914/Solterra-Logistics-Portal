@@ -2315,6 +2315,10 @@ sort($unique_suppliers);
                                 Supplier
                             </label>
                             <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="carrier-column" checked>
+                                Carrier
+                            </label>
+                            <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
                                 Wattage Summary
                             </label>
@@ -2375,6 +2379,7 @@ sort($unique_suppliers);
                             <th class="select-column"><input type="checkbox" id="selectAllDeliveries"></th>
                             <?php endif; ?>
                             <th class="supplier-column">Supplier</th>
+                            <th class="carrier-column">Carrier</th>
                             <th class="wattage-column">Wattage</th>
                             <th class="status-column">Status</th>
                             <th class="quantity-column">Quantity</th>
@@ -2383,7 +2388,6 @@ sort($unique_suppliers);
                             <th class="actual-column">Actual Date</th>
                             <th class="pallets-column">Pallets</th>
                             <th class="scheduled-column">Scheduled</th>
-                            <th class="carrier-column">Carrier</th>
                             <th class="pod-column">Proof of Delivery</th>
                             <?php if ($can_manage_deliveries): ?>
                             <th class="actions-column">Actions</th>
@@ -2474,6 +2478,13 @@ sort($unique_suppliers);
                                     <span class="group-helper-text"><?php echo (int)$delivery['group_count']; ?> lines grouped under this BOL</span>
                                     <?php endif; ?>
                                 </td>
+                                <td class="carrier-column">
+                                    <?php if (!empty($delivery['carrier_id']) && !empty($delivery['carrier_name'])): ?>
+                                        <a href="carrier_details?carrier_id=<?php echo (int)$delivery['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($delivery['carrier_name']); ?></a>
+                                    <?php else: ?>
+                                        —
+                                    <?php endif; ?>
+                                </td>
                                 <td class="wattage-column">
                                     <span class="wattage-pill"><?php echo htmlspecialchars((string)$delivery['display_wattage']); ?></span>
                                     <?php if ($delivery['is_grouped']): ?>
@@ -2520,13 +2531,6 @@ sort($unique_suppliers);
                                             —
                                             <?php endif; ?>
                                         <?php endif; ?>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="carrier-column">
-                                    <?php if (!empty($delivery['carrier_id']) && !empty($delivery['carrier_name'])): ?>
-                                        <a href="carrier_details?carrier_id=<?php echo (int)$delivery['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($delivery['carrier_name']); ?></a>
-                                    <?php else: ?>
-                                        —
                                     <?php endif; ?>
                                 </td>
                                 <td class="pod-column">
@@ -2576,6 +2580,13 @@ sort($unique_suppliers);
                                     <td class="select-column"></td>
                                     <?php endif; ?>
                                     <td class="supplier-column delivery-detail-indent">↳ <?php echo htmlspecialchars((string)$detailRow['supplier']); ?></td>
+                                    <td class="carrier-column">
+                                        <?php if (!empty($detailRow['carrier_id']) && !empty($detailRow['carrier_name'])): ?>
+                                            <a href="carrier_details?carrier_id=<?php echo (int)$detailRow['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($detailRow['carrier_name']); ?></a>
+                                        <?php else: ?>
+                                            —
+                                        <?php endif; ?>
+                                    </td>
                                     <td class="wattage-column">
                                         <?php $detail_wattage = trim((string)($detailRow['wattage'] ?? '')); ?>
                                         <span class="wattage-pill"><?php echo htmlspecialchars($detail_wattage !== '' ? $detail_wattage . 'W' : 'Unknown'); ?> x <?php echo (int)$detailRow['quantity']; ?></span>
@@ -2595,13 +2606,6 @@ sort($unique_suppliers);
                                         <a href="scheduling.php?project_id=<?php echo (int)$detailRow['project_id']; ?>&delivery_id=<?php echo (int)$detailRow['id']; ?>" class="action-btn action-btn-warning">Schedule</a>
                                         <?php else: ?>
                                         —
-                                        <?php endif; ?>
-                                    </td>
-                                    <td class="carrier-column">
-                                        <?php if (!empty($detailRow['carrier_id']) && !empty($detailRow['carrier_name'])): ?>
-                                            <a href="carrier_details?carrier_id=<?php echo (int)$detailRow['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($detailRow['carrier_name']); ?></a>
-                                        <?php else: ?>
-                                            —
                                         <?php endif; ?>
                                     </td>
                                     <td class="pod-column">

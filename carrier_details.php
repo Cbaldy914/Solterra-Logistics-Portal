@@ -331,7 +331,7 @@ $del_sql = "
         d.freight_cost,
         d.miles,
         d.carrier_reference_number,
-        d.status,
+        d.status_of_delivery,
         p.project_name,
         p.id as project_id
     FROM deliveries d

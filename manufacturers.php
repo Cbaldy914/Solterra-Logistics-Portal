@@ -321,40 +321,53 @@ $conn->close();
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
         }
+        .actions-cell { position: relative; text-align: center; width: 60px; }
         .dropdown { position: relative; display: inline-block; }
-        .dropdown-toggle {
-            background: linear-gradient(135deg, #293E4C, #1e2d38);
-            color: white;
-            padding: 6px 14px;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.85em;
+        .kebab-trigger {
+            background: none;
+            border: 1px solid transparent;
+            color: #6c757d;
+            padding: 6px 8px;
             cursor: pointer;
-            font-weight: 600;
+            font-size: 1.3em;
+            border-radius: 8px;
             transition: all 0.2s ease;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
-        .dropdown-toggle:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(41, 62, 76, 0.3);
+        .kebab-trigger:hover {
+            background-color: #e9ecef;
+            color: #293E4C;
+            border-color: #dee2e6;
         }
         .dropdown-menu {
             display: none;
-            position: absolute;
-            right: 0;
-            top: calc(100% + 4px);
+            position: fixed;
             background: white;
             min-width: 160px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-            border-radius: 12px;
-            z-index: 1000;
-            border: 1px solid #e9ecef;
-            overflow: hidden;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.12), 0 4px 10px rgba(0,0,0,0.08);
+            border-radius: 10px;
+            z-index: 9999;
+            border: 1px solid rgba(0,0,0,0.06);
+            padding: 4px;
+            backdrop-filter: blur(8px);
         }
-        .dropdown-menu.show { display: block; }
-        .dropdown-item {
+        .dropdown-menu.show {
             display: block;
+            animation: dropdownFadeIn 0.15s ease-out;
+        }
+        @keyframes dropdownFadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             width: 100%;
-            padding: 10px 16px;
+            padding: 10px 14px;
             text-decoration: none;
             color: #333;
             border: none;
@@ -362,11 +375,13 @@ $conn->close();
             text-align: left;
             cursor: pointer;
             font-size: 0.9em;
-            transition: background 0.2s ease;
+            border-radius: 6px;
+            transition: background-color 0.15s ease;
         }
-        .dropdown-item:hover { background-color: #f8f9fa; }
-        .dropdown-item.edit { color: #488C9A; font-weight: 500; }
+        .dropdown-item:hover { background-color: #f0f7f8; }
+        .dropdown-item.edit { color: #293E4C; font-weight: 500; }
         .dropdown-item.delete { color: #dc3545; font-weight: 500; }
+        .dropdown-item.delete:hover { background-color: #fdf0f0; }
 
         /* Alert Messages */
         .error-message, .success-message {
@@ -405,29 +420,39 @@ $conn->close();
                 window.location.href = `manufacturers.php?action=delete&id=${manufacturerId}`;
             }
         }
-        
-        // Dropdown functionality
+
         function toggleDropdown(event, dropdownId) {
             event.stopPropagation();
-            
-            // Close all other dropdowns
-            document.querySelectorAll('.dropdown-menu').forEach(menu => {
-                if (menu.id !== dropdownId) {
-                    menu.classList.remove('show');
-                }
+            document.querySelectorAll('.dropdown-menu.show').forEach(menu => {
+                if (menu.id !== dropdownId) menu.classList.remove('show');
             });
-            
-            // Toggle the clicked dropdown
             const dropdown = document.getElementById(dropdownId);
-            dropdown.classList.toggle('show');
+            const isOpen = dropdown.classList.contains('show');
+            if (isOpen) { dropdown.classList.remove('show'); return; }
+
+            const trigger = event.currentTarget;
+            const rect = trigger.getBoundingClientRect();
+            dropdown.style.visibility = 'hidden';
+            dropdown.classList.add('show');
+            const menuHeight = dropdown.offsetHeight;
+            const menuWidth = dropdown.offsetWidth;
+            dropdown.style.visibility = '';
+
+            const spaceBelow = window.innerHeight - rect.bottom;
+            if (spaceBelow < menuHeight + 8 && rect.top > menuHeight + 8) {
+                dropdown.style.top = (rect.top - menuHeight - 4) + 'px';
+            } else {
+                dropdown.style.top = (rect.bottom + 4) + 'px';
+            }
+            dropdown.style.left = Math.max(8, rect.right - menuWidth) + 'px';
         }
-        
-        // Close dropdowns when clicking outside
+
         document.addEventListener('click', function() {
-            document.querySelectorAll('.dropdown-menu').forEach(menu => {
-                menu.classList.remove('show');
-            });
+            document.querySelectorAll('.dropdown-menu.show').forEach(menu => menu.classList.remove('show'));
         });
+        window.addEventListener('scroll', function() {
+            document.querySelectorAll('.dropdown-menu.show').forEach(menu => menu.classList.remove('show'));
+        }, true);
     </script>
 </head>
 <body>
@@ -602,7 +627,7 @@ $conn->close();
                     <th>Address</th>
                     <th>Website</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th style="width:60px;"></th>
                 </tr>
             </thead>
             <tbody>
@@ -641,21 +666,17 @@ $conn->close();
                                     <?php echo $manufacturer['is_active'] ? 'Active' : 'Inactive'; ?>
                                 </span>
                             </td>
-                            <td>
-                                <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
-                                    <div class="dropdown">
-                                        <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $manufacturer['id']; ?>')">
-                                            Actions
-                                        </button>
-                                        <div id="dropdown-menu-<?php echo $manufacturer['id']; ?>" class="dropdown-menu">
-                                            <a href="edit_manufacturer.php?id=<?php echo $manufacturer['id']; ?>" class="dropdown-item edit">Edit</a>
-                                            <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer['id']; ?>" class="dropdown-item">Manage Locations</a>
-                                            <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($manufacturer['name'], ENT_QUOTES); ?>', <?php echo $manufacturer['id']; ?>)" class="dropdown-item delete">Delete</a>
-                                        </div>
+                            <td class="actions-cell" onclick="event.stopPropagation();">
+                                <div class="dropdown">
+                                    <button class="kebab-trigger" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $manufacturer['id']; ?>')" title="More actions">&#8942;</button>
+                                    <div id="dropdown-menu-<?php echo $manufacturer['id']; ?>" class="dropdown-menu">
+                                        <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer['id']; ?>" class="dropdown-item">Manage Locations</a>
+                                        <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
+                                        <a href="edit_manufacturer.php?id=<?php echo $manufacturer['id']; ?>" class="dropdown-item edit">Edit</a>
+                                        <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($manufacturer['name'], ENT_QUOTES); ?>', <?php echo $manufacturer['id']; ?>)" class="dropdown-item delete">Delete</a>
+                                        <?php endif; ?>
                                     </div>
-                                <?php else: ?>
-                                    <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer['id']; ?>" class="action-buttons edit">View Locations</a>
-                                <?php endif; ?>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>

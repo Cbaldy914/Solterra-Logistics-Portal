@@ -324,7 +324,7 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        main { max-width: 900px; }
+        /* no max-width — matches other portal pages */
 
         /* Page Header Card */
         .page-header-card {
