@@ -37,7 +37,8 @@
       "WebFetch(domain:www.vellum.ai)",
       "WebFetch(domain:ai.google.dev)",
       "WebFetch(domain:github.com)",
-      "Bash(more:*)"
+      "Bash(more:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []
