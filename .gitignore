@@ -15,3 +15,6 @@ config.php
 # OS generated files
 .DS_Store
 Thumbs.db
+# Dev environment secrets
+dev.solterrasol.com/env.php
+phpinfo.php
