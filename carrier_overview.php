@@ -259,8 +259,14 @@ if ($isCustomerRole) {
         $display_carriers = [$solterra_aggregate['carrier_id'] => $solterra_aggregate] + $display_carriers;
     }
 } else {
-    // Admin/global_admin: show all carriers individually
-    $display_carriers = $carriers_data;
+    // Admin/global_admin: show all real operational carriers
+    // Hide the "Solterra Solutions" abstraction record — admins see actual sub-carriers instead
+    foreach ($carriers_data as $cid => $data) {
+        if ($solterra_carrier_id > 0 && (int)$cid === (int)$solterra_carrier_id) {
+            continue; // Skip the abstraction carrier
+        }
+        $display_carriers[$cid] = $data;
+    }
 }
 
 // Calculate totals from display carriers
