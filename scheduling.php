@@ -565,9 +565,11 @@ if ($action) {
             $delivery_stmt = $conn->prepare("
                 SELECT d.id, d.bol_number, d.wattage, d.quantity, d.supplier,
                        d.anticipated_delivery_date, d.status_of_delivery,
+                       d.carrier_id, c.name AS carrier_name,
                        p.project_name
                 FROM deliveries d
                 LEFT JOIN projects p ON d.project_id = p.id
+                LEFT JOIN carriers c ON c.id = d.carrier_id
                 WHERE d.id = ? AND d.project_id = ?
             ");
             $delivery_stmt->bind_param("ii", $delivery_id, $project_id);
@@ -588,12 +590,14 @@ if ($action) {
     // List available deliveries for dropdown - grouped by BOL number
     if ($action === 'list_deliveries') {
         $stmt = $conn->prepare(
-            "SELECT id, bol_number, wattage, quantity, supplier
-             FROM deliveries
-             WHERE project_id = ?
-               AND status_of_delivery = 'In Transit to Project'
-               AND IFNULL(scheduled, 0) = 0
-             ORDER BY bol_number, wattage"
+            "SELECT d.id, d.bol_number, d.wattage, d.quantity, d.supplier,
+                    d.carrier_id, c.name AS carrier_name
+             FROM deliveries d
+             LEFT JOIN carriers c ON c.id = d.carrier_id
+             WHERE d.project_id = ?
+               AND d.status_of_delivery = 'In Transit to Project'
+               AND IFNULL(d.scheduled, 0) = 0
+             ORDER BY d.bol_number, d.wattage"
         );
         $stmt->bind_param("i", $project_id);
         $stmt->execute();
@@ -612,6 +616,8 @@ if ($action) {
                 $grouped_deliveries[$bol] = [
                     'bol_number' => $bol,
                     'supplier' => $delivery['supplier'],
+                    'carrier_name' => $delivery['carrier_name'] ?? '',
+                    'carrier_id' => $delivery['carrier_id'] ?? null,
                     'delivery_ids' => [],
                     'wattages' => [],
                     'total_quantity' => 0
@@ -628,6 +634,8 @@ if ($action) {
             $deliveries[] = [
                 'bol_number' => $group['bol_number'],
                 'supplier' => $group['supplier'],
+                'carrier_name' => $group['carrier_name'],
+                'carrier_id' => $group['carrier_id'],
                 'delivery_ids' => implode(',', $group['delivery_ids']),
                 'wattage_display' => implode(', ', $group['wattages']),
                 'total_quantity' => $group['total_quantity']
@@ -769,16 +777,18 @@ if ($action) {
                            END AS manufacturer_name,
                            CASE
                                WHEN d.origin_type = 'warehouse' THEN w.name
-                               WHEN d.origin_type = 'manufacturer' THEN 
-                                   CASE 
+                               WHEN d.origin_type = 'manufacturer' THEN
+                                   CASE
                                        WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
                                        ELSE d.supplier
                                    END
                                ELSE d.supplier
-                           END AS origin_name
+                           END AS origin_name,
+                           d.carrier_id, ca.name AS carrier_name
                     FROM site_scheduling s
                     LEFT JOIN deliveries d ON s.delivery_id = d.id
                     LEFT JOIN warehouses w ON d.origin_type = 'warehouse' AND d.origin_id = w.id
+                    LEFT JOIN carriers ca ON ca.id = d.carrier_id
                     WHERE s.bol_number = ? AND s.start_time = ? AND s.project_id = ?
                     ORDER BY d.wattage
                 ");
@@ -792,7 +802,9 @@ if ($action) {
                 $supplier = '';
                 $manufacturer_name = '';
                 $origin_name = '';
-                
+                $carrier_name = '';
+                $carrier_id = null;
+
                 while ($related = $related_res->fetch_assoc()) {
                     $appointment_ids[] = $related['id'];
                     $wattages[] = $related['delivery_wattage'] . 'W';
@@ -800,6 +812,8 @@ if ($action) {
                     if (empty($supplier)) $supplier = $related['supplier'];
                     if (empty($manufacturer_name)) $manufacturer_name = $related['manufacturer_name'];
                     if (empty($origin_name)) $origin_name = $related['origin_name'];
+                    if (empty($carrier_name)) $carrier_name = $related['carrier_name'] ?? '';
+                    if (empty($carrier_id)) $carrier_id = $related['carrier_id'] ?? null;
                 }
                 $related_stmt->close();
                 
@@ -820,7 +834,9 @@ if ($action) {
                     'manufacturer_name' => $manufacturer_name,
                     'origin_name' => $origin_name,
                     'wattage_display' => implode(', ', $wattages),
-                    'total_quantity' => $total_quantity
+                    'total_quantity' => $total_quantity,
+                    'carrier_name' => $carrier_name,
+                    'carrier_id' => $carrier_id
                 ];
                 
                 json_response(['success' => true, 'appointment' => $appointment]);
@@ -2479,6 +2495,7 @@ include('header.php');
                         <div id="deliveryInfoDisplay" style="padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
                             <div>BOL#: <span id="deliveryBOL">-</span></div>
                             <div>Supplier: <span id="deliverySupplier">-</span></div>
+                            <div>Carrier: <a id="deliveryCarrier" href="#" style="color:#488C9A; text-decoration:none; font-weight:500;" target="_blank">-</a></div>
                             <div>Wattage: <span id="deliveryWattage">-</span></div>
                             <div>Quantity: <span id="deliveryQuantity">-</span></div>
                         </div>
@@ -2539,6 +2556,15 @@ include('header.php');
                                 <div class="form-group" style="margin-bottom: 0;">
                                     <label style="font-size: 0.9rem;">Manufacturer</label>
                                     <input type="text" id="editDeliveryManufacturer" readonly style="background-color: #f8f9fa; color: #6c757d; cursor: not-allowed; padding: 10px 14px;">
+                                </div>
+                            </div>
+                            <!-- Middle Row: Carrier -->
+                            <div style="margin-bottom: 14px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Carrier</label>
+                                    <div style="background-color: #f8f9fa; border: 1px solid #ced4da; border-radius: 4px; padding: 10px 14px;">
+                                        <a id="editDeliveryCarrier" href="#" style="color:#488C9A; text-decoration:none; font-weight:500;" target="_blank">-</a>
+                                    </div>
                                 </div>
                             </div>
                             <!-- Bottom Row: BOL# and Specs -->
@@ -3244,6 +3270,15 @@ include('header.php');
                         const delivery = data.delivery;
                         document.getElementById('deliveryBOL').textContent = delivery.bol_number || 'No BOL';
                         document.getElementById('deliverySupplier').textContent = delivery.supplier || 'Unknown';
+                        const carrierEl = document.getElementById('deliveryCarrier');
+                        carrierEl.textContent = delivery.carrier_name || '-';
+                        if (delivery.carrier_id) {
+                            carrierEl.href = 'carrier_details.php?carrier_id=' + delivery.carrier_id;
+                            carrierEl.style.pointerEvents = 'auto';
+                        } else {
+                            carrierEl.href = '#';
+                            carrierEl.style.pointerEvents = 'none';
+                        }
                         document.getElementById('deliveryWattage').textContent = delivery.wattage || '0';
                         document.getElementById('deliveryQuantity').textContent = delivery.quantity || '0';
                     }
@@ -3265,6 +3300,8 @@ include('header.php');
                             opt.value = del.delivery_ids; // Now contains comma-separated delivery IDs
                             opt.textContent = del.bol_number;
                             opt.dataset.supplier = del.supplier;
+                            opt.dataset.carrier = del.carrier_name || '';
+                            opt.dataset.carrierId = del.carrier_id || '';
                             opt.dataset.wattageDisplay = del.wattage_display;
                             opt.dataset.totalQuantity = del.total_quantity;
                             select.appendChild(opt);
@@ -3279,6 +3316,15 @@ include('header.php');
                 if (this.value) {
                     document.getElementById('deliveryBOL').textContent = selected.textContent;
                     document.getElementById('deliverySupplier').textContent = selected.dataset.supplier || '-';
+                    const carrierLink = document.getElementById('deliveryCarrier');
+                    carrierLink.textContent = selected.dataset.carrier || '-';
+                    if (selected.dataset.carrierId) {
+                        carrierLink.href = 'carrier_details.php?carrier_id=' + selected.dataset.carrierId;
+                        carrierLink.style.pointerEvents = 'auto';
+                    } else {
+                        carrierLink.href = '#';
+                        carrierLink.style.pointerEvents = 'none';
+                    }
                     document.getElementById('deliveryWattage').textContent = selected.dataset.wattageDisplay || '0';
                     document.getElementById('deliveryQuantity').textContent = parseInt(selected.dataset.totalQuantity).toLocaleString() || '0';
                     document.getElementById('deliveryInfoGroup').style.display = 'block';
@@ -3918,7 +3964,16 @@ include('header.php');
                         if (appointment.origin_name || appointment.total_quantity || appointment.wattage_display) {
                             document.getElementById('editDeliveryOrigin').value = appointment.origin_name || 'Unknown';
                             document.getElementById('editDeliveryManufacturer').value = appointment.manufacturer_name || 'Unknown';
-                            
+                            const editCarrierEl = document.getElementById('editDeliveryCarrier');
+                            editCarrierEl.textContent = appointment.carrier_name || '-';
+                            if (appointment.carrier_id) {
+                                editCarrierEl.href = 'carrier_details.php?carrier_id=' + appointment.carrier_id;
+                                editCarrierEl.style.pointerEvents = 'auto';
+                            } else {
+                                editCarrierEl.href = '#';
+                                editCarrierEl.style.pointerEvents = 'none';
+                            }
+
                             // Combined specs display: wattage / quantity modules
                             const specsText = `${appointment.wattage_display || 'Unknown'} / ${parseInt(appointment.total_quantity || 0).toLocaleString()} modules`;
                             document.getElementById('editDeliverySpecs').value = specsText;

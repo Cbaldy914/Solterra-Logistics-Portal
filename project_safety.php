@@ -131,10 +131,14 @@ SELECT
   ss.notes,
   ss.pictures,
   ss.created_at,
-  ss.updated_at
+  ss.updated_at,
+  c.id AS carrier_id,
+  c.name AS carrier_name
 FROM site_safety ss
 JOIN site_scheduling s ON ss.scheduling_id = s.id
 JOIN sites si ON s.site_id = si.id
+LEFT JOIN deliveries d ON d.id = s.delivery_id
+LEFT JOIN carriers c ON c.id = d.carrier_id
 WHERE si.project_id = ? $dateCondition
 ORDER BY ss.created_at DESC
 ";
@@ -367,6 +371,7 @@ $total_drivers = count($driverSet);
         <thead>
           <tr>
             <th>BOL#</th>
+            <th>Carrier</th>
             <th>Reported Driver</th>
             <th>Notes</th>
             <th>Date</th>
@@ -392,6 +397,7 @@ $total_drivers = count($driverSet);
             ?>
             <tr>
               <td><?php echo htmlspecialchars($bol); ?></td>
+              <td><?php if (!empty($row['carrier_id'])): ?><a href="carrier_details.php?carrier_id=<?php echo (int)$row['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($row['carrier_name']); ?></a><?php else: ?><span style="color:#999;">&mdash;</span><?php endif; ?></td>
               <td><?php echo htmlspecialchars($driver); ?></td>
               <td><?php echo htmlspecialchars($notes); ?></td>
               <td><?php echo htmlspecialchars($date); ?></td>
@@ -419,7 +425,7 @@ $total_drivers = count($driverSet);
             <?php endforeach; ?>
           <?php else: ?>
             <tr>
-              <td colspan="5">No safety incidents found.</td>
+              <td colspan="6">No safety incidents found.</td>
             </tr>
           <?php endif; ?>
         </tbody>

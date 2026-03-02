@@ -137,7 +137,8 @@ function suggestShipmentMappings($headers) {
         'ship_date' => ['Ship Date', 'Shipping Date', 'Departure Date', 'Departure', 'Shipped', 'Ship', 'Dispatch Date', 'Date Shipped', 'Ship Dt', 'Shipped Date'],
         'freight_cost' => ['Freight', 'Freight Cost', 'Cost', 'Shipping Cost', 'Price', 'Rate'],
         'estimated_delivery' => ['Est Delivery', 'Est. Delivery', 'ETA', 'Expected Delivery', 'Estimated Arrival', 'Due Date', 'Expected'],
-        'actual_delivery' => ['Actual Delivery', 'Delivered', 'Delivery Date', 'Actual Del', 'Arrival Date']
+        'actual_delivery' => ['Actual Delivery', 'Delivered', 'Delivery Date', 'Actual Del', 'Arrival Date'],
+        'carrier_name' => ['Carrier', 'Carrier Name', 'Trucking Company', 'Freight Company', 'Transport', 'Hauler', 'Trucker']
     ];
 
     $suggestions = [];
@@ -605,6 +606,19 @@ function handleImport($conn, $user_id) {
     $destination_type = $_POST['destination_type'] ?? 'project';
     $destination_id = intval($_POST['destination_id'] ?? 0);
     $account_id = intval($_POST['account_id'] ?? 0) ?: getAccountIdForUser($conn, $user_id);
+    $default_carrier_id = intval($_POST['default_carrier_id'] ?? 0) ?: null;
+
+    // Build carrier name-to-id lookup for fuzzy matching from file
+    $carrier_lookup = [];
+    $stmtCL = $conn->prepare("SELECT id, name, short_name FROM carriers WHERE is_active = 1");
+    if ($stmtCL) {
+        $stmtCL->execute();
+        $resCL = $stmtCL->get_result();
+        while ($cl = $resCL->fetch_assoc()) {
+            $carrier_lookup[] = $cl;
+        }
+        $stmtCL->close();
+    }
 
     if (!$destination_id) {
         echo json_encode(['error' => 'Destination is required']);
@@ -664,7 +678,8 @@ function handleImport($conn, $user_id) {
                 'ship_date' => $row['ship_date'] ?? date('Y-m-d'),
                 'freight_cost' => $row['freight_cost'] ?? 0,
                 'estimated_delivery' => $row['estimated_delivery'] ?? null,
-                'actual_delivery' => $row['actual_delivery'] ?? null
+                'actual_delivery' => $row['actual_delivery'] ?? null,
+                'carrier_name' => $row['carrier_name'] ?? ''
             ];
         }
 
@@ -765,6 +780,38 @@ function handleImport($conn, $user_id) {
                 $deliveryColumns[] = 'created_at';
                 $deliveryParams[] = $shipDate . ' ' . date('H:i:s');
                 $deliveryTypes .= 's';
+
+                // Add carrier_id (from file column or default)
+                $resolved_carrier_id = null;
+                $carrier_name_from_file = trim($group['carrier_name'] ?? '');
+                if ($carrier_name_from_file !== '') {
+                    // Fuzzy match against carriers table
+                    foreach ($carrier_lookup as $cl) {
+                        if (strcasecmp($cl['name'], $carrier_name_from_file) === 0
+                            || ($cl['short_name'] && strcasecmp($cl['short_name'], $carrier_name_from_file) === 0)) {
+                            $resolved_carrier_id = (int)$cl['id'];
+                            break;
+                        }
+                    }
+                    // Substring fallback
+                    if (!$resolved_carrier_id) {
+                        foreach ($carrier_lookup as $cl) {
+                            if (stripos($cl['name'], $carrier_name_from_file) !== false
+                                || ($cl['short_name'] && stripos($cl['short_name'], $carrier_name_from_file) !== false)) {
+                                $resolved_carrier_id = (int)$cl['id'];
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!$resolved_carrier_id && $default_carrier_id) {
+                    $resolved_carrier_id = $default_carrier_id;
+                }
+                if ($resolved_carrier_id) {
+                    $deliveryColumns[] = 'carrier_id';
+                    $deliveryParams[] = $resolved_carrier_id;
+                    $deliveryTypes .= 'i';
+                }
 
                 // Create delivery record
                 $placeholders = str_repeat('?,', count($deliveryParams) - 1) . '?';

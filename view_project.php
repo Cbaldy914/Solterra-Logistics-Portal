@@ -275,13 +275,14 @@ $filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
 
 /* context filters */
 $selectClause = "SELECT d.*, ss.id as appointment_id,
-       (SELECT COUNT(*) FROM project_documents pd 
-        WHERE pd.delivery_id = d.id 
-        AND pd.document_type = 'pods' 
+       carr.name AS carrier_name,
+       (SELECT COUNT(*) FROM project_documents pd
+        WHERE pd.delivery_id = d.id
+        AND pd.document_type = 'pods'
         AND (pd.document_sub_type = 'Project POD' OR pd.document_sub_type = 'Warehouse POD')
        ) AS has_pod_in_documents
 FROM deliveries d";
-$joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id";
+$joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id LEFT JOIN carriers carr ON carr.id = d.carrier_id";
 if ($project_id) {
     $baseWhere[] = "d.project_id = ?";
     $paramTypes .= "i";
@@ -2382,6 +2383,7 @@ sort($unique_suppliers);
                             <th class="actual-column">Actual Date</th>
                             <th class="pallets-column">Pallets</th>
                             <th class="scheduled-column">Scheduled</th>
+                            <th class="carrier-column">Carrier</th>
                             <th class="pod-column">Proof of Delivery</th>
                             <?php if ($can_manage_deliveries): ?>
                             <th class="actions-column">Actions</th>
@@ -2520,6 +2522,13 @@ sort($unique_suppliers);
                                         <?php endif; ?>
                                     <?php endif; ?>
                                 </td>
+                                <td class="carrier-column">
+                                    <?php if (!empty($delivery['carrier_id']) && !empty($delivery['carrier_name'])): ?>
+                                        <a href="carrier_details?carrier_id=<?php echo (int)$delivery['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($delivery['carrier_name']); ?></a>
+                                    <?php else: ?>
+                                        —
+                                    <?php endif; ?>
+                                </td>
                                 <td class="pod-column">
                                     <?php if ($delivery['is_grouped']): ?>
                                         <?php if ($hasPodInGroup): ?>
@@ -2586,6 +2595,13 @@ sort($unique_suppliers);
                                         <a href="scheduling.php?project_id=<?php echo (int)$detailRow['project_id']; ?>&delivery_id=<?php echo (int)$detailRow['id']; ?>" class="action-btn action-btn-warning">Schedule</a>
                                         <?php else: ?>
                                         —
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="carrier-column">
+                                        <?php if (!empty($detailRow['carrier_id']) && !empty($detailRow['carrier_name'])): ?>
+                                            <a href="carrier_details?carrier_id=<?php echo (int)$detailRow['carrier_id']; ?>" style="color:#488C9A; text-decoration:none; font-weight:500;"><?php echo htmlspecialchars($detailRow['carrier_name']); ?></a>
+                                        <?php else: ?>
+                                            —
                                         <?php endif; ?>
                                     </td>
                                     <td class="pod-column">

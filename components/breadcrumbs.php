@@ -37,11 +37,15 @@ if (!function_exists('slp_render_breadcrumbs')) {
             'manage_projects.php'   => ['label' => 'Manage Projects',   'url' => 'manage_projects.php'],
             'modules.php'           => ['label' => 'Modules',           'url' => 'modules.php'],
             'manage_deliveries.php' => ['label' => 'Manage Deliveries', 'url' => 'manage_deliveries.php'],
+            'manage_carriers.php'   => ['label' => 'Manage Carriers',   'url' => 'manage_carriers.php'],
+            'carrier_overview.php'  => ['label' => 'Carrier Overview',  'url' => 'carrier_overview.php'],
             // Without extension (some menus link this way)
             'manage_warehouses'     => ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'],
             'manage_projects'       => ['label' => 'Manage Projects',   'url' => 'manage_projects.php'],
             'modules'               => ['label' => 'Modules',           'url' => 'modules.php'],
             'manage_deliveries'     => ['label' => 'Manage Deliveries', 'url' => 'manage_deliveries.php'],
+            'manage_carriers'       => ['label' => 'Manage Carriers',   'url' => 'manage_carriers.php'],
+            'carrier_overview'      => ['label' => 'Carrier Overview',  'url' => 'carrier_overview.php'],
         ];
         $ref_map = $opts['ref_map'] ?? $default_ref_map;
 
@@ -56,6 +60,11 @@ if (!function_exists('slp_render_breadcrumbs')) {
                 'add_module_batch.php'        => 'Add Module Batch',
                 'edit_module_batch.php'       => 'Edit Module Batch',
                 'manage_projects.php'         => 'Manage Projects',
+                'carrier_overview.php'        => 'Carrier Overview',
+                'carrier_details.php'         => 'Carrier Details',
+                'add_carrier.php'             => 'Add Carrier',
+                'edit_carrier.php'            => 'Edit Carrier',
+                'manage_carriers.php'         => 'Manage Carriers',
             ];
             $current = $labels[$script] ?? ucwords(str_replace(['_', '.php'], [' ', ''], $script));
         }

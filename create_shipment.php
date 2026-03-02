@@ -849,7 +849,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             $freightCost = $customerCost;
         }
         $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? (float)$_POST['miles'] : null;
-        
+        $carrier_id = isset($_POST['carrier_id']) && $_POST['carrier_id'] !== '' ? intval($_POST['carrier_id']) : null;
+        $carrier_reference_number = isset($_POST['carrier_reference_number']) ? trim($_POST['carrier_reference_number']) : '';
+
         if ($destinationId <= 0) {
             throw new Exception('No destination selected.');
         }
@@ -1076,6 +1078,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                 $deliveryColumns[] = 'miles';
                 $deliveryParams[] = $proportionalMiles;
                 $deliveryTypes .= 'd';
+
+                if ($carrier_id !== null && $carrier_id > 0) {
+                    $deliveryColumns[] = 'carrier_id';
+                    $deliveryParams[] = $carrier_id;
+                    $deliveryTypes .= 'i';
+                }
+                if ($carrier_reference_number !== '') {
+                    $deliveryColumns[] = 'carrier_reference_number';
+                    $deliveryParams[] = $carrier_reference_number;
+                    $deliveryTypes .= 's';
+                }
 
                 if ($destinationType === 'project') {
                     $deliveryColumns[] = 'project_id';
@@ -1790,6 +1803,22 @@ try {
             $all_manufacturers[] = $mfg;
         }
         $stmtM->close();
+    }
+
+    // Fetch active carriers for carrier dropdown
+    $all_carriers = [];
+    $carrier_account_clause = $is_global_admin ? '' : ' AND (account_id IS NULL OR account_id = ?)';
+    $stmtC = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_account_clause} ORDER BY is_solterra_managed DESC, name ASC");
+    if ($stmtC) {
+        if (!$is_global_admin && $account_id_for_admin) {
+            $stmtC->bind_param("i", $account_id_for_admin);
+        }
+        $stmtC->execute();
+        $resultC = $stmtC->get_result();
+        while ($c = $resultC->fetch_assoc()) {
+            $all_carriers[] = $c;
+        }
+        $stmtC->close();
     }
 
 } catch (Exception $e) {
@@ -3121,9 +3150,22 @@ if (!empty($bolCompletionMessage)) {
                             <input type="hidden" id="customer_cost" name="customer_cost" value="">
                         <?php endif; ?>
                     </div>
-                    
+                    <div class="form-row">
+                        <div>
+                            <label for="carrier_id">Carrier:</label>
+                            <select id="carrier_id" name="carrier_id" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                <option value="">Select carrier (optional)...</option>
+                                <?php foreach ($all_carriers as $c): ?>
+                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> - <?php echo strtoupper($c['carrier_type']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="carrier_reference_number">Carrier Ref #:</label>
+                            <input type="text" id="carrier_reference_number" name="carrier_reference_number" placeholder="Carrier reference/PRO number">
+                        </div>
+                    </div>
 
-                    
                     <!-- Origin and Destination Section -->
                     <div class="origin-destination-section">
                         <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
@@ -3246,7 +3288,22 @@ if (!empty($bolCompletionMessage)) {
                             <input type="hidden" id="customer_cost_multi" name="customer_cost_multi" value="">
                         <?php endif; ?>
                     </div>
-                    
+                    <div class="form-row">
+                        <div>
+                            <label for="carrier_id_multi">Carrier:</label>
+                            <select id="carrier_id_multi" name="carrier_id_multi" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                <option value="">Select carrier (optional)...</option>
+                                <?php foreach ($all_carriers as $c): ?>
+                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> - <?php echo strtoupper($c['carrier_type']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="carrier_reference_number_multi">Carrier Ref #:</label>
+                            <input type="text" id="carrier_reference_number_multi" name="carrier_reference_number_multi" placeholder="Carrier reference/PRO number">
+                        </div>
+                    </div>
+
                     <!-- Overseas Shipment Fields -->
                     <div id="overseasContainerFieldsMulti" style="display: none; margin-top: 15px;">
                         <div class="form-row">
@@ -5563,6 +5620,8 @@ if (confirmShipmentBtn) {
         const customerCostValue = customerCostInput ? customerCostInput.value : '';
         const customerCost = customerCostValue !== '' ? customerCostValue : freightCost;
         const miles = document.getElementById('miles').value;
+        const carrierId = document.getElementById('carrier_id').value;
+        const carrierRefNum = document.getElementById('carrier_reference_number').value;
 
         // Check if overseas fields are visible
         const overseasContainerField = document.getElementById('overseasContainerField');
@@ -5645,8 +5704,10 @@ if (confirmShipmentBtn) {
             setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
             setOrCreateHidden(mainForm, 'customer_cost', customerCost);
             setOrCreateHidden(mainForm, 'miles', miles);
+            setOrCreateHidden(mainForm, 'carrier_id', carrierId);
+            setOrCreateHidden(mainForm, 'carrier_reference_number', carrierRefNum);
             setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
-            
+
             // Add overseas shipment fields if this is an overseas shipment
             if (isOverseas) {
                 setOrCreateHidden(mainForm, 'container_number', containerNumber);
@@ -5718,6 +5779,8 @@ if (confirmMultiShipmentBtn) {
         const customerCostValue = customerCostMultiInput ? customerCostMultiInput.value : '';
         const customerCost = customerCostValue !== '' ? customerCostValue : freightCost;
         const miles = document.getElementById('miles_multi').value;
+        const carrierId = document.getElementById('carrier_id_multi').value;
+        const carrierRefNum = document.getElementById('carrier_reference_number_multi').value;
 
         if (!originId) {
             alert('Please select pallets to determine origin location.');
@@ -5824,7 +5887,9 @@ if (confirmMultiShipmentBtn) {
             setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
             setOrCreateHidden(mainForm, 'customer_cost', customerCost);
             setOrCreateHidden(mainForm, 'miles', miles);
-            
+            setOrCreateHidden(mainForm, 'carrier_id', carrierId);
+            setOrCreateHidden(mainForm, 'carrier_reference_number', carrierRefNum);
+
             // Add all BOL numbers as a JSON array
             setOrCreateHidden(mainForm, 'bol_numbers', JSON.stringify(bolNumbers));
             

@@ -41,6 +41,22 @@ if ($role === 'admin') {
     }
 }
 
+// Fetch active carriers for dropdown
+$all_carriers = [];
+$carrier_acct_clause = ($role === 'global_admin') ? '' : ' AND (account_id IS NULL OR account_id = ?)';
+$stmtCarriers = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_acct_clause} ORDER BY is_solterra_managed DESC, name ASC");
+if ($stmtCarriers) {
+    if ($role !== 'global_admin' && $account_id_for_admin) {
+        $stmtCarriers->bind_param("i", $account_id_for_admin);
+    }
+    $stmtCarriers->execute();
+    $resCarriers = $stmtCarriers->get_result();
+    while ($cr = $resCarriers->fetch_assoc()) {
+        $all_carriers[] = $cr;
+    }
+    $stmtCarriers->close();
+}
+
 // Check if we have delivery_ids parameter
 if (!isset($_GET['delivery_ids']) || empty($_GET['delivery_ids'])) {
     die("No delivery IDs provided. Please access this page from the shipment creation process.");
@@ -255,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_pdf'])) {
         'ship_to_city_state_zip' => $_POST['ship_to_city_state_zip'] ?? '',
         'ship_to_cid' => $_POST['ship_to_cid'] ?? '',
         'ship_to_fob' => $_POST['ship_to_fob'] ?? '',
-        'carrier_name' => $_POST['carrier_name'] ?? '',
+        'carrier_name' => '',
         'trailer_number' => $_POST['trailer_number'] ?? '',
         'seal_numbers' => $_POST['seal_numbers'] ?? '',
         'references' => $_POST['references'] ?? '',
@@ -267,7 +283,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_pdf'])) {
         'additional_info' => $_POST['additional_info'] ?? '',
         'load_instructions' => $_POST['load_instructions'] ?? ''
     ];
-    
+
+    // Resolve carrier name from carrier_id dropdown or fallback to free-text
+    $posted_carrier_id = isset($_POST['carrier_id']) && $_POST['carrier_id'] !== '' ? intval($_POST['carrier_id']) : 0;
+    $carrier_name_fallback = trim($_POST['carrier_name_text'] ?? '');
+    if ($posted_carrier_id > 0) {
+        foreach ($all_carriers as $cr) {
+            if ((int)$cr['id'] === $posted_carrier_id) {
+                $form_data['carrier_name'] = $cr['name'];
+                break;
+            }
+        }
+    }
+    if (empty($form_data['carrier_name']) && $carrier_name_fallback !== '') {
+        $form_data['carrier_name'] = $carrier_name_fallback;
+    }
+
     // Generate BOL HTML
     $html = generateBolHtml($form_data, $current_deliveries);
     
@@ -1194,7 +1225,13 @@ $conn->close();
                 <div class="carrier-grid">
                     <div class="form-group">
                         <label>Carrier name:</label>
-                        <input type="text" name="carrier_name" value="" placeholder="ABC123 Trucking">
+                        <select name="carrier_id" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                            <option value="">Select carrier...</option>
+                            <?php foreach ($all_carriers as $cr): ?>
+                                <option value="<?php echo $cr['id']; ?>"><?php echo htmlspecialchars($cr['name']); ?><?php echo $cr['is_solterra_managed'] ? ' (Solterra)' : ''; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <input type="text" name="carrier_name_text" value="" placeholder="Or type carrier name" style="margin-top:5px;">
                     </div>
                     <div class="form-group">
                         <label>Trailer number:</label>

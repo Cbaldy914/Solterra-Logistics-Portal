@@ -115,6 +115,22 @@ if ($stmtWh) {
     $stmtWh->close();
 }
 
+// Fetch carriers for default carrier selection
+$all_carriers = [];
+$carrier_sql = "SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1 AND (account_id IS NULL" . ($account_id ? " OR account_id = ?" : "") . ") ORDER BY is_solterra_managed DESC, name ASC";
+$stmtCr = $conn->prepare($carrier_sql);
+if ($stmtCr) {
+    if ($account_id) {
+        $stmtCr->bind_param("i", $account_id);
+    }
+    $stmtCr->execute();
+    $resCr = $stmtCr->get_result();
+    while ($row = $resCr->fetch_assoc()) {
+        $all_carriers[] = $row;
+    }
+    $stmtCr->close();
+}
+
 // Check if Excel is supported
 $excelSupported = ScheduleParser::isExcelSupported();
 
@@ -765,6 +781,22 @@ $conn->close();
                         </select>
                     </div>
 
+                    <!-- Default Carrier -->
+                    <div class="form-group">
+                        <label for="default_carrier_id">Default Carrier <small style="color:#6c757d;">(optional)</small></label>
+                        <select name="default_carrier_id" id="default_carrier_id">
+                            <option value="">No default carrier</option>
+                            <?php foreach ($all_carriers as $c): ?>
+                                <option value="<?php echo $c['id']; ?>">
+                                    <?php echo htmlspecialchars($c['name']); ?>
+                                    <?php if ($c['is_solterra_managed']): ?> (Solterra)<?php endif; ?>
+                                    - <?php echo strtoupper($c['carrier_type']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <small style="color:#6c757d;">Applied to all shipments unless a carrier column is mapped from the file.</small>
+                    </div>
+
                     <!-- File Upload -->
                     <div class="form-group">
                         <label class="required">Shipping Manifest File</label>
@@ -1146,6 +1178,7 @@ $conn->close();
         formData.append('account_id', accountId());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
+        formData.append('default_carrier_id', document.getElementById('default_carrier_id')?.value || '');
 
         try {
             const response = await fetch('process_shipment_upload.php', {
@@ -1325,6 +1358,7 @@ $conn->close();
         formData.append('account_id', accountId());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
+        formData.append('default_carrier_id', document.getElementById('default_carrier_id')?.value || '');
 
         try {
             const response = await fetch('process_shipment_upload.php', {

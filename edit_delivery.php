@@ -272,6 +272,33 @@ if ($stmt_assoc) {
     $error_message .= " Error fetching associated pallets: " . $conn->error;
 }
 
+/* ───────────────────────── FETCH CARRIERS ─────────────────────────────── */
+$all_carriers = [];
+$account_id = null;
+if ($role !== 'global_admin') {
+    $stmtAcc = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
+    if ($stmtAcc) {
+        $stmtAcc->bind_param("i", $_SESSION['user_id']);
+        $stmtAcc->execute();
+        $stmtAcc->bind_result($account_id);
+        $stmtAcc->fetch();
+        $stmtAcc->close();
+    }
+}
+$carrier_acct_clause = ($role === 'global_admin') ? '' : ' AND (account_id IS NULL OR account_id = ?)';
+$stmtCarriers = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_acct_clause} ORDER BY is_solterra_managed DESC, name ASC");
+if ($stmtCarriers) {
+    if ($role !== 'global_admin') {
+        $stmtCarriers->bind_param("i", $account_id);
+    }
+    $stmtCarriers->execute();
+    $resCarriers = $stmtCarriers->get_result();
+    while ($cr = $resCarriers->fetch_assoc()) {
+        $all_carriers[] = $cr;
+    }
+    $stmtCarriers->close();
+}
+
 /* ────────────────────────── UPDATE HANDLER ───────────────────────────── */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 
@@ -304,6 +331,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $access_charged     = isset($_POST['accessorial_costs']) ? (float)$_POST['accessorial_costs'] : $delivery['accessorial_costs'];
         $customer_cost      = isset($_POST['customer_cost']) ? (float)$_POST['customer_cost'] : $delivery['customer_cost'];
         $miles              = isset($_POST['miles']) ? (float)$_POST['miles'] : $delivery['miles'];
+        $carrier_id_val     = isset($_POST['carrier_id']) && $_POST['carrier_id'] !== '' ? intval($_POST['carrier_id']) : null;
+        $carrier_ref_num    = trim($_POST['carrier_reference_number'] ?? ($delivery['carrier_reference_number'] ?? ''));
 
         if ($is_customer_admin) {
             // Customer admins can edit freight and paid accessorials only.
@@ -370,7 +399,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
                 accessorial_costs      = ?,
                 customer_cost          = ?,
                 proof_of_delivery      = ?,
-                miles                  = ?
+                miles                  = ?,
+                carrier_id             = ?,
+                carrier_reference_number = ?
             WHERE id = ?
         ";
         $stmt_update = $conn->prepare($sql);
@@ -379,10 +410,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
 
         $stmt_update->bind_param(
-            "isssssddddsdi",
+            "isssssddddsdisi",
             $quantity, $bol_number,
             $anticipated_date, $warehouse_arrival, $actual_date, $left_wh_date,
             $freight_cost, $access_paid, $access_charged, $customer_cost, $pod, $miles,
+            $carrier_id_val, $carrier_ref_num,
             $delivery_id
         );
         if (!$stmt_update->execute()) {
@@ -1244,6 +1276,21 @@ $tracker_url = 'view_project.php' . (!empty($tracker_params) ? ('?' . http_build
           <div class="span-2">
             <label>BOL Number:
               <input type="text" name="bol_number" value="<?php echo htmlspecialchars((string)$delivery['bol_number']);?>">
+            </label>
+          </div>
+          <div>
+            <label>Carrier:
+              <select name="carrier_id" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                <option value="">-- No Carrier --</option>
+                <?php foreach ($all_carriers as $cr): ?>
+                  <option value="<?php echo $cr['id']; ?>" <?php echo ((int)($delivery['carrier_id'] ?? 0) === (int)$cr['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($cr['name']); ?><?php echo $cr['is_solterra_managed'] ? ' (Solterra)' : ''; ?></option>
+                <?php endforeach; ?>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>Carrier Ref #:
+              <input type="text" name="carrier_reference_number" value="<?php echo htmlspecialchars((string)($delivery['carrier_reference_number'] ?? '')); ?>" placeholder="PRO/Reference number">
             </label>
           </div>
         </div>

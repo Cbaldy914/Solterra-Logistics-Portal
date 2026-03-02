@@ -267,6 +267,15 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
           </li>
 
           <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Carriers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="carrier_overview" role="menuitem">Carrier Overview</a>
+              <a href="add_carrier" role="menuitem">Add Carrier</a>
+              <a href="manage_carriers" role="menuitem">Manage Carriers</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Freight</a>
             <div class="slp-submenu" role="menu">
               <a href="admin_freight_estimates" role="menuitem">Freight Estimator</a>
@@ -353,6 +362,15 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
           </li>
 
           <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Carriers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="carrier_overview" role="menuitem">Carrier Overview</a>
+              <a href="add_carrier" role="menuitem">Add Carrier</a>
+              <a href="manage_carriers" role="menuitem">Manage Carriers</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Shipments</a>
             <div class="slp-submenu" role="menu">
               <a href="create_shipment" role="menuitem">Create Shipment</a>
@@ -429,6 +447,15 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="manufacturer_overview" role="menuitem">Manufacturer Overview</a>
               <a href="manufacturers" role="menuitem">Request Manufacturers</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Carriers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="carrier_overview" role="menuitem">Carrier Overview</a>
+              <a href="add_carrier" role="menuitem">Add Carrier</a>
+              <a href="manage_carriers" role="menuitem">Manage Carriers</a>
             </div>
           </li>
 
@@ -541,6 +568,9 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
           </li>
           <li class="slp-item" role="none">
             <a href="manufacturer_overview" class="slp-link" role="menuitem">Manufacturers</a>
+          </li>
+          <li class="slp-item" role="none">
+            <a href="carrier_overview" class="slp-link" role="menuitem">Carriers</a>
           </li>
           <li class="slp-item slp-has-dropdown" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>

@@ -92,6 +92,22 @@ if ($stmtW) {
     error_log("Error preparing warehouse fetch: " . $conn->error); // Log error
 }
 
+// Fetch active carriers
+$all_carriers = [];
+$carrier_acct_clause = ($role === 'global_admin') ? '' : ' AND (account_id IS NULL OR account_id = ?)';
+$stmtCarriers = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_acct_clause} ORDER BY is_solterra_managed DESC, name ASC");
+if ($stmtCarriers) {
+    if ($role !== 'global_admin') {
+        $stmtCarriers->bind_param("i", $account_id);
+    }
+    $stmtCarriers->execute();
+    $resCarriers = $stmtCarriers->get_result();
+    while ($cr = $resCarriers->fetch_assoc()) {
+        $all_carriers[] = $cr;
+    }
+    $stmtCarriers->close();
+}
+
 /* ───────────────────────────────  FORM SUBMISSION (MULTI-WATTAGE ADD)  ──────────────────────── */
 $formMessage = '';
 $messageIsError = false;
@@ -102,6 +118,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
     $supplier           = $conn->real_escape_string($_POST['manufacturer']          ?? ''); // Map manufacturer to supplier for backward compatibility
     $bol_number         = $conn->real_escape_string($_POST['bol_number']        ?? '');
     $status_of_delivery = $conn->real_escape_string($_POST['status_of_delivery'] ?? 'Pending'); // Get from form, default to Pending
+    $carrier_id_val     = isset($_POST['carrier_id']) && $_POST['carrier_id'] !== '' ? intval($_POST['carrier_id']) : null;
+    $carrier_ref_num    = trim($_POST['carrier_reference_number'] ?? '');
     
     // Handle assign_type and target_id based on context
     if ($project_id) {
@@ -255,19 +273,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
     $sql = "INSERT INTO deliveries
             (project_id, supplier, origin_type, origin_id, wattage, status_of_delivery, quantity, bol_number,
                      anticipated_delivery_date, actual_delivery_date,
-                     freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
-                    VALUES (?, ?, 'manufacturer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 16 placeholders
+                     freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles,
+                     carrier_id, carrier_reference_number)
+                    VALUES (?, ?, 'manufacturer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             $stmt = $conn->prepare($sql);
             if (!$stmt) throw new Exception("Prepare project delivery failed: " . $conn->error);
-            $bind_types = "isisissssddddsd"; // 15 parameters: i,s,i,i,s,i,s,s,s,d,d,d,d,s,d
+            $bind_types = "isisissssddddsdis";
         } else { // Warehouse
             $sql = "INSERT INTO deliveries
                     (warehouse_id, supplier, origin_type, origin_id, wattage, status_of_delivery, quantity, bol_number,
-                     freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
-                    VALUES (?, ?, 'manufacturer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
+                     freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles,
+                     carrier_id, carrier_reference_number)
+                    VALUES (?, ?, 'manufacturer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             $stmt = $conn->prepare($sql);
              if (!$stmt) throw new Exception("Prepare warehouse delivery failed: " . $conn->error);
-             $bind_types = "isisissddddsd"; // 13 parameters: i,s,i,i,s,i,s,d,d,d,d,s,d
+             $bind_types = "isisissddddsdis";
         }
 
         // Loop through each wattage entry and insert
@@ -290,13 +310,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                     $targetId, $supplier, $manufacturer_location_id, $w, $status_of_delivery, $q, $bol_number,
                     $anticipated_delivery_date, $actual_delivery_date,
                     $proportional_freight, $proportional_acc_paid, $proportional_acc_charged,
-                    $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles
+                    $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles,
+                    $carrier_id_val, $carrier_ref_num
                 );
             } else { // Warehouse
                  $stmt->bind_param($bind_types,
                     $targetId, $supplier, $manufacturer_location_id, $w, $status_of_delivery, $q, $bol_number,
                     $proportional_freight, $proportional_acc_paid, $proportional_acc_charged,
-                    $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles
+                    $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles,
+                    $carrier_id_val, $carrier_ref_num
                 );
             }
 
@@ -462,6 +484,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         
         <label>Manufacturer:<input type="text" name="manufacturer" required value="<?php echo htmlspecialchars($_POST['manufacturer'] ?? ''); ?>"></label>
         <label>BOL Number:<input type="text" name="bol_number" value="<?php echo htmlspecialchars($_POST['bol_number'] ?? ''); ?>"></label>
+        <label>Carrier:
+          <select name="carrier_id" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+            <option value="">-- No Carrier --</option>
+            <?php foreach ($all_carriers as $cr): ?>
+              <option value="<?php echo $cr['id']; ?>" <?php echo (isset($_POST['carrier_id']) && (int)$_POST['carrier_id'] === (int)$cr['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($cr['name']); ?><?php echo $cr['is_solterra_managed'] ? ' (Solterra)' : ''; ?></option>
+            <?php endforeach; ?>
+          </select>
+        </label>
+        <label>Carrier Ref #:<input type="text" name="carrier_reference_number" value="<?php echo htmlspecialchars($_POST['carrier_reference_number'] ?? ''); ?>" placeholder="PRO/Reference number"></label>
  <label>Status of Delivery:
    <select name="status_of_delivery" required>
                 <option value="Pending" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Pending') ? 'selected' : ''; ?>>Pending</option>

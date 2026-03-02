@@ -2,7 +2,6 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role global_admin, admin, or customer_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header("Location: unauthorized.php");
     exit();
@@ -11,7 +10,6 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 require_once '../config.php';
 $conn = getDBConnection();
 
-// Unified dashboard link
 $dashboard_link = 'dashboard.php';
 
 $role = $_SESSION['role'] ?? '';
@@ -32,94 +30,113 @@ if ($role !== 'global_admin') {
     }
 }
 
-$manufacturers = [];
-$manufacturer_requests = [];
-$location_requests = [];
+$carriers = [];
+$carrier_requests = [];
 $errorMessage = '';
 $successMessage = '';
 
 // Handle delete action
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
     try {
-        if (!in_array($role, ['admin', 'global_admin'], true)) {
-            throw new Exception('You do not have permission to delete manufacturers.');
+        if (!in_array($role, ['admin', 'global_admin', 'customer_admin'], true)) {
+            throw new Exception('You do not have permission to delete carriers.');
         }
-        $manufacturer_id = intval($_GET['id']);
-        $stmt = $conn->prepare("DELETE FROM manufacturers WHERE id = ?");
+        $delete_id = intval($_GET['id']);
+
+        // customer_admin can only delete carriers that belong to their account
+        if ($role === 'customer_admin') {
+            $stmtCheck = $conn->prepare("SELECT account_id FROM carriers WHERE id = ?");
+            $stmtCheck->bind_param("i", $delete_id);
+            $stmtCheck->execute();
+            $stmtCheck->bind_result($carrier_acct);
+            $stmtCheck->fetch();
+            $stmtCheck->close();
+            if ((int)$carrier_acct !== (int)$account_id) {
+                throw new Exception('You can only delete carriers that belong to your account.');
+            }
+        }
+
+        $stmt = $conn->prepare("DELETE FROM carriers WHERE id = ?");
         if (!$stmt) {
             throw new Exception("Error preparing delete statement: " . $conn->error);
         }
-        $stmt->bind_param("i", $manufacturer_id);
+        $stmt->bind_param("i", $delete_id);
         if ($stmt->execute()) {
-            $successMessage = "Manufacturer deleted successfully.";
+            $successMessage = "Carrier deleted successfully.";
         } else {
-            throw new Exception("Error deleting manufacturer: " . $stmt->error);
+            throw new Exception("Error deleting carrier: " . $stmt->error);
         }
         $stmt->close();
-        
+
     } catch (Exception $e) {
         $errorMessage = $e->getMessage();
     }
 }
 
 try {
-    // Fetch all manufacturers
-    $sql = "SELECT 
-                id, 
-                name, 
-                short_name,
-                contact_person,
-                phone,
-                email,
-                website,
-                address,
-                is_active,
-                created_at
-            FROM manufacturers 
-            ORDER BY is_active DESC, name ASC";
-            
-    $stmt = $conn->prepare($sql);
+    // Fetch carriers - global_admin sees all, others see global + their account carriers
+    if ($role === 'global_admin') {
+        $sql = "SELECT id, account_id, name, short_name, mc_number, dot_number, carrier_type,
+                       is_solterra_managed, contact_person, phone, email, website,
+                       address, is_active, created_at
+                FROM carriers
+                ORDER BY is_active DESC, is_solterra_managed DESC, name ASC";
+        $stmt = $conn->prepare($sql);
+    } else {
+        $sql = "SELECT id, account_id, name, short_name, mc_number, dot_number, carrier_type,
+                       is_solterra_managed, contact_person, phone, email, website,
+                       address, is_active, created_at
+                FROM carriers
+                WHERE account_id IS NULL OR account_id = ?
+                ORDER BY is_active DESC, is_solterra_managed DESC, name ASC";
+        $stmt = $conn->prepare($sql);
+        if ($stmt) {
+            $stmt->bind_param("i", $account_id);
+        }
+    }
+
     if (!$stmt) {
-        throw new Exception("Error preparing manufacturers query: " . $conn->error);
+        throw new Exception("Error preparing carriers query: " . $conn->error);
     }
     $stmt->execute();
     $result = $stmt->get_result();
 
     if ($result) {
         while ($row = $result->fetch_assoc()) {
-            $manufacturers[] = $row;
+            $carriers[] = $row;
         }
         $stmt->close();
     } else {
-        throw new Exception("Error fetching manufacturers: " . $conn->error);
+        throw new Exception("Error fetching carriers: " . $conn->error);
     }
 
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
 }
 
+// Fetch carrier requests
 try {
-    $request_where = "WHERE mr.status = 'pending'";
+    $request_where = "WHERE cr.status = 'pending'";
     $request_params = [];
     $request_types = '';
     if ($role === 'admin') {
-        $request_where .= " AND mr.account_id = ?";
+        $request_where .= " AND cr.account_id = ?";
         $request_params[] = $account_id;
         $request_types = 'i';
     } elseif ($role === 'customer_admin') {
-        $request_where = "WHERE mr.account_id = ?";
+        $request_where .= " AND cr.account_id = ?";
         $request_params[] = $account_id;
         $request_types = 'i';
     }
 
-    $request_sql = "SELECT mr.id, mr.name, mr.status, mr.created_at, mr.rejection_reason,
+    $request_sql = "SELECT cr.id, cr.name, cr.carrier_type, cr.status, cr.created_at, cr.rejection_reason,
                            ca.name AS account_name,
                            u.username, u.first_name, u.last_name
-                    FROM manufacturer_requests mr
-                    JOIN customer_accounts ca ON ca.id = mr.account_id
-                    JOIN users u ON u.id = mr.requested_by
+                    FROM carrier_requests cr
+                    JOIN customer_accounts ca ON ca.id = cr.account_id
+                    JOIN users u ON u.id = cr.requested_by
                     $request_where
-                    ORDER BY mr.created_at DESC";
+                    ORDER BY cr.created_at DESC";
     $stmtReq = $conn->prepare($request_sql);
     if ($stmtReq) {
         if (!empty($request_params)) {
@@ -128,46 +145,9 @@ try {
         $stmtReq->execute();
         $resultReq = $stmtReq->get_result();
         while ($row = $resultReq->fetch_assoc()) {
-            $manufacturer_requests[] = $row;
+            $carrier_requests[] = $row;
         }
         $stmtReq->close();
-    }
-
-    $location_where = "WHERE mlr.status = 'pending'";
-    $location_params = [];
-    $location_types = '';
-    if ($role === 'admin') {
-        $location_where .= " AND mlr.account_id = ?";
-        $location_params[] = $account_id;
-        $location_types = 'i';
-    } elseif ($role === 'customer_admin') {
-        $location_where = "WHERE mlr.account_id = ?";
-        $location_params[] = $account_id;
-        $location_types = 'i';
-    }
-
-    $location_sql = "SELECT mlr.id, mlr.location_name, mlr.status, mlr.created_at, mlr.rejection_reason,
-                            mlr.street_address, mlr.city, mlr.state, mlr.zip_code, mlr.country,
-                            m.name AS manufacturer_name,
-                            ca.name AS account_name,
-                            u.username, u.first_name, u.last_name
-                     FROM manufacturer_location_requests mlr
-                     JOIN manufacturers m ON m.id = mlr.manufacturer_id
-                     JOIN customer_accounts ca ON ca.id = mlr.account_id
-                     JOIN users u ON u.id = mlr.requested_by
-                     $location_where
-                     ORDER BY mlr.created_at DESC";
-    $stmtLoc = $conn->prepare($location_sql);
-    if ($stmtLoc) {
-        if (!empty($location_params)) {
-            $stmtLoc->bind_param($location_types, ...$location_params);
-        }
-        $stmtLoc->execute();
-        $resultLoc = $stmtLoc->get_result();
-        while ($row = $resultLoc->fetch_assoc()) {
-            $location_requests[] = $row;
-        }
-        $stmtLoc->close();
     }
 } catch (Exception $e) {
     if ($errorMessage === '') {
@@ -176,13 +156,22 @@ try {
 }
 
 $conn->close();
+
+$carrier_type_labels = [
+    'ftl' => 'FTL',
+    'ltl' => 'LTL',
+    'drayage' => 'Drayage',
+    'intermodal' => 'Intermodal',
+    'ocean' => 'Ocean',
+    'other' => 'Other',
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Manufacturers</title>
+    <title>Manage Carriers</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
@@ -305,6 +294,26 @@ $conn->close();
             background: linear-gradient(135deg, #fff3cd, #ffeeba);
             color: #856404;
         }
+        .solterra-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #488C9A, #293E4C);
+            color: white;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.72em;
+            font-weight: 600;
+            vertical-align: middle;
+            margin-left: 5px;
+        }
+        .type-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #e8f4f6, #d0e8ec);
+            color: #293E4C;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
 
         /* Action Buttons */
         .action-buttons.edit {
@@ -343,7 +352,7 @@ $conn->close();
             right: 0;
             top: calc(100% + 4px);
             background: white;
-            min-width: 160px;
+            min-width: 140px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.12);
             border-radius: 12px;
             z-index: 1000;
@@ -386,12 +395,6 @@ $conn->close();
             border: 1px solid #b1dfbb;
         }
         .contact-info { font-size: 0.9em; color: #666; }
-        .website-link {
-            color: #488C9A;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        .website-link:hover { text-decoration: underline; }
 
         @media (max-width: 768px) {
             .page-header-card { padding: 24px; }
@@ -400,29 +403,23 @@ $conn->close();
         }
     </style>
     <script>
-        function confirmDelete(manufacturerName, manufacturerId) {
-            if (confirm(`Are you sure you want to delete the manufacturer "${manufacturerName}"? This action cannot be undone.`)) {
-                window.location.href = `manufacturers.php?action=delete&id=${manufacturerId}`;
+        function confirmDelete(carrierName, carrierId) {
+            if (confirm(`Are you sure you want to delete the carrier "${carrierName}"? This action cannot be undone.`)) {
+                window.location.href = `manage_carriers.php?action=delete&id=${carrierId}`;
             }
         }
-        
-        // Dropdown functionality
+
         function toggleDropdown(event, dropdownId) {
             event.stopPropagation();
-            
-            // Close all other dropdowns
             document.querySelectorAll('.dropdown-menu').forEach(menu => {
                 if (menu.id !== dropdownId) {
                     menu.classList.remove('show');
                 }
             });
-            
-            // Toggle the clicked dropdown
             const dropdown = document.getElementById(dropdownId);
             dropdown.classList.toggle('show');
         }
-        
-        // Close dropdowns when clicking outside
+
         document.addEventListener('click', function() {
             document.querySelectorAll('.dropdown-menu').forEach(menu => {
                 menu.classList.remove('show');
@@ -433,16 +430,15 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Manufacturers']); ?>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Carriers']); ?>
 
     <div class="page-header-card">
         <div class="page-header-content">
             <div>
-                <h1>Manage Manufacturers</h1>
-                <p class="subtitle">View, add, and manage your manufacturing partners.</p>
+                <h1>Manage Carriers</h1>
+                <p class="subtitle">View, add, and manage your carrier partners.</p>
             </div>
-            <?php $primary_action_label = ($role === 'customer_admin') ? 'Request Manufacturer' : 'Add New Manufacturer'; ?>
-            <a href="add_manufacturer.php" class="btn-add-new"><i class="fas fa-plus-circle"></i> <?php echo htmlspecialchars($primary_action_label); ?></a>
+            <a href="add_carrier.php" class="btn-add-new"><i class="fas fa-plus-circle"></i> Add New Carrier</a>
         </div>
     </div>
 
@@ -458,17 +454,18 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <?php if (!empty($manufacturer_requests)): ?>
+    <?php if (!empty($carrier_requests)): ?>
         <div class="table-card">
         <div class="table-card-header">
             <div class="icon-badge"><i class="fas fa-clipboard-list"></i></div>
-            <h2>Manufacturer Requests</h2>
+            <h2>Carrier Requests</h2>
         </div>
         <div class="table-responsive">
             <table>
                 <thead>
                     <tr>
-                        <th>Manufacturer</th>
+                        <th>Carrier</th>
+                        <th>Type</th>
                         <?php if ($role === 'global_admin'): ?>
                             <th>Account</th>
                         <?php endif; ?>
@@ -481,7 +478,7 @@ $conn->close();
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($manufacturer_requests as $request): ?>
+                    <?php foreach ($carrier_requests as $request): ?>
                         <?php
                             $requested_by = trim(($request['first_name'] ?? '') . ' ' . ($request['last_name'] ?? ''));
                             if ($requested_by === '') {
@@ -491,6 +488,7 @@ $conn->close();
                         ?>
                         <tr>
                             <td><strong><?php echo htmlspecialchars($request['name']); ?></strong></td>
+                            <td><span class="type-badge"><?php echo htmlspecialchars($carrier_type_labels[$request['carrier_type']] ?? ucfirst($request['carrier_type'])); ?></span></td>
                             <?php if ($role === 'global_admin'): ?>
                                 <td><?php echo htmlspecialchars($request['account_name']); ?></td>
                             <?php endif; ?>
@@ -506,78 +504,7 @@ $conn->close();
                             </td>
                             <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
                                 <td>
-                                    <a href="add_manufacturer.php?request_id=<?php echo (int)$request['id']; ?>" class="action-buttons edit">Review</a>
-                                </td>
-                            <?php endif; ?>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-        </div>
-    <?php endif; ?>
-
-    <?php if (!empty($location_requests)): ?>
-        <div class="table-card">
-        <div class="table-card-header">
-            <div class="icon-badge"><i class="fas fa-map-pin"></i></div>
-            <h2>Location Requests</h2>
-        </div>
-        <div class="table-responsive">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Manufacturer</th>
-                        <th>Location</th>
-                        <?php if ($role === 'global_admin'): ?>
-                            <th>Account</th>
-                        <?php endif; ?>
-                        <th>Requested By</th>
-                        <th>Submitted</th>
-                        <th>Status</th>
-                        <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
-                            <th>Actions</th>
-                        <?php endif; ?>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($location_requests as $request): ?>
-                        <?php
-                            $requested_by = trim(($request['first_name'] ?? '') . ' ' . ($request['last_name'] ?? ''));
-                            if ($requested_by === '') {
-                                $requested_by = $request['username'] ?? 'Unknown';
-                            }
-                            $status_class = $request['status'] === 'approved' ? 'status-active' : ($request['status'] === 'rejected' ? 'status-inactive' : 'status-pending');
-                            $address_parts = array_filter([
-                                $request['street_address'] ?? '',
-                                $request['city'] ?? '',
-                                $request['state'] ?? '',
-                                $request['zip_code'] ?? ''
-                            ]);
-                            $formatted_address = $address_parts ? implode(', ', $address_parts) : 'Address not provided';
-                        ?>
-                        <tr>
-                            <td><strong><?php echo htmlspecialchars($request['manufacturer_name']); ?></strong></td>
-                            <td>
-                                <?php echo htmlspecialchars($request['location_name']); ?><br>
-                                <small style="color: #666;"><?php echo htmlspecialchars($formatted_address); ?></small>
-                            </td>
-                            <?php if ($role === 'global_admin'): ?>
-                                <td><?php echo htmlspecialchars($request['account_name']); ?></td>
-                            <?php endif; ?>
-                            <td><?php echo htmlspecialchars($requested_by); ?></td>
-                            <td><?php echo htmlspecialchars(date('M j, Y', strtotime($request['created_at']))); ?></td>
-                            <td>
-                                <span class="status-badge <?php echo $status_class; ?>">
-                                    <?php echo htmlspecialchars(ucfirst($request['status'])); ?>
-                                </span>
-                                <?php if ($role === 'customer_admin' && $request['status'] === 'rejected' && !empty($request['rejection_reason'])): ?>
-                                    <br><small style="color: #666;">Reason: <?php echo htmlspecialchars($request['rejection_reason']); ?></small>
-                                <?php endif; ?>
-                            </td>
-                            <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
-                                <td>
-                                    <a href="add_manufacturer_location.php?request_id=<?php echo (int)$request['id']; ?>" class="action-buttons edit">Review</a>
+                                    <a href="add_carrier.php?request_id=<?php echo (int)$request['id']; ?>" class="action-buttons edit">Review</a>
                                 </td>
                             <?php endif; ?>
                         </tr>
@@ -590,79 +517,90 @@ $conn->close();
 
     <div class="table-card">
     <div class="table-card-header">
-        <div class="icon-badge"><i class="fas fa-industry"></i></div>
-        <h2>All Manufacturers</h2>
+        <div class="icon-badge"><i class="fas fa-truck"></i></div>
+        <h2>All Carriers</h2>
     </div>
     <div class="table-responsive">
         <table>
             <thead>
                 <tr>
-                    <th>Manufacturer</th>
+                    <th>Carrier</th>
+                    <th>MC# / DOT#</th>
+                    <th>Type</th>
                     <th>Contact Information</th>
                     <th>Address</th>
-                    <th>Website</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (!empty($manufacturers)): ?>
-                    <?php foreach ($manufacturers as $manufacturer): ?>
+                <?php if (!empty($carriers)): ?>
+                    <?php foreach ($carriers as $c): ?>
                         <tr>
                             <td>
-                                <strong><?php echo htmlspecialchars($manufacturer['name']); ?></strong>
-                                <?php if (!empty($manufacturer['short_name'])): ?>
-                                    <br><small style="color: #666;">(<?php echo htmlspecialchars($manufacturer['short_name']); ?>)</small>
+                                <strong><?php echo htmlspecialchars($c['name']); ?></strong>
+                                <?php if ($c['is_solterra_managed']): ?>
+                                    <span class="solterra-badge">Solterra</span>
+                                <?php endif; ?>
+                                <?php if (!empty($c['short_name'])): ?>
+                                    <br><small style="color: #666;">(<?php echo htmlspecialchars($c['short_name']); ?>)</small>
                                 <?php endif; ?>
                             </td>
+                            <td>
+                                <?php if (!empty($c['mc_number'])): ?>
+                                    <div style="font-size: 0.9em;">MC: <?php echo htmlspecialchars($c['mc_number']); ?></div>
+                                <?php endif; ?>
+                                <?php if (!empty($c['dot_number'])): ?>
+                                    <div style="font-size: 0.9em;">DOT: <?php echo htmlspecialchars($c['dot_number']); ?></div>
+                                <?php endif; ?>
+                                <?php if (empty($c['mc_number']) && empty($c['dot_number'])): ?>
+                                    <span style="color: #999;">--</span>
+                                <?php endif; ?>
+                            </td>
+                            <td><span class="type-badge"><?php echo htmlspecialchars($carrier_type_labels[$c['carrier_type']] ?? ucfirst($c['carrier_type'])); ?></span></td>
                             <td class="contact-info">
-                                <?php if (!empty($manufacturer['contact_person'])): ?>
-                                    <strong><?php echo htmlspecialchars($manufacturer['contact_person']); ?></strong><br>
+                                <?php if (!empty($c['contact_person'])): ?>
+                                    <strong><?php echo htmlspecialchars($c['contact_person']); ?></strong><br>
                                 <?php endif; ?>
-                                <?php if (!empty($manufacturer['phone'])): ?>
-                                    📞 <?php echo htmlspecialchars($manufacturer['phone']); ?><br>
+                                <?php if (!empty($c['phone'])): ?>
+                                    <?php echo htmlspecialchars($c['phone']); ?><br>
                                 <?php endif; ?>
-                                <?php if (!empty($manufacturer['email'])): ?>
-                                    ✉️ <?php echo htmlspecialchars($manufacturer['email']); ?>
-                                <?php endif; ?>
-                            </td>
-                            <td><?php echo htmlspecialchars($manufacturer['address'] ?? 'Not specified'); ?></td>
-                            <td>
-                                <?php if (!empty($manufacturer['website'])): ?>
-                                    <a href="<?php echo htmlspecialchars($manufacturer['website']); ?>" target="_blank" class="website-link">
-                                        🌐 Visit Website
-                                    </a>
-                                <?php else: ?>
-                                    <span style="color: #999;">Not specified</span>
+                                <?php if (!empty($c['email'])): ?>
+                                    <?php echo htmlspecialchars($c['email']); ?>
                                 <?php endif; ?>
                             </td>
+                            <td><?php echo htmlspecialchars($c['address'] ?? 'Not specified'); ?></td>
                             <td>
-                                <span class="status-badge <?php echo $manufacturer['is_active'] ? 'status-active' : 'status-inactive'; ?>">
-                                    <?php echo $manufacturer['is_active'] ? 'Active' : 'Inactive'; ?>
+                                <span class="status-badge <?php echo $c['is_active'] ? 'status-active' : 'status-inactive'; ?>">
+                                    <?php echo $c['is_active'] ? 'Active' : 'Inactive'; ?>
                                 </span>
                             </td>
                             <td>
-                                <?php if (in_array($role, ['admin', 'global_admin'], true)): ?>
+                                <?php
+                                    $is_own_carrier = ($role === 'customer_admin' && !empty($c['account_id']) && (int)$c['account_id'] === (int)$account_id);
+                                    $can_edit_delete = in_array($role, ['admin', 'global_admin'], true) || $is_own_carrier;
+                                ?>
+                                <?php if ($can_edit_delete): ?>
                                     <div class="dropdown">
-                                        <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $manufacturer['id']; ?>')">
+                                        <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $c['id']; ?>')">
                                             Actions
                                         </button>
-                                        <div id="dropdown-menu-<?php echo $manufacturer['id']; ?>" class="dropdown-menu">
-                                            <a href="edit_manufacturer.php?id=<?php echo $manufacturer['id']; ?>" class="dropdown-item edit">Edit</a>
-                                            <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer['id']; ?>" class="dropdown-item">Manage Locations</a>
-                                            <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($manufacturer['name'], ENT_QUOTES); ?>', <?php echo $manufacturer['id']; ?>)" class="dropdown-item delete">Delete</a>
+                                        <div id="dropdown-menu-<?php echo $c['id']; ?>" class="dropdown-menu">
+                                            <a href="edit_carrier.php?id=<?php echo $c['id']; ?>" class="dropdown-item edit">Edit</a>
+                                            <a href="carrier_details.php?carrier_id=<?php echo $c['id']; ?>" class="dropdown-item">View Details</a>
+                                            <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($c['name'], ENT_QUOTES); ?>', <?php echo $c['id']; ?>)" class="dropdown-item delete">Delete</a>
                                         </div>
                                     </div>
                                 <?php else: ?>
-                                    <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer['id']; ?>" class="action-buttons edit">View Locations</a>
+                                    <a href="carrier_details.php?carrier_id=<?php echo $c['id']; ?>" class="action-buttons edit">View Details</a>
                                 <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
-                            No manufacturers found. <a href="add_manufacturer.php">Add the first manufacturer</a>
+                        <td colspan="7" style="text-align: center; padding: 20px; color: #666;">
+                            No carriers found. <a href="add_carrier.php">Add the first carrier</a>
                         </td>
                     </tr>
                 <?php endif; ?>
@@ -672,4 +610,4 @@ $conn->close();
     </div>
 </main>
 </body>
-</html> 
+</html>

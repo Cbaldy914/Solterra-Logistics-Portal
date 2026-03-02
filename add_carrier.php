@@ -2,13 +2,11 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role global_admin, admin, or customer_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header("Location: unauthorized.php");
     exit();
 }
 
-// Database connection
 require_once '../config.php';
 require_once __DIR__ . '/notification_helpers.php';
 $conn = getDBConnection();
@@ -16,10 +14,7 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
-// Get Google Maps API key from config
 $google_maps_api_key = getGoogleMapsApiKey();
-
-// Unified dashboard link
 $dashboard_link = 'dashboard.php';
 
 $role = $_SESSION['role'] ?? '';
@@ -45,24 +40,15 @@ $review_request = false;
 $request_data = null;
 $request_account_name = '';
 $requester_label = '';
-$duplicate_manufacturers = [];
+$duplicate_carriers = [];
 
-// Prepare variables to hold user messages:
 $successMessage = "";
 $errorMessage   = "";
 
-// Normalize country input so US variants persist as 'USA'
 function slp_normalize_country($country) {
     $trimmed = trim((string)$country);
     $upper = strtoupper($trimmed);
-    $mapToUsa = [
-        'US',
-        'U.S.',
-        'U.S.A.',
-        'UNITED STATES',
-        'UNITED STATES OF AMERICA',
-        'AMERICA'
-    ];
+    $mapToUsa = ['US', 'U.S.', 'U.S.A.', 'UNITED STATES', 'UNITED STATES OF AMERICA', 'AMERICA'];
     if ($upper === '' || $upper === 'USA') {
         return 'USA';
     }
@@ -108,14 +94,15 @@ function slp_get_global_admin_ids(mysqli $conn): array {
     return $ids;
 }
 
+// Load request for review (admin/global_admin reviewing a customer_admin request)
 if ($request_id > 0 && in_array($role, ['admin', 'global_admin'], true)) {
     $stmtRequest = $conn->prepare("
-        SELECT mr.*, ca.name AS account_name,
+        SELECT cr.*, ca.name AS account_name,
                u.username, u.first_name, u.last_name
-        FROM manufacturer_requests mr
-        JOIN customer_accounts ca ON ca.id = mr.account_id
-        JOIN users u ON u.id = mr.requested_by
-        WHERE mr.id = ?
+        FROM carrier_requests cr
+        JOIN customer_accounts ca ON ca.id = cr.account_id
+        JOIN users u ON u.id = cr.requested_by
+        WHERE cr.id = ?
     ");
     if ($stmtRequest) {
         $stmtRequest->bind_param("i", $request_id);
@@ -124,7 +111,7 @@ if ($request_id > 0 && in_array($role, ['admin', 'global_admin'], true)) {
         $request_row = $resultRequest->fetch_assoc();
         $stmtRequest->close();
         if (!$request_row) {
-            $errorMessage = 'Manufacturer request not found.';
+            $errorMessage = 'Carrier request not found.';
         } elseif ($role === 'admin' && $account_id && (int)$request_row['account_id'] !== (int)$account_id) {
             $errorMessage = 'You do not have access to this request.';
         } elseif ($request_row['status'] !== 'pending') {
@@ -141,14 +128,15 @@ if ($request_id > 0 && in_array($role, ['admin', 'global_admin'], true)) {
     }
 }
 
+// Check for duplicate carrier names when reviewing
 if ($review_request && !empty($request_data['name'])) {
-    $stmtDupes = $conn->prepare("SELECT id, name FROM manufacturers WHERE LOWER(name) = LOWER(?)");
+    $stmtDupes = $conn->prepare("SELECT id, name FROM carriers WHERE LOWER(name) = LOWER(?)");
     if ($stmtDupes) {
         $stmtDupes->bind_param("s", $request_data['name']);
         $stmtDupes->execute();
         $resultDupes = $stmtDupes->get_result();
         while ($row = $resultDupes->fetch_assoc()) {
-            $duplicate_manufacturers[] = $row;
+            $duplicate_carriers[] = $row;
         }
         $stmtDupes->close();
     }
@@ -158,7 +146,7 @@ if ($review_request && !empty($request_data['name'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if ($request_id > 0 && !$review_request && in_array($role, ['admin', 'global_admin'], true)) {
-            throw new Exception('Unable to load the manufacturer request.');
+            throw new Exception('Unable to load the carrier request.');
         }
         if ($role === 'customer_admin' && $review_request) {
             throw new Exception('You do not have access to review requests.');
@@ -171,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Please provide a rejection reason.');
             }
 
-            $stmtReject = $conn->prepare("UPDATE manufacturer_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW(), rejection_reason = ? WHERE id = ?");
+            $stmtReject = $conn->prepare("UPDATE carrier_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW(), rejection_reason = ? WHERE id = ?");
             if (!$stmtReject) {
                 throw new Exception("Error preparing rejection update: " . $conn->error);
             }
@@ -182,17 +170,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtReject->close();
 
             if (!empty($request_data['requested_by'])) {
-                $title = 'Manufacturer request rejected';
+                $title = 'Carrier request rejected';
                 $message = "Your request for '{$request_data['name']}' was rejected.";
                 $message .= "\nReason: {$rejection_reason}";
-                notify_user((int)$request_data['requested_by'], 'manufacturer_request', $title, $message, 'manufacturers.php');
+                notify_user((int)$request_data['requested_by'], 'carrier_request', $title, $message, 'manage_carriers.php');
             }
 
-            $successMessage = 'Manufacturer request rejected.';
+            $successMessage = 'Carrier request rejected.';
         } else {
             // Gather form fields
             $name = trim($_POST['name'] ?? '');
             $short_name = trim($_POST['short_name'] ?? '');
+            $mc_number = trim($_POST['mc_number'] ?? '');
+            $dot_number = trim($_POST['dot_number'] ?? '');
+            $carrier_type = $_POST['carrier_type'] ?? 'ftl';
+            $is_solterra_managed = ($role === 'global_admin' && isset($_POST['is_solterra_managed'])) ? 1 : 0;
             $contact_person = trim($_POST['contact_person'] ?? '');
             $phone = trim($_POST['phone'] ?? '');
             $email = trim($_POST['email'] ?? '');
@@ -207,21 +199,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Validation
             if ($name === '') {
-                throw new Exception("Manufacturer Name is required.");
+                throw new Exception("Carrier Name is required.");
             }
-            if ($street_address === '' || $city === '') {
-                throw new Exception("Street address and city are required.");
-            }
-            if ($country === '') {
-                throw new Exception("Country is required.");
-            }
-            if (strtoupper($country) === 'USA') {
-                if ($state === '' || $zip_code === '') {
-                    throw new Exception("State and ZIP code are required for USA addresses.");
-                }
+            $valid_types = ['ftl','ltl','drayage','intermodal','ocean','other'];
+            if (!in_array($carrier_type, $valid_types, true)) {
+                $carrier_type = 'ftl';
             }
 
-            // Handle logo upload if provided
+            // Handle logo upload
             $logo_url = $review_request ? ($request_data['logo_url'] ?? null) : null;
             if (isset($_FILES['logo_file']) && $_FILES['logo_file']['error'] !== UPLOAD_ERR_NO_FILE) {
                 if ($_FILES['logo_file']['error'] === UPLOAD_ERR_OK) {
@@ -238,14 +223,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new Exception("File exceeds 5MB limit.");
                     }
 
-                    $target_dir = "uploads/manufacturer_logos/";
+                    $target_dir = "uploads/carrier_logos/";
                     if (!is_dir($target_dir)) {
                         if (!mkdir($target_dir, 0755, true)) {
                             throw new Exception("Failed to create upload directory.");
                         }
                     }
 
-                    $unique_name = uniqid('mfg_', true).'.'.$file_ext;
+                    $unique_name = uniqid('carrier_', true).'.'.$file_ext;
                     $target_file = $target_dir . $unique_name;
 
                     if (!move_uploaded_file($file_tmp, $target_file)) {
@@ -257,180 +242,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            if ($role === 'customer_admin') {
+            {
+                // Direct insert for admin/global_admin/customer_admin
+                $carrier_account_id = ($role === 'global_admin') ? null : $account_id;
                 $stmt = $conn->prepare("
-                    INSERT INTO manufacturer_requests (
-                        account_id,
-                        requested_by,
-                        status,
-                        name,
-                        short_name,
-                        contact_person,
-                        phone,
-                        email,
-                        website,
-                        street_address,
-                        city,
-                        state,
-                        zip_code,
-                        country,
-                        logo_url,
-                        is_active,
-                        notes
-                    ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO carriers (
+                        account_id, name, short_name, mc_number, dot_number, carrier_type,
+                        is_solterra_managed, contact_person, phone, email, website,
+                        street_address, city, state, zip_code, country,
+                        logo_url, is_active, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 if (!$stmt) {
-                    throw new Exception("Error preparing request insert: " . $conn->error);
+                    throw new Exception("Error preparing carrier insert: " . $conn->error);
                 }
                 $stmt->bind_param(
-                    "iissssssssssssis",
-                    $account_id,
-                    $user_id,
-                    $name,
-                    $short_name,
-                    $contact_person,
-                    $phone,
-                    $email,
-                    $website,
-                    $street_address,
-                    $city,
-                    $state,
-                    $zip_code,
-                    $country,
-                    $logo_url,
-                    $is_active,
-                    $notes
+                    "isssssissssssssssis",
+                    $carrier_account_id,
+                    $name, $short_name, $mc_number, $dot_number, $carrier_type,
+                    $is_solterra_managed,
+                    $contact_person, $phone, $email, $website,
+                    $street_address, $city, $state, $zip_code, $country,
+                    $logo_url, $is_active, $notes
                 );
                 if (!$stmt->execute()) {
-                    throw new Exception("Error submitting request: " . $stmt->error);
+                    throw new Exception("Error inserting carrier: " . $stmt->error);
                 }
+                $carrier_id = $conn->insert_id;
                 $stmt->close();
 
-                $accountName = '';
-                $stmtAccountName = $conn->prepare("SELECT name FROM customer_accounts WHERE id = ?");
-                if ($stmtAccountName) {
-                    $stmtAccountName->bind_param("i", $account_id);
-                    $stmtAccountName->execute();
-                    $stmtAccountName->bind_result($accountName);
-                    $stmtAccountName->fetch();
-                    $stmtAccountName->close();
-                }
-                $requester = $_SESSION['username'] ?? 'Customer Admin';
-                $title = 'New manufacturer request';
-                $message = "{$requester} submitted a manufacturer request for '{$name}'.";
-                if ($accountName) {
-                    $message .= "\nAccount: {$accountName}";
-                }
-                $recipients = array_unique(array_merge(
-                    slp_get_account_admin_ids($conn, $account_id),
-                    slp_get_global_admin_ids($conn)
-                ));
-                foreach ($recipients as $recipient_id) {
-                    notify_user((int)$recipient_id, 'manufacturer_request', $title, $message, 'manufacturers.php');
-                }
-
-                $successMessage = "Manufacturer request submitted successfully!";
-            } else {
-                $stmt = $conn->prepare("
-                    INSERT INTO manufacturers (
-                        name,
-                        short_name,
-                        contact_person,
-                        phone,
-                        email,
-                        website,
-                        street_address,
-                        city,
-                        state,
-                        zip_code,
-                        country,
-                        logo_url,
-                        is_active,
-                        notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                if (!$stmt) {
-                    throw new Exception("Error preparing manufacturer insert: " . $conn->error);
-                }
-                $stmt->bind_param(
-                    "ssssssssssssis",
-                    $name,
-                    $short_name,
-                    $contact_person,
-                    $phone,
-                    $email,
-                    $website,
-                    $street_address,
-                    $city,
-                    $state,
-                    $zip_code,
-                    $country,
-                    $logo_url,
-                    $is_active,
-                    $notes
-                );
-                if (!$stmt->execute()) {
-                    throw new Exception("Error inserting manufacturer: " . $stmt->error);
-                }
-                $manufacturer_id = $conn->insert_id;
-                $stmt->close();
-
-                $location_stmt = $conn->prepare("
-                    INSERT INTO manufacturer_locations (
-                        manufacturer_id,
-                        location_name,
-                        street_address,
-                        city,
-                        state,
-                        zip_code,
-                        country,
-                        is_primary,
-                        is_active
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                if (!$location_stmt) {
-                    throw new Exception("Error preparing location insert: " . $conn->error);
-                }
-                $location_name = "Main Location";
-                $is_primary = 1;
-                $location_is_active = 1;
-                $location_stmt->bind_param(
-                    "issssssii",
-                    $manufacturer_id,
-                    $location_name,
-                    $street_address,
-                    $city,
-                    $state,
-                    $zip_code,
-                    $country,
-                    $is_primary,
-                    $location_is_active
-                );
-                if (!$location_stmt->execute()) {
-                    throw new Exception("Error inserting manufacturer location: " . $location_stmt->error);
-                }
-                $location_stmt->close();
-
+                // If reviewing a request, mark it approved
                 if ($review_request) {
-                    $stmtApprove = $conn->prepare("UPDATE manufacturer_requests SET status = 'approved', reviewed_by = ?, reviewed_at = NOW(), approved_manufacturer_id = ? WHERE id = ?");
+                    $stmtApprove = $conn->prepare("UPDATE carrier_requests SET status = 'approved', reviewed_by = ?, reviewed_at = NOW(), approved_carrier_id = ? WHERE id = ?");
                     if (!$stmtApprove) {
                         throw new Exception("Error preparing approval update: " . $conn->error);
                     }
-                    $stmtApprove->bind_param("iii", $user_id, $manufacturer_id, $request_id);
+                    $stmtApprove->bind_param("iii", $user_id, $carrier_id, $request_id);
                     if (!$stmtApprove->execute()) {
                         throw new Exception("Error approving request: " . $stmtApprove->error);
                     }
                     $stmtApprove->close();
 
                     if (!empty($request_data['requested_by'])) {
-                        $title = 'Manufacturer request approved';
+                        $title = 'Carrier request approved';
                         $message = "Your request for '{$name}' has been approved and added.";
-                        notify_user((int)$request_data['requested_by'], 'manufacturer_request', $title, $message, 'manufacturers.php');
+                        notify_user((int)$request_data['requested_by'], 'carrier_request', $title, $message, 'manage_carriers.php');
                     }
 
-                    $successMessage = "Manufacturer request approved and added successfully!";
+                    $successMessage = "Carrier request approved and added successfully!";
                 } else {
-                    $successMessage = "Manufacturer and main location added successfully!";
+                    $successMessage = "Carrier added successfully!";
                 }
             }
         }
@@ -439,17 +300,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$page_title = 'Add Manufacturer';
-$page_heading = 'Add Manufacturer';
-$submit_label = 'Add Manufacturer';
-if ($role === 'customer_admin') {
-    $page_title = 'Request Manufacturer';
-    $page_heading = 'Request Manufacturer';
-    $submit_label = 'Submit Request';
-}
+$page_title = 'Add Carrier';
+$page_heading = 'Add Carrier';
+$submit_label = 'Add Carrier';
 if ($review_request) {
-    $page_title = 'Review Manufacturer Request';
-    $page_heading = 'Review Manufacturer Request';
+    $page_title = 'Review Carrier Request';
+    $page_heading = 'Review Carrier Request';
     $submit_label = 'Approve Request';
 }
 
@@ -548,6 +404,7 @@ $conn->close();
             margin-bottom: 20px;
         }
         .form-row.single { grid-template-columns: 1fr; }
+        .form-row.triple { grid-template-columns: repeat(3, 1fr); }
         .form-group {
             display: flex;
             flex-direction: column;
@@ -666,7 +523,7 @@ $conn->close();
         }
 
         @media (max-width: 768px) {
-            .form-row { grid-template-columns: 1fr; }
+            .form-row, .form-row.triple { grid-template-columns: 1fr; }
             .page-header-card { padding: 24px; }
             .page-header-card h1 { font-size: 1.6em; }
         }
@@ -679,13 +536,13 @@ $conn->close();
         require_once 'components/breadcrumbs.php';
         echo slp_render_breadcrumbs([
             'current_label' => $page_heading,
-            'extra' => [ ['label' => 'Manage Manufacturers', 'url' => 'manufacturers.php'] ]
+            'extra' => [ ['label' => 'Manage Carriers', 'url' => 'manage_carriers.php'] ]
         ]);
     ?>
 
     <div class="page-header-card">
         <h1><?php echo htmlspecialchars($page_heading); ?></h1>
-        <p class="subtitle">Enter manufacturer details below to add them to the system.</p>
+        <p class="subtitle">Enter carrier details below to add them to the system.</p>
     </div>
 
     <?php if ($review_request): ?>
@@ -696,9 +553,9 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <?php if (!empty($duplicate_manufacturers)): ?>
+    <?php if (!empty($duplicate_carriers)): ?>
         <div class="warning-message">
-            <strong><i class="fas fa-exclamation-triangle"></i> Possible duplicate:</strong> A manufacturer with the same name already exists.
+            <strong><i class="fas fa-exclamation-triangle"></i> Possible duplicate:</strong> A carrier with the same name already exists.
         </div>
     <?php endif; ?>
 
@@ -718,21 +575,54 @@ $conn->close();
         <!-- Basic Information -->
         <div class="form-section">
             <div class="form-section-header">
-                <div class="icon-badge"><i class="fas fa-industry"></i></div>
+                <div class="icon-badge"><i class="fas fa-truck"></i></div>
                 <h2>Basic Information</h2>
             </div>
             <div class="form-section-body">
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="name">Manufacturer Name <span class="required-star">*</span></label>
-                        <input type="text" id="name" name="name" required placeholder="e.g., JinkoSolar Holding Co., Ltd." value="<?php echo htmlspecialchars(slp_form_value('name', $request_data)); ?>">
+                        <label for="name">Carrier Name <span class="required-star">*</span></label>
+                        <input type="text" id="name" name="name" required placeholder="e.g., XPO Logistics" value="<?php echo htmlspecialchars(slp_form_value('name', $request_data)); ?>">
                     </div>
                     <div class="form-group">
                         <label for="short_name">Short Name <span class="optional-tag">(optional)</span></label>
-                        <input type="text" id="short_name" name="short_name" placeholder="e.g., JinkoSolar" value="<?php echo htmlspecialchars(slp_form_value('short_name', $request_data)); ?>">
+                        <input type="text" id="short_name" name="short_name" placeholder="e.g., XPO" value="<?php echo htmlspecialchars(slp_form_value('short_name', $request_data)); ?>">
                         <span class="help-text">Common abbreviation</span>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Carrier Identification -->
+        <div class="form-section">
+            <div class="form-section-header">
+                <div class="icon-badge"><i class="fas fa-id-card"></i></div>
+                <h2>Carrier Identification</h2>
+            </div>
+            <div class="form-section-body">
+                <div class="form-row triple">
+                    <div class="form-group">
+                        <label for="mc_number">MC Number</label>
+                        <input type="text" id="mc_number" name="mc_number" placeholder="e.g., MC-123456" value="<?php echo htmlspecialchars(slp_form_value('mc_number', $request_data)); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="dot_number">DOT Number</label>
+                        <input type="text" id="dot_number" name="dot_number" placeholder="e.g., 1234567" value="<?php echo htmlspecialchars(slp_form_value('dot_number', $request_data)); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="carrier_type">Carrier Type</label>
+                        <?php $ct = slp_form_value('carrier_type', $request_data, 'ftl'); ?>
+                        <select id="carrier_type" name="carrier_type">
+                            <option value="ftl" <?php echo $ct === 'ftl' ? 'selected' : ''; ?>>FTL (Full Truckload)</option>
+                            <option value="ltl" <?php echo $ct === 'ltl' ? 'selected' : ''; ?>>LTL (Less Than Truckload)</option>
+                            <option value="drayage" <?php echo $ct === 'drayage' ? 'selected' : ''; ?>>Drayage</option>
+                            <option value="intermodal" <?php echo $ct === 'intermodal' ? 'selected' : ''; ?>>Intermodal</option>
+                            <option value="ocean" <?php echo $ct === 'ocean' ? 'selected' : ''; ?>>Ocean Freight</option>
+                            <option value="other" <?php echo $ct === 'other' ? 'selected' : ''; ?>>Other</option>
+                        </select>
+                    </div>
+                </div>
+                <span class="help-text">FMCSA Motor Carrier (MC) number and USDOT number are optional but recommended</span>
             </div>
         </div>
 
@@ -750,7 +640,7 @@ $conn->close();
                     </div>
                     <div class="form-group">
                         <label for="website">Website</label>
-                        <input type="url" id="website" name="website" placeholder="https://www.manufacturer.com" value="<?php echo htmlspecialchars(slp_form_value('website', $request_data)); ?>">
+                        <input type="url" id="website" name="website" placeholder="https://www.carrier.com" value="<?php echo htmlspecialchars(slp_form_value('website', $request_data)); ?>">
                     </div>
                 </div>
                 <div class="form-row">
@@ -760,7 +650,7 @@ $conn->close();
                     </div>
                     <div class="form-group">
                         <label for="email">Email</label>
-                        <input type="email" id="email" name="email" placeholder="contact@manufacturer.com" value="<?php echo htmlspecialchars(slp_form_value('email', $request_data)); ?>">
+                        <input type="email" id="email" name="email" placeholder="dispatch@carrier.com" value="<?php echo htmlspecialchars(slp_form_value('email', $request_data)); ?>">
                     </div>
                 </div>
             </div>
@@ -770,18 +660,18 @@ $conn->close();
         <div class="form-section">
             <div class="form-section-header">
                 <div class="icon-badge"><i class="fas fa-map-marker-alt"></i></div>
-                <h2>Address <span style="color: #dc3545; font-size: 0.8em;">*</span></h2>
+                <h2>Address</h2>
             </div>
             <div class="form-section-body">
                 <div class="form-row single">
                     <div class="form-group">
-                        <label for="street_address">Street Address <span class="required-star">*</span></label>
-                        <input type="text" id="street_address" name="street_address" placeholder="123 Manufacturing Blvd" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
+                        <label for="street_address">Street Address</label>
+                        <input type="text" id="street_address" name="street_address" placeholder="123 Logistics Blvd" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="city">City <span class="required-star">*</span></label>
+                        <label for="city">City</label>
                         <input type="text" id="city" name="city" placeholder="Phoenix" value="<?php echo htmlspecialchars(slp_form_value('city', $request_data)); ?>">
                     </div>
                     <div class="form-group">
@@ -795,7 +685,7 @@ $conn->close();
                         <input type="text" id="zip_code" name="zip_code" placeholder="85281" value="<?php echo htmlspecialchars(slp_form_value('zip_code', $request_data)); ?>">
                     </div>
                     <div class="form-group">
-                        <label for="country">Country <span class="required-star">*</span></label>
+                        <label for="country">Country</label>
                         <input type="text" id="country" name="country" value="<?php echo htmlspecialchars(slp_form_value('country', $request_data, 'USA')); ?>" placeholder="USA">
                     </div>
                 </div>
@@ -817,17 +707,26 @@ $conn->close();
                     </div>
                 </div>
 
+                <?php if ($role === 'global_admin'): ?>
+                <div class="form-row single" style="margin-bottom: 16px;">
+                    <div class="checkbox-container">
+                        <input type="checkbox" id="is_solterra_managed" name="is_solterra_managed" <?php echo slp_form_value('is_solterra_managed', $request_data) ? 'checked' : ''; ?>>
+                        <label for="is_solterra_managed">Solterra-Managed Carrier</label>
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <div class="form-row single" style="margin-bottom: 16px;">
                     <div class="checkbox-container">
                         <input type="checkbox" id="is_active" name="is_active" <?php echo $is_active_checked ? 'checked' : ''; ?>>
-                        <label for="is_active">Active Manufacturer</label>
+                        <label for="is_active">Active Carrier</label>
                     </div>
                 </div>
 
                 <div class="form-row single">
                     <div class="form-group">
                         <label for="notes">Notes <span class="optional-tag">(optional)</span></label>
-                        <textarea id="notes" name="notes" placeholder="Additional notes about this manufacturer..."><?php echo htmlspecialchars(slp_form_value('notes', $request_data)); ?></textarea>
+                        <textarea id="notes" name="notes" placeholder="Additional notes about this carrier..."><?php echo htmlspecialchars(slp_form_value('notes', $request_data)); ?></textarea>
                     </div>
                 </div>
             </div>
@@ -862,48 +761,39 @@ $conn->close();
     </form>
 </main>
 
-<!-- Load the Google Maps JavaScript API with Places library -->
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 
 <script>
 function initializeAddressAutocomplete() {
-    // Get the street address input element
     const streetAddressInput = document.getElementById('street_address');
     const cityInput = document.getElementById('city');
     const stateInput = document.getElementById('state');
     const zipInput = document.getElementById('zip_code');
     const countryInput = document.getElementById('country');
-    
-    // Create the autocomplete object for international addresses
+
     const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
         types: ['address']
-        // No country restrictions - allow international addresses
     });
-    
-    // When the user selects an address from the dropdown, populate the address fields
+
     autocomplete.addListener('place_changed', function() {
         const place = autocomplete.getPlace();
-        
-        // Clear all fields first
+
         streetAddressInput.value = '';
         cityInput.value = '';
         stateInput.value = '';
         zipInput.value = '';
         if (countryInput) countryInput.value = '';
-        
+
         if (!place.geometry) {
-            // User entered the name of a Place that was not suggested and pressed Enter
-            console.log("No details available for input: '" + place.name + "'");
             return;
         }
-        
-        // Get the address components and populate the form fields
+
         let streetNumber = '';
         let route = '';
         for (let i = 0; i < place.address_components.length; i++) {
             const addressType = place.address_components[i].types[0];
             const val = place.address_components[i].long_name;
-            
+
             switch (addressType) {
                 case 'street_number':
                     streetNumber = val;
@@ -913,12 +803,11 @@ function initializeAddressAutocomplete() {
                     break;
                 case 'locality':
                 case 'administrative_area_level_3':
-                case 'sublocality_level_1': // For international addresses
+                case 'sublocality_level_1':
                     if (!cityInput.value) cityInput.value = val;
                     break;
                 case 'administrative_area_level_1':
-                    // For US: use short name (CA), for international: use long name (Gujarat)
-                    const isUS = place.address_components.some(comp => 
+                    const isUS = place.address_components.some(comp =>
                         comp.types.includes('country') && comp.short_name === 'US'
                     );
                     stateInput.value = isUS ? place.address_components[i].short_name : val;
@@ -929,25 +818,22 @@ function initializeAddressAutocomplete() {
                 case 'country':
                     if (countryInput) {
                         const shortName = place.address_components[i].short_name;
-                        countryInput.value = (shortName === 'US') ? 'USA' : val; // Normalize US to 'USA'
+                        countryInput.value = (shortName === 'US') ? 'USA' : val;
                     }
                     break;
             }
         }
-        
-        // Combine street number and route for full street address
+
         if (streetNumber && route) {
             streetAddressInput.value = (streetNumber + ' ' + route).trim();
         } else if (route) {
-            streetAddressInput.value = route; // For addresses where only route is available
+            streetAddressInput.value = route;
         }
-        // If autocomplete doesn't provide street info, keep what user typed
     });
 }
 
-// Initialize the autocomplete when the page loads
 google.maps.event.addDomListener(window, 'load', initializeAddressAutocomplete);
 </script>
 
 </body>
-</html> 
+</html>
