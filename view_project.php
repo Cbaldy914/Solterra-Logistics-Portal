@@ -493,6 +493,7 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'warehouse_arrival_date' => 's',
             'actual_delivery_date' => 's',
             'left_warehouse_date' => 's',
+            'carrier_id' => 'i',
             'miles' => 'd',
             'freight_cost' => 'd',
             'accessorial_costs_paid' => 'd',
@@ -924,6 +925,22 @@ $unique_wattages = array_values(array_filter(array_unique(array_column($deliveri
 sort($unique_wattages);
 $unique_suppliers = array_values(array_filter(array_unique(array_column($deliveries, 'supplier')), static fn($s) => $s !== null && $s !== ''));
 sort($unique_suppliers);
+
+// Fetch active carriers for bulk edit dropdown
+$all_carriers = [];
+$carrier_account_clause = $is_global_admin ? '' : ' AND (account_id IS NULL OR account_id = ?)';
+$stmtC = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_account_clause} ORDER BY is_solterra_managed DESC, name ASC");
+if ($stmtC) {
+    if (!$is_global_admin && $account_id_for_admin) {
+        $stmtC->bind_param("i", $account_id_for_admin);
+    }
+    $stmtC->execute();
+    $resultC = $stmtC->get_result();
+    while ($c = $resultC->fetch_assoc()) {
+        $all_carriers[] = $c;
+    }
+    $stmtC->close();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -2723,6 +2740,15 @@ sort($unique_suppliers);
                             <input type="number" step="0.01" id="bulk_miles" name="miles" placeholder="Optional">
                         </div>
                         <div class="modal-form-group">
+                            <label for="bulk_carrier_id">Carrier</label>
+                            <select id="bulk_carrier_id" name="carrier_id" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:6px; font-family:inherit;">
+                                <option value="">— No change —</option>
+                                <?php foreach ($all_carriers as $c): ?>
+                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> — <?php echo strtoupper($c['carrier_type']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="modal-form-group">
                             <label for="bulk_freight_cost">Freight Cost</label>
                             <input type="number" step="0.01" id="bulk_freight_cost" name="freight_cost" placeholder="Optional">
                         </div>
@@ -2734,10 +2760,12 @@ sort($unique_suppliers);
                             <label for="bulk_accessorial_charged">Accessorial Charged</label>
                             <input type="number" step="0.01" id="bulk_accessorial_charged" name="accessorial_costs" placeholder="Optional">
                         </div>
+                        <?php if ($role !== 'customer_admin'): ?>
                         <div class="modal-form-group">
                             <label for="bulk_customer_cost">Customer Cost</label>
                             <input type="number" step="0.01" id="bulk_customer_cost" name="customer_cost" placeholder="Optional">
                         </div>
+                        <?php endif; ?>
                     </div>
                     <div class="modal-form-actions">
                         <button type="button" class="modal-btn-secondary" onclick="closeBulkEditModal()">Cancel</button>
