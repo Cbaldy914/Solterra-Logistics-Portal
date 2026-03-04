@@ -3136,35 +3136,33 @@ if (!empty($bolCompletionMessage)) {
                             <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                         </div>
                     </div>
-                    <div class="form-row" id="domestic-cost-fields">
-                        <div>
-                            <label for="freight_cost">Freight Cost ($):</label>
-                            <input type="number" id="freight_cost" name="freight_cost" step="0.01" min="0">
-                        </div>
-                        <?php if (!$is_customer_admin): ?>
-                            <div>
-                                <label for="customer_cost">Customer Cost ($):</label>
-                                <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
-                            </div>
-                        <?php else: ?>
-                            <input type="hidden" id="customer_cost" name="customer_cost" value="">
-                        <?php endif; ?>
-                    </div>
                     <div class="form-row">
                         <div>
                             <label for="carrier_id">Carrier:</label>
                             <select id="carrier_id" name="carrier_id" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                 <option value="">Select carrier (optional)...</option>
                                 <?php foreach ($all_carriers as $c): ?>
-                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> - <?php echo strtoupper($c['carrier_type']); ?></option>
+                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> — <?php echo strtoupper($c['carrier_type']); ?></option>
                                 <?php endforeach; ?>
+                                <option value="__add_new__">+ Add new carrier...</option>
                             </select>
                         </div>
-                        <div>
-                            <label for="carrier_reference_number">Carrier Ref #:</label>
-                            <input type="text" id="carrier_reference_number" name="carrier_reference_number" placeholder="Carrier reference/PRO number">
+                        <div id="domestic-cost-fields">
+                            <label for="freight_cost">Freight Cost ($):</label>
+                            <input type="number" id="freight_cost" name="freight_cost" step="0.01" min="0">
                         </div>
                     </div>
+                    <?php if (!$is_customer_admin): ?>
+                    <div class="form-row">
+                        <div>
+                            <label for="customer_cost">Customer Cost ($):</label>
+                            <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
+                        </div>
+                        <div></div>
+                    </div>
+                    <?php else: ?>
+                        <input type="hidden" id="customer_cost" name="customer_cost" value="">
+                    <?php endif; ?>
 
                     <!-- Origin and Destination Section -->
                     <div class="origin-destination-section">
@@ -3276,33 +3274,31 @@ if (!empty($bolCompletionMessage)) {
                     </div>
                     <div class="form-row">
                         <div>
-                            <label for="freight_cost_multi">Freight Cost ($):</label>
-                            <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
-                        </div>
-                        <?php if (!$is_customer_admin): ?>
-                            <div>
-                                <label for="customer_cost_multi">Customer Cost ($):</label>
-                                <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
-                            </div>
-                        <?php else: ?>
-                            <input type="hidden" id="customer_cost_multi" name="customer_cost_multi" value="">
-                        <?php endif; ?>
-                    </div>
-                    <div class="form-row">
-                        <div>
                             <label for="carrier_id_multi">Carrier:</label>
                             <select id="carrier_id_multi" name="carrier_id_multi" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                 <option value="">Select carrier (optional)...</option>
                                 <?php foreach ($all_carriers as $c): ?>
-                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> - <?php echo strtoupper($c['carrier_type']); ?></option>
+                                    <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['name']); ?><?php echo $c['is_solterra_managed'] ? ' (Solterra)' : ''; ?> — <?php echo strtoupper($c['carrier_type']); ?></option>
                                 <?php endforeach; ?>
+                                <option value="__add_new__">+ Add new carrier...</option>
                             </select>
                         </div>
                         <div>
-                            <label for="carrier_reference_number_multi">Carrier Ref #:</label>
-                            <input type="text" id="carrier_reference_number_multi" name="carrier_reference_number_multi" placeholder="Carrier reference/PRO number">
+                            <label for="freight_cost_multi">Freight Cost ($):</label>
+                            <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
                         </div>
                     </div>
+                    <?php if (!$is_customer_admin): ?>
+                    <div class="form-row">
+                        <div>
+                            <label for="customer_cost_multi">Customer Cost ($):</label>
+                            <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
+                        </div>
+                        <div></div>
+                    </div>
+                    <?php else: ?>
+                        <input type="hidden" id="customer_cost_multi" name="customer_cost_multi" value="">
+                    <?php endif; ?>
 
                     <!-- Overseas Shipment Fields -->
                     <div id="overseasContainerFieldsMulti" style="display: none; margin-top: 15px;">
@@ -3675,6 +3671,16 @@ function updateHeaderStats() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    // "Add new carrier" redirect handler
+    document.querySelectorAll('#carrier_id, #carrier_id_multi').forEach(function(sel) {
+        sel.addEventListener('change', function() {
+            if (this.value === '__add_new__') {
+                window.open('add_carrier', '_blank');
+                this.value = '';
+            }
+        });
+    });
+
     const selectAll = document.getElementById('selectAllPallets');
     const palletCheckboxes = document.querySelectorAll('.pallet-checkbox');
     const statusMixTrigger = document.getElementById('statusMixTrigger');
