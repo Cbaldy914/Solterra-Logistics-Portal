@@ -35,7 +35,7 @@ $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['project_id'])) {
     $project_id = intval($_POST['project_id']);
 }
-$action = $_POST['action'] ?? '';
+$action = $_POST['action'] ?? ($_GET['action'] ?? '');
 $posted_summary_text = isset($_POST['summary_text']) ? trim($_POST['summary_text']) : null;
 
 // ---------- Helpers ----------
@@ -1219,149 +1219,42 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     return [$tempBase, $zipPath];
 }
 
-// ---------- Access Check & Data ----------
-$availableProjects = fetchProjectsForUser($conn, $user_id, $user_role);
-if ($project_id > 0) {
-    // Verify access to selected project
-    $allowed = array_filter($availableProjects, fn($p) => intval($p['id']) === $project_id);
-    if (empty($allowed) && $user_role !== 'global_admin') {
-        die('You do not have access to this project.');
-    }
-    // For global admin, still verify project exists
-    if ($user_role === 'global_admin' && empty($allowed)) {
-        $row = fetchProjectRow($conn, $project_id);
-        if (!$row) { die('Project not found.'); }
-        $availableProjects[] = ['id' => $project_id, 'project_name' => $row['project_name']];
-    }
-}
-
-$project_row = $project_id ? fetchProjectRow($conn, $project_id) : null;
-$totals = $project_id ? fetchTotals($conn, $project_id) : [0,0,0];
-$default_summary_text = ($project_id && $project_row) ? buildDefaultSummaryText($project_row, $totals, $conn, $project_id) : '';
-
-if ($action === 'preview_summary' && $project_id > 0) {
-    $summary_text = trim($posted_summary_text ?? '');
-    if ($summary_text === '') {
-        $_SESSION['project_close_error'] = 'Please enter a project summary before previewing.';
-        header('Location: project_close.php?project_id=' . $project_id);
-        exit();
-    }
-    try {
-        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
-        $_SESSION['project_close_summary'][$project_id] = $summary_text;
-        [$summaryPdfPath, $pdfOutput] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
-        header('Content-Type: application/pdf');
-        header('Content-Disposition: inline; filename="Project_' . $project_id . '_Summary.pdf"');
-        echo $pdfOutput;
-        exit();
-    } catch (Exception $e) {
-        $_SESSION['project_close_error'] = 'Summary preview failed: ' . $e->getMessage();
-        header('Location: project_close.php?project_id=' . $project_id);
-        exit();
-    }
-}
-
-if ($action === 'export' && $project_id > 0) {
-    $summary_text = trim($posted_summary_text ?? '');
-    if ($summary_text === '') {
-        $_SESSION['project_close_error'] = 'Please provide a written project summary to include in the export.';
-        header('Location: project_close.php?project_id=' . $project_id);
-        exit();
-    }
-    try {
-        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
-        $_SESSION['project_close_summary'][$project_id] = $summary_text;
-        [$summaryPdfPath, ] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
-        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
-        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport);
-
-        header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
-        header('Content-Length: ' . filesize($zipPath));
-
-        // Use chunked reading to avoid memory exhaustion on large files
-        $handle = fopen($zipPath, 'rb');
-        if ($handle) {
-            while (!feof($handle)) {
-                echo fread($handle, 8192); // Read 8KB at a time
-                flush();
-            }
-            fclose($handle);
-        }
-
-        // Cleanup
+function cleanupProjectCloseTempArtifacts($tmpDir, $zipPath) {
+    if ($zipPath && is_file($zipPath)) {
         @unlink($zipPath);
+    }
+    if ($tmpDir && is_dir($tmpDir)) {
         $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
         $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
         foreach ($files as $file) {
             $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
         }
         @rmdir($tmpDir);
-        exit();
-    } catch (Exception $e) {
-        $_SESSION['project_close_error'] = 'Export failed: ' . $e->getMessage();
-        header('Location: project_close.php?project_id=' . $project_id);
-        exit();
     }
 }
 
-// Export data only (no summary PDF) - for non-admin users
-if ($action === 'export_data_only' && $project_id > 0) {
-    try {
-        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
-        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
-        // Pass null for summaryPdfPath to skip summary in archive
-        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, null, $sustainabilityReport);
-
-        header('Content-Type: application/zip');
-        header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
-        header('Content-Length: ' . filesize($zipPath));
-
-        $handle = fopen($zipPath, 'rb');
-        if ($handle) {
-            while (!feof($handle)) {
-                echo fread($handle, 8192);
-                flush();
-            }
-            fclose($handle);
+function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $user_row, $project_row, $totals, callable $progressCallback = null) {
+    $notify = static function ($progress, $message) use ($progressCallback) {
+        if ($progressCallback) {
+            $progressCallback((int)$progress, (string)$message);
         }
+    };
 
-        // Cleanup
-        @unlink($zipPath);
-        $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
-        $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
-        foreach ($files as $file) {
-            $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
-        }
-        @rmdir($tmpDir);
-        exit();
-    } catch (Exception $e) {
-        $_SESSION['project_close_error'] = 'Export failed: ' . $e->getMessage();
-        header('Location: project_close.php?project_id=' . $project_id);
-        exit();
-    }
-}
+    $tmpDir = null;
+    $zipPath = null;
 
-// Close-out project (admin only) - archives and marks as closed
-if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
-    $summary_text = trim($posted_summary_text ?? '');
-    if ($summary_text === '') {
-        $_SESSION['project_close_error'] = 'Please provide a project summary before closing out.';
-        header('Location: project_close.php?project_id=' . $project_id);
-        exit();
-    }
     try {
-        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
-        $_SESSION['project_close_summary'][$project_id] = $summary_text;
-
-        // Generate summary PDF
+        $notify(5, 'Generating summary PDF');
         [$summaryPdfPath, ] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
+
+        $notify(12, 'Preparing sustainability report');
         $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
 
-        // Build the archive
+        $notify(25, 'Building archive ZIP');
         [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport);
 
         // Create permanent archive directory
+        $notify(35, 'Saving archive to permanent storage');
         $archiveDir = __DIR__ . '/uploads/archived_projects/' . $project_id;
         if (!is_dir($archiveDir)) {
             mkdir($archiveDir, 0755, true);
@@ -1370,10 +1263,16 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         // Move zip to permanent location
         $archiveFilename = 'Project_' . sanitizeFileName($project_row['project_name'] ?? 'project') . '_' . date('Y-m-d_His') . '.zip';
         $permanentPath = $archiveDir . '/' . $archiveFilename;
-        copy($zipPath, $permanentPath);
-        $fileSize = filesize($permanentPath);
+        if (!@copy($zipPath, $permanentPath)) {
+            throw new Exception('Failed to save archive ZIP to permanent storage.');
+        }
+        $fileSize = @filesize($permanentPath);
+        if ($fileSize === false) {
+            $fileSize = 0;
+        }
 
         // Calculate comprehensive metrics for archiving
+        $notify(45, 'Calculating archive metrics');
         $archivePath = 'uploads/archived_projects/' . $project_id . '/' . $archiveFilename;
         $accountId = $project_row['account_id'] ?? null;
         $projectName = $project_row['project_name'] ?? '';
@@ -1483,6 +1382,7 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $warrantyClaimsCount = (int)($damageRow['warranty_claims'] ?? 0);
 
         // Insert archive record with all metrics
+        $notify(56, 'Writing archived project record');
         $stmtArchive = $conn->prepare('INSERT INTO archived_projects
             (project_id, account_id, project_name, archive_path, archive_filename, file_size_bytes,
              closed_by, summary_text, delivery_percent, total_modules, delivered_modules,
@@ -1492,7 +1392,7 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
              total_deliveries, on_time_deliveries, late_deliveries, avg_days_late, project_completed_on_time,
              damaged_modules_count, warranty_claims_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        $stmtArchive->bind_param('iisssiisdiiddddddddsiiiiiidiiii',
+        $stmtArchive->bind_param('iisssiisdiidddddddisiiiiiidiii',
             $project_id, $accountId, $projectName, $archivePath, $archiveFilename,
             $fileSize, $user_id, $summary_text, $deliveryPercent, $totalModules, $deliveredModules,
             $totalModuleCost, $totalFreightCost, $totalWarehousingCost, $totalAccessorialCost,
@@ -1504,6 +1404,7 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $stmtArchive->close();
 
         // Mark project as closed
+        $notify(62, 'Marking project as closed');
         $stmtClose = $conn->prepare('UPDATE projects SET status = "closed" WHERE id = ?');
         $stmtClose->bind_param('i', $project_id);
         $stmtClose->execute();
@@ -1511,6 +1412,7 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
 
         // Delete bulk data from database (data is preserved in the ZIP archive)
         // Order matters due to foreign key constraints
+        $notify(68, 'Cleaning operational data');
 
         // 1. Delete warranty_claims linked to site_scheduling for this project
         $stmtDelWarranty = $conn->prepare('DELETE wc FROM warranty_claims wc
@@ -1610,7 +1512,132 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $stmtDelWattageOrders->execute();
         $stmtDelWattageOrders->close();
 
-        // Cleanup temp files
+        $notify(100, 'Close-out complete');
+
+        return [
+            'project_name' => $projectName,
+            'archive_path' => $archivePath,
+            'archive_filename' => $archiveFilename,
+        ];
+    } finally {
+        cleanupProjectCloseTempArtifacts($tmpDir, $zipPath);
+    }
+}
+
+function projectCloseJobDir() {
+    return __DIR__ . '/uploads/project_close_jobs';
+}
+
+function projectCloseJobPath($project_id) {
+    return projectCloseJobDir() . '/project_' . (int)$project_id . '.json';
+}
+
+function readProjectCloseJob($project_id) {
+    $path = projectCloseJobPath($project_id);
+    if (!is_file($path)) {
+        return null;
+    }
+    $raw = @file_get_contents($path);
+    if ($raw === false || $raw === '') {
+        return null;
+    }
+    $job = json_decode($raw, true);
+    return is_array($job) ? $job : null;
+}
+
+function writeProjectCloseJob($project_id, array $job) {
+    ensureDir(projectCloseJobDir());
+    $path = projectCloseJobPath($project_id);
+    $tmpPath = $path . '.tmp';
+    $job['project_id'] = (int)$project_id;
+    $job['updated_at'] = date('c');
+    @file_put_contents($tmpPath, json_encode($job, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    @rename($tmpPath, $path);
+}
+
+function updateProjectCloseJob($project_id, array $changes) {
+    $job = readProjectCloseJob($project_id);
+    if (!$job) {
+        $job = ['project_id' => (int)$project_id];
+    }
+    foreach ($changes as $key => $value) {
+        $job[$key] = $value;
+    }
+    writeProjectCloseJob($project_id, $job);
+    return $job;
+}
+
+// ---------- Access Check & Data ----------
+$availableProjects = fetchProjectsForUser($conn, $user_id, $user_role);
+if ($project_id > 0) {
+    // Verify access to selected project
+    $allowed = array_filter($availableProjects, fn($p) => intval($p['id']) === $project_id);
+    if (empty($allowed) && $user_role !== 'global_admin') {
+        die('You do not have access to this project.');
+    }
+    // For global admin, still verify project exists
+    if ($user_role === 'global_admin' && empty($allowed)) {
+        $row = fetchProjectRow($conn, $project_id);
+        if (!$row) { die('Project not found.'); }
+        $availableProjects[] = ['id' => $project_id, 'project_name' => $row['project_name']];
+    }
+}
+
+$project_row = $project_id ? fetchProjectRow($conn, $project_id) : null;
+$totals = $project_id ? fetchTotals($conn, $project_id) : [0,0,0];
+$default_summary_text = ($project_id && $project_row) ? buildDefaultSummaryText($project_row, $totals, $conn, $project_id) : '';
+
+if ($action === 'preview_summary' && $project_id > 0) {
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        $_SESSION['project_close_error'] = 'Please enter a project summary before previewing.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $_SESSION['project_close_summary'][$project_id] = $summary_text;
+        [$summaryPdfPath, $pdfOutput] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: inline; filename="Project_' . $project_id . '_Summary.pdf"');
+        echo $pdfOutput;
+        exit();
+    } catch (Throwable $e) {
+        $_SESSION['project_close_error'] = 'Summary preview failed: ' . $e->getMessage();
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+}
+
+if ($action === 'export' && $project_id > 0) {
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        $_SESSION['project_close_error'] = 'Please provide a written project summary to include in the export.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $_SESSION['project_close_summary'][$project_id] = $summary_text;
+        [$summaryPdfPath, ] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
+        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
+        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport);
+
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
+        header('Content-Length: ' . filesize($zipPath));
+
+        // Use chunked reading to avoid memory exhaustion on large files
+        $handle = fopen($zipPath, 'rb');
+        if ($handle) {
+            while (!feof($handle)) {
+                echo fread($handle, 8192); // Read 8KB at a time
+                flush();
+            }
+            fclose($handle);
+        }
+
+        // Cleanup
         @unlink($zipPath);
         $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
         $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
@@ -1618,16 +1645,235 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
             $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
         }
         @rmdir($tmpDir);
+        exit();
+    } catch (Throwable $e) {
+        $_SESSION['project_close_error'] = 'Export failed: ' . $e->getMessage();
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+}
 
-        // Redirect to archived projects page with success message
-        $_SESSION['archive_success'] = 'Project "' . htmlspecialchars($projectName) . '" has been successfully closed out and archived.';
+// Export data only (no summary PDF) - for non-admin users
+if ($action === 'export_data_only' && $project_id > 0) {
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
+        // Pass null for summaryPdfPath to skip summary in archive
+        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, null, $sustainabilityReport);
+
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
+        header('Content-Length: ' . filesize($zipPath));
+
+        $handle = fopen($zipPath, 'rb');
+        if ($handle) {
+            while (!feof($handle)) {
+                echo fread($handle, 8192);
+                flush();
+            }
+            fclose($handle);
+        }
+
+        // Cleanup
+        @unlink($zipPath);
+        $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
+        $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($files as $file) {
+            $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
+        }
+        @rmdir($tmpDir);
+        exit();
+    } catch (Throwable $e) {
+        $_SESSION['project_close_error'] = 'Export failed: ' . $e->getMessage();
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+}
+
+if ($action === 'close_project_status' && $project_id > 0) {
+    header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    if (!$canCloseProject) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Unauthorized']);
+        exit();
+    }
+    $job = readProjectCloseJob($project_id);
+    echo json_encode([
+        'ok' => true,
+        'job' => $job,
+    ]);
+    exit();
+}
+
+if ($action === 'start_close_project' && $project_id > 0) {
+    header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    if (!$canCloseProject) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Unauthorized']);
+        exit();
+    }
+
+    if (!$project_row || (($project_row['status'] ?? '') === 'closed')) {
+        http_response_code(409);
+        echo json_encode(['ok' => false, 'error' => 'This project is already closed.']);
+        exit();
+    }
+
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Please provide a project summary before closing out.']);
+        exit();
+    }
+
+    $existingJob = readProjectCloseJob($project_id);
+    if (is_array($existingJob) && in_array($existingJob['status'] ?? '', ['queued', 'running'], true)) {
+        echo json_encode(['ok' => true, 'job' => $existingJob]);
+        exit();
+    }
+
+    $_SESSION['project_close_summary'][$project_id] = $summary_text;
+
+    $job = [
+        'job_id' => uniqid('pc_', true),
+        'project_id' => $project_id,
+        'project_name' => $project_row['project_name'] ?? '',
+        'requested_by' => $user_id,
+        'status' => 'queued',
+        'progress' => 0,
+        'message' => 'Close-out queued',
+        'error' => null,
+        'started_at' => null,
+        'finished_at' => null,
+        'created_at' => date('c'),
+    ];
+    writeProjectCloseJob($project_id, $job);
+
+    $startPayload = json_encode(['ok' => true, 'job' => $job]);
+    if ($startPayload === false) {
+        $startPayload = '{"ok":true}';
+    }
+
+    if (!function_exists('fastcgi_finish_request')) {
+        header('Connection: close');
+        header('Content-Length: ' . strlen($startPayload));
+    }
+    echo $startPayload;
+
+    // Release the session lock so polling requests are not blocked.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
+    @ini_set('max_execution_time', '0');
+    @ignore_user_abort(true);
+
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        if (function_exists('apache_setenv')) {
+            @apache_setenv('no-gzip', '1');
+        }
+        @ini_set('zlib.output_compression', '0');
+        while (ob_get_level() > 0) {
+            @ob_end_flush();
+        }
+        @flush();
+    }
+
+    try {
+        updateProjectCloseJob($project_id, [
+            'status' => 'running',
+            'progress' => 1,
+            'message' => 'Starting close-out',
+            'started_at' => date('c'),
+            'error' => null,
+            'finished_at' => null,
+        ]);
+
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $result = executeProjectCloseout(
+            $conn,
+            $project_id,
+            $user_id,
+            $summary_text,
+            $user_row,
+            $project_row,
+            $totals,
+            static function ($progress, $message) use ($project_id) {
+                updateProjectCloseJob($project_id, [
+                    'status' => 'running',
+                    'progress' => (int)$progress,
+                    'message' => $message,
+                ]);
+            }
+        );
+
+        updateProjectCloseJob($project_id, [
+            'status' => 'completed',
+            'progress' => 100,
+            'message' => 'Close-out completed successfully',
+            'result' => $result,
+            'finished_at' => date('c'),
+            'error' => null,
+        ]);
+    } catch (Throwable $e) {
+        updateProjectCloseJob($project_id, [
+            'status' => 'failed',
+            'progress' => 100,
+            'message' => 'Close-out failed',
+            'error' => $e->getMessage(),
+            'finished_at' => date('c'),
+        ]);
+    }
+    exit();
+}
+
+// Synchronous fallback close-out project (admin only)
+if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
+    if (!$project_row || (($project_row['status'] ?? '') === 'closed')) {
+        $_SESSION['project_close_error'] = 'This project is already closed.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        $_SESSION['project_close_error'] = 'Please provide a project summary before closing out.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
+    @ini_set('max_execution_time', '0');
+    @ignore_user_abort(true);
+
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $_SESSION['project_close_summary'][$project_id] = $summary_text;
+        $result = executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $user_row, $project_row, $totals);
+
+        $_SESSION['archive_success'] = 'Project "' . htmlspecialchars($result['project_name'] ?? ($project_row['project_name'] ?? '')) . '" has been successfully closed out and archived.';
         header('Location: archived_projects.php');
         exit();
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         $_SESSION['project_close_error'] = 'Close-out failed: ' . $e->getMessage();
         header('Location: project_close.php?project_id=' . $project_id);
         exit();
     }
+}
+
+$active_close_job = ($canCloseProject && $project_id > 0) ? readProjectCloseJob($project_id) : null;
+$active_close_job_json = json_encode($active_close_job, JSON_UNESCAPED_SLASHES);
+if ($active_close_job_json === false) {
+    $active_close_job_json = 'null';
 }
 
 $flash_error = $_SESSION['project_close_error'] ?? '';
@@ -1895,6 +2141,26 @@ if ($posted_summary_text !== null) {
 </div>
 <?php endif; ?>
 
+<?php if ($canCloseProject && $project_id): ?>
+<div id="closeoutProgressModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width: 560px;">
+        <h3 style="margin: 0 0 10px; color: #1f3b4d;">Closing Out Project</h3>
+        <p id="closeoutProgressMessage" style="color: #4a5b6a; margin: 0 0 14px;">Preparing close-out...</p>
+        <div class="closeout-progress-track">
+            <div id="closeoutProgressBar" class="closeout-progress-bar" style="width: 0%;"></div>
+        </div>
+        <p id="closeoutProgressPercent" style="margin: 8px 0 12px; color: #1f3b4d; font-weight: 600;">0%</p>
+        <div id="closeoutProgressError" class="flash" style="display:none; margin: 0 0 12px;"></div>
+        <p style="margin: 0 0 14px; color: #5f6f7d; font-size: 13px;">
+            Large projects can take several minutes. You can keep this page open while processing continues.
+        </p>
+        <div style="display:flex; justify-content:flex-end;">
+            <button id="closeoutProgressCloseBtn" type="button" class="cta cta-secondary" style="display:none;" onclick="hideCloseoutProgressModal()">Close</button>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <style>
     .modal-overlay {
         position: fixed;
@@ -1926,12 +2192,28 @@ if ($posted_summary_text !== null) {
         animation: spin 1s linear infinite;
         margin: 0 auto;
     }
+    .closeout-progress-track {
+        width: 100%;
+        height: 12px;
+        border-radius: 999px;
+        background: #e9ecef;
+        overflow: hidden;
+    }
+    .closeout-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #4db6ac, #2c98a0);
+        transition: width 0.25s ease;
+    }
     @keyframes spin {
         to { transform: rotate(360deg); }
     }
 </style>
 
 <script>
+let closeoutStatusPollTimer = null;
+const closeoutProjectId = <?php echo (int)$project_id; ?>;
+const initialCloseoutJob = <?php echo $active_close_job_json; ?>;
+
 // Show loading modal on export
 document.addEventListener('DOMContentLoaded', function() {
     // For admin export form
@@ -1955,6 +2237,23 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     });
+
+    const closeoutForm = document.getElementById('closeoutForm');
+    if (closeoutForm) {
+        closeoutForm.addEventListener('submit', startAsyncCloseout);
+    }
+
+    if (initialCloseoutJob && (initialCloseoutJob.status === 'queued' || initialCloseoutJob.status === 'running')) {
+        showCloseoutProgressModal();
+        updateCloseoutProgress(initialCloseoutJob.progress || 0, initialCloseoutJob.message || 'Close-out is in progress...');
+        scheduleCloseoutStatusPoll(800);
+    } else if (initialCloseoutJob && initialCloseoutJob.status === 'completed') {
+        window.location.href = 'archived_projects.php';
+    } else if (initialCloseoutJob && initialCloseoutJob.status === 'failed') {
+        showCloseoutProgressModal();
+        updateCloseoutProgress(100, initialCloseoutJob.message || 'Close-out failed.');
+        showCloseoutError(initialCloseoutJob.error || 'Close-out failed. Please try again or check logs.');
+    }
 });
 
 function showLoadingModal() {
@@ -1977,6 +2276,157 @@ function showCloseoutConfirm() {
 
 function hideCloseoutConfirm() {
     document.getElementById('closeoutModal').style.display = 'none';
+}
+
+function showCloseoutProgressModal() {
+    const modal = document.getElementById('closeoutProgressModal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function hideCloseoutProgressModal() {
+    const modal = document.getElementById('closeoutProgressModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function updateCloseoutProgress(progress, message) {
+    const safeProgress = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+    const bar = document.getElementById('closeoutProgressBar');
+    const percent = document.getElementById('closeoutProgressPercent');
+    const text = document.getElementById('closeoutProgressMessage');
+    if (bar) {
+        bar.style.width = safeProgress + '%';
+    }
+    if (percent) {
+        percent.textContent = safeProgress + '%';
+    }
+    if (text && message) {
+        text.textContent = message;
+    }
+}
+
+function showCloseoutError(message) {
+    const errorEl = document.getElementById('closeoutProgressError');
+    const closeBtn = document.getElementById('closeoutProgressCloseBtn');
+    if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+    }
+    if (closeBtn) {
+        closeBtn.style.display = 'inline-flex';
+    }
+}
+
+function clearCloseoutError() {
+    const errorEl = document.getElementById('closeoutProgressError');
+    const closeBtn = document.getElementById('closeoutProgressCloseBtn');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+    if (closeBtn) {
+        closeBtn.style.display = 'none';
+    }
+}
+
+function scheduleCloseoutStatusPoll(delayMs) {
+    if (closeoutStatusPollTimer) {
+        clearTimeout(closeoutStatusPollTimer);
+    }
+    closeoutStatusPollTimer = setTimeout(fetchCloseoutStatus, delayMs || 2000);
+}
+
+async function startAsyncCloseout(e) {
+    e.preventDefault();
+
+    const closeoutForm = document.getElementById('closeoutForm');
+    if (!closeoutForm) {
+        return;
+    }
+
+    const summaryTextarea = document.querySelector('textarea[name="summary_text"]');
+    const summaryText = summaryTextarea ? summaryTextarea.value.trim() : '';
+    if (!summaryText) {
+        alert('Please provide a project summary before closing out.');
+        return;
+    }
+
+    showCloseoutProgressModal();
+    clearCloseoutError();
+    updateCloseoutProgress(1, 'Submitting close-out request...');
+
+    const formData = new FormData(closeoutForm);
+    formData.set('summary_text', summaryText);
+    formData.set('action', 'start_close_project');
+
+    try {
+        const response = await fetch('project_close.php?project_id=' + encodeURIComponent(closeoutProjectId), {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+            throw new Error(payload.error || 'Failed to start close-out job.');
+        }
+
+        hideCloseoutConfirm();
+        const queuedJob = payload.job || {};
+        updateCloseoutProgress(queuedJob.progress || 2, queuedJob.message || 'Close-out started');
+        scheduleCloseoutStatusPoll(600);
+    } catch (err) {
+        showCloseoutError(err.message || 'Failed to start close-out job.');
+    }
+}
+
+async function fetchCloseoutStatus() {
+    if (!closeoutProjectId) {
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            'project_close.php?action=close_project_status&project_id=' + encodeURIComponent(closeoutProjectId) + '&_ts=' + Date.now(),
+            {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                cache: 'no-store'
+            }
+        );
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.job) {
+            scheduleCloseoutStatusPoll(2500);
+            return;
+        }
+
+        const job = payload.job;
+        updateCloseoutProgress(job.progress || 0, job.message || 'Processing...');
+
+        if (job.status === 'completed') {
+            clearCloseoutError();
+            updateCloseoutProgress(100, 'Close-out completed. Redirecting to archived projects...');
+            setTimeout(function() {
+                window.location.href = 'archived_projects.php';
+            }, 1200);
+            return;
+        }
+
+        if (job.status === 'failed') {
+            showCloseoutError(job.error || 'Close-out failed. Please check the server logs.');
+            return;
+        }
+
+        scheduleCloseoutStatusPoll(1800);
+    } catch (err) {
+        scheduleCloseoutStatusPoll(2500);
+    }
 }
 
 // Close modals on escape key
