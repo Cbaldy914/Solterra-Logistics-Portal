@@ -797,7 +797,14 @@ function fetchTotals($conn, $project_id) {
     return [$total_order, $delivered, $percent];
 }
 
-function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport) {
+function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport, callable $progressCallback = null) {
+    $notify = static function ($progress, $message) use ($progressCallback) {
+        if ($progressCallback) {
+            $progressCallback((int)$progress, (string)$message);
+        }
+    };
+
+    $notify(2, 'Initializing archive workspace');
     [$total_order, $delivered, $percent] = $totals;
     $projectLabel = sanitizeFileName($project_row['project_name'] ?? 'project');
     $rootName = 'Project_' . ($projectLabel !== '' ? $projectLabel : $project_id);
@@ -807,6 +814,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
 
     // 00 Project Summary (PDF + metadata) - only if summary PDF was generated
     if ($summaryPdfPath && is_file($summaryPdfPath)) {
+        $notify(6, 'Adding summary files');
         $summaryDir = $rootPath . '/00_Project_Summary';
         ensureDir($summaryDir);
         @copy($summaryPdfPath, $summaryDir . '/project_summary.pdf');
@@ -824,6 +832,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     }
 
     // 02 Documents
+    $notify(12, 'Exporting project documents');
     $docsDir = $rootPath . '/02_Documents';
     ensureDir($docsDir);
     $stmtDocs = $conn->prepare('SELECT document_type, document_sub_type, original_file_name, file_path FROM project_documents WHERE project_id = ? AND is_active = 1');
@@ -842,6 +851,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     }
     $stmtDocs->close();
 
+    $notify(28, 'Exporting module, pallet, and movement data');
     // 03 Modules
     $modulesDir = $rootPath . '/03_Modules';
     ensureDir($modulesDir);
@@ -923,6 +933,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         writeCsv($modulesDir . '/pallet_movements.csv', ['message'], [['No pallet journey records found']]);
     }
 
+    $notify(42, 'Exporting deliveries and scheduling data');
     // 05 Deliveries
     $deliveriesDir = $rootPath . '/05_Deliveries';
     ensureDir($deliveriesDir);
@@ -978,6 +989,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         writeCsv($deliveriesDir . '/anticipated_schedule.csv', ['Date','Cumulative MW','Notes'], $rows);
     }
 
+    $notify(58, 'Exporting warehousing records');
     // 06 Warehousing
     $whDir = $rootPath . '/06_Warehousing';
     ensureDir($whDir);
@@ -1063,6 +1075,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         writeCsv($whDir . '/inventory_by_warehouse_index.csv', ['message'], [['No warehouse pallet records found for this project']]);
     }
 
+    $notify(70, 'Exporting financial summaries');
     // 07 Financials (pallet-level costs)
     $finDir = $rootPath . '/07_Financials';
     ensureDir($finDir);
@@ -1091,6 +1104,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         writeCsv($finDir . '/cost_details.csv', ['message'], [['No pallet costs found']]);
     }
 
+    $notify(78, 'Exporting sustainability metrics');
     // 08 Sustainability (export real data)
     $susDir = $rootPath . '/08_Sustainability';
     ensureDir($susDir);
@@ -1125,6 +1139,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $susTotals['generated_at'] = date('c');
     file_put_contents($susDir . '/sustainability_summary.json', json_encode($susTotals, JSON_PRETTY_PRINT));
 
+    $notify(86, 'Exporting warranty and exception records');
     // 09 Warranty / Exceptions
     $warrantyDir = $rootPath . '/09_Warranty_Exceptions';
     ensureDir($warrantyDir);
@@ -1150,6 +1165,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         writeCsv($warrantyDir . '/exceptions.csv', ['message'], [['No warranty/exception records found.']]);
     }
 
+    $notify(92, 'Exporting project photos and manifest');
     // 10 Photos (documents already include pictures, also export ordering if exists)
     $photosDir = $rootPath . '/10_Photos';
     ensureDir($photosDir);
@@ -1170,6 +1186,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     }
     $stmtPhoto->close();
 
+    $notify(94, 'Writing archive manifest');
     // README
     $readme = "Project Data Export Package
 " .
@@ -1207,6 +1224,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
 ";
     file_put_contents($rootPath . '/README.txt', $readme);
 
+    $notify(96, 'Compressing archive ZIP');
     // Zip
     $zipPath = $tempBase . '/' . $rootName . '.zip';
     $zip = new ZipArchive();
@@ -1216,6 +1234,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     addDirToZip($zip, $rootPath, strlen($rootPath));
     $zip->close();
 
+    $notify(100, 'Archive ZIP ready');
     return [$tempBase, $zipPath];
 }
 
@@ -1250,11 +1269,24 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $notify(12, 'Preparing sustainability report');
         $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
 
-        $notify(25, 'Building archive ZIP');
-        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport);
+        $notify(20, 'Building archive package');
+        [$tmpDir, $zipPath] = collectDataAndBuildArchive(
+            $conn,
+            $project_id,
+            $user_row,
+            $project_row,
+            $totals,
+            $summaryPdfPath,
+            $sustainabilityReport,
+            static function ($archiveProgress, $archiveMessage) use ($notify) {
+                $archiveProgress = max(0, min(100, (int)$archiveProgress));
+                $mappedProgress = 20 + (int)round($archiveProgress * 0.35); // 20..55
+                $notify($mappedProgress, $archiveMessage);
+            }
+        );
 
         // Create permanent archive directory
-        $notify(35, 'Saving archive to permanent storage');
+        $notify(56, 'Saving archive to permanent storage');
         $archiveDir = __DIR__ . '/uploads/archived_projects/' . $project_id;
         if (!is_dir($archiveDir)) {
             mkdir($archiveDir, 0755, true);
@@ -1272,7 +1304,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         }
 
         // Calculate comprehensive metrics for archiving
-        $notify(45, 'Calculating archive metrics');
+        $notify(60, 'Calculating archive metrics');
         $archivePath = 'uploads/archived_projects/' . $project_id . '/' . $archiveFilename;
         $accountId = $project_row['account_id'] ?? null;
         $projectName = $project_row['project_name'] ?? '';
@@ -1280,6 +1312,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
 
         // Cost metrics
         $moduleCostData = calculate_project_module_cost($project_id, $conn);
+        $notify(62, 'Calculating project cost totals');
         $totalModuleCost = $moduleCostData['total_cost'] ?? 0;
         $totalWattage = $moduleCostData['total_watts'] ?? 0;
 
@@ -1297,12 +1330,14 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $totalAccessorialCost += $totalCustomsHoldCost;
         $totalWarehousingCost = calculate_project_warehousing_cost($project_id, $conn);
 
+        $notify(64, 'Calculating sustainability totals');
         // Sustainability metrics (from sustainability report)
         $totalMiles = (float)($sustainabilityReport['total_miles_driven'] ?? 0);
         $totalFuelGallons = (float)($sustainabilityReport['total_fuel_consumption'] ?? ($totalMiles * 0.1667));
         $totalCo2Kg = (float)($sustainabilityReport['total_emissions'] ?? ($totalFuelGallons * 10.21));
         $totalTruckloads = (int)($sustainabilityReport['total_truckloads'] ?? 0);
 
+        $notify(66, 'Calculating manufacturer metrics');
         // Manufacturer metrics
         $stmtMfr = $conn->prepare('SELECT m.vendor_name, COUNT(DISTINCT ip.id) as pallet_count
             FROM modules m
@@ -1336,6 +1371,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtPallets->close();
         $totalPallets = (int)($palletRow['total_pallets'] ?? 0);
 
+        $notify(68, 'Calculating delivery performance');
         // Delivery performance metrics
         $stmtDelPerf = $conn->prepare('SELECT
             COUNT(DISTINCT id) as total_deliveries,
@@ -1365,6 +1401,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
             $projectCompletedOnTime = strtotime($lastDeliveryDate) <= strtotime($projectEndDate) ? 1 : 0;
         }
 
+        $notify(70, 'Calculating warranty and damage metrics');
         // Damage metrics
         $stmtDamage = $conn->prepare('SELECT
             COALESCE(SUM(ip.quantity), 0) as damaged_modules,
@@ -1382,7 +1419,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $warrantyClaimsCount = (int)($damageRow['warranty_claims'] ?? 0);
 
         // Insert archive record with all metrics
-        $notify(56, 'Writing archived project record');
+        $notify(74, 'Writing archived project record');
         $stmtArchive = $conn->prepare('INSERT INTO archived_projects
             (project_id, account_id, project_name, archive_path, archive_filename, file_size_bytes,
              closed_by, summary_text, delivery_percent, total_modules, delivered_modules,
@@ -1404,7 +1441,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtArchive->close();
 
         // Mark project as closed
-        $notify(62, 'Marking project as closed');
+        $notify(78, 'Marking project as closed');
         $stmtClose = $conn->prepare('UPDATE projects SET status = "closed" WHERE id = ?');
         $stmtClose->bind_param('i', $project_id);
         $stmtClose->execute();
@@ -1412,7 +1449,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
 
         // Delete bulk data from database (data is preserved in the ZIP archive)
         // Order matters due to foreign key constraints
-        $notify(68, 'Cleaning operational data');
+        $notify(82, 'Cleaning operational data');
 
         // 1. Delete warranty_claims linked to site_scheduling for this project
         $stmtDelWarranty = $conn->prepare('DELETE wc FROM warranty_claims wc
@@ -1421,6 +1458,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtDelWarranty->bind_param('i', $project_id);
         $stmtDelWarranty->execute();
         $stmtDelWarranty->close();
+        $notify(84, 'Removing warranty claims');
 
         // 2. Delete site_safety for this project
         $stmtDelSiteSafety = $conn->prepare('DELETE FROM site_safety WHERE project_id = ?');
@@ -1439,6 +1477,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtDelSiteHours->bind_param('i', $project_id);
         $stmtDelSiteHours->execute();
         $stmtDelSiteHours->close();
+        $notify(86, 'Removing site scheduling records');
 
         // 5. Delete delivery_pallets (links between deliveries and pallets)
         $stmtDelDP = $conn->prepare('DELETE dp FROM delivery_pallets dp
@@ -1447,6 +1486,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtDelDP->bind_param('i', $project_id);
         $stmtDelDP->execute();
         $stmtDelDP->close();
+        $notify(88, 'Removing delivery-to-pallet links');
 
         // 5b. Delete container tracking records for this project so archived/closed projects leave no tracking trails.
         $waypointsTableCheck = $conn->query("SHOW TABLES LIKE 'container_tracking_waypoints'");
@@ -1476,6 +1516,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
                 $stmtDelTrackingPositions->close();
             }
         }
+        $notify(90, 'Removing container tracking records');
 
         // 6. Delete inventory_pallets tied to modules for this project
         $stmtDelPallets = $conn->prepare('DELETE ip FROM inventory_pallets ip
@@ -1485,6 +1526,7 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtDelPallets->bind_param('i', $project_id);
         $stmtDelPallets->execute();
         $stmtDelPallets->close();
+        $notify(92, 'Removing pallets and module items');
 
         // 7. Delete unassigned_module_items tied to modules for this project
         $stmtDelModuleItems = $conn->prepare('DELETE umi FROM unassigned_module_items umi
@@ -1499,18 +1541,21 @@ function executeProjectCloseout($conn, $project_id, $user_id, $summary_text, $us
         $stmtDelModules->bind_param('i', $project_id);
         $stmtDelModules->execute();
         $stmtDelModules->close();
+        $notify(94, 'Removing module batches');
 
         // 9. Delete deliveries for this project
         $stmtDelDeliveries = $conn->prepare('DELETE FROM deliveries WHERE project_id = ?');
         $stmtDelDeliveries->bind_param('i', $project_id);
         $stmtDelDeliveries->execute();
         $stmtDelDeliveries->close();
+        $notify(96, 'Removing deliveries');
 
         // 10. Delete project_wattage_orders for this project
         $stmtDelWattageOrders = $conn->prepare('DELETE FROM project_wattage_orders WHERE project_id = ?');
         $stmtDelWattageOrders->bind_param('i', $project_id);
         $stmtDelWattageOrders->execute();
         $stmtDelWattageOrders->close();
+        $notify(98, 'Finalizing close-out');
 
         $notify(100, 'Close-out complete');
 
