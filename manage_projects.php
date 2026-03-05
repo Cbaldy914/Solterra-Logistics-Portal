@@ -69,9 +69,9 @@ if ($role === 'global_admin') {
         WHERE (p.status IS NULL OR p.status = 'active')
         ORDER BY c.name ASC, p.project_name ASC
     ";
-} elseif ($role === 'admin') {
-    // Look up the admin's single account_id
-    $sqlOne = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
+} elseif (in_array($role, ['admin', 'customer_admin'], true)) {
+    // Look up the account_id for account-scoped admin roles
+    $sqlOne = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role IN ('admin', 'customer_admin') LIMIT 1";
     $stmtOne = $conn->prepare($sqlOne);
     if (!$stmtOne) die("Error preparing account lookup: " . $conn->error);
     $stmtOne->bind_param("i", $user_id);
