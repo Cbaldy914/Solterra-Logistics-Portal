@@ -9,11 +9,11 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
     exit();
 }
 
-// Determine if user can close out projects (admin/global_admin only)
-$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
+// Determine if user can close out projects (Solterra admin roles only)
+$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin'], true);
 
-// Determine if user can create/edit project summaries (admin/global_admin only)
-$canEditSummary = in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
+// Determine if user can create/edit project summaries (Solterra admin roles only)
+$canEditSummary = in_array($_SESSION['role'], ['admin', 'global_admin'], true);
 
 require_once '../config.php';
 require_once 'document_helpers.php';
@@ -1633,6 +1633,12 @@ $totals = $project_id ? fetchTotals($conn, $project_id) : [0,0,0];
 $default_summary_text = ($project_id && $project_row) ? buildDefaultSummaryText($project_row, $totals, $conn, $project_id) : '';
 
 if ($action === 'preview_summary' && $project_id > 0) {
+    if (!$canEditSummary) {
+        $_SESSION['project_close_error'] = 'You are not authorized to preview project summary PDFs.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+
     $summary_text = trim($posted_summary_text ?? '');
     if ($summary_text === '') {
         $_SESSION['project_close_error'] = 'Please enter a project summary before previewing.';
@@ -1655,6 +1661,12 @@ if ($action === 'preview_summary' && $project_id > 0) {
 }
 
 if ($action === 'export' && $project_id > 0) {
+    if (!$canEditSummary) {
+        $_SESSION['project_close_error'] = 'You are not authorized to export with a project summary.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+
     $summary_text = trim($posted_summary_text ?? '');
     if ($summary_text === '') {
         $_SESSION['project_close_error'] = 'Please provide a written project summary to include in the export.';

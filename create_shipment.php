@@ -1847,7 +1847,7 @@ if (!empty($bolCompletionMessage)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Pallets - Solterra Logistics Portal</title>
+    <title><?php echo $can_manage_shipments ? 'Pallets & Shipments' : 'Pallet Inventory'; ?> - Solterra Logistics Portal</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -1932,6 +1932,92 @@ if (!empty($bolCompletionMessage)) {
             font-size: 1.1em;
             font-weight: 500;
             margin: 0;
+        }
+
+        .shipment-methods {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+        .method-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border: 2px solid rgba(72, 140, 154, 0.12);
+            border-radius: 16px;
+            padding: 20px 24px;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.2s ease;
+            cursor: default;
+        }
+        a.method-card {
+            cursor: pointer;
+        }
+        .method-card:hover {
+            border-color: rgba(72, 140, 154, 0.3);
+            box-shadow: 0 4px 16px rgba(72, 140, 154, 0.1);
+            transform: translateY(-1px);
+        }
+        .method-card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+            flex-shrink: 0;
+        }
+        .method-card-icon.manual {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+        .method-card-icon.import {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+        .method-card-body h3 {
+            margin: 0 0 4px 0;
+            font-size: 1.05em;
+            font-weight: 600;
+            color: #293E4C;
+        }
+        .method-card-body p {
+            margin: 0;
+            font-size: 0.9em;
+            color: #6c757d;
+            line-height: 1.45;
+        }
+        .method-card-body .method-steps {
+            margin: 8px 0 0 0;
+            padding: 0;
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .method-card-body .method-steps li {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 0.82em;
+            font-weight: 500;
+            color: #488C9A;
+        }
+        .method-card-body .method-steps li i {
+            font-size: 0.85em;
+        }
+        @media (max-width: 768px) {
+            .shipment-methods {
+                grid-template-columns: 1fr;
+            }
         }
 
         .header-right-stats {
@@ -2829,10 +2915,11 @@ if (!empty($bolCompletionMessage)) {
 <main>
     <?php
         require_once 'components/breadcrumbs.php';
+        $breadcrumb_label = $can_manage_shipments ? 'Pallets & Shipments' : 'Pallet Inventory';
         if ($project_id_from_url > 0) {
-            echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets', 'project_id' => (int)$project_id_from_url]);
+            echo slp_render_breadcrumbs(['current_label' => $breadcrumb_label, 'project_id' => (int)$project_id_from_url]);
         } else {
-            echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets']);
+            echo slp_render_breadcrumbs(['current_label' => $breadcrumb_label]);
         }
     ?>
 
@@ -2840,8 +2927,8 @@ if (!empty($bolCompletionMessage)) {
         <div class="header-content">
             <div class="header-left">
                 <div class="header-info">
-                    <h1>Manage Pallets</h1>
-                    <p class="header-subtitle">View pallet inventory and shipment activity</p>
+                    <h1><?php echo $can_manage_shipments ? 'Pallets & Shipments' : 'Pallet Inventory'; ?></h1>
+                    <p class="header-subtitle"><?php echo $can_manage_shipments ? 'Create shipments from your pallet inventory or import them in bulk' : 'View your pallet inventory and track shipment status'; ?></p>
                 </div>
             </div>
             <div class="header-right-stats">
@@ -2871,10 +2958,39 @@ if (!empty($bolCompletionMessage)) {
         </div>
     </div>
 
+    <?php if ($can_manage_shipments): ?>
+    <div class="shipment-methods">
+        <div class="method-card">
+            <div class="method-card-icon manual"><i class="fas fa-mouse-pointer"></i></div>
+            <div class="method-card-body">
+                <h3>Select & Ship</h3>
+                <p>Create a shipment by selecting pallets from the table below.</p>
+                <ul class="method-steps">
+                    <li><i class="fas fa-check-square"></i> Select pallets</li>
+                    <li><i class="fas fa-truck-loading"></i> Click "Create Shipment"</li>
+                    <li><i class="fas fa-file-alt"></i> Fill in shipment details</li>
+                </ul>
+            </div>
+        </div>
+        <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id=' . $project_id_from_url : ''; ?>" class="method-card">
+            <div class="method-card-icon import"><i class="fas fa-file-import"></i></div>
+            <div class="method-card-body">
+                <h3>Import Shipments</h3>
+                <p>Upload a CSV file to create shipments in bulk.</p>
+                <ul class="method-steps">
+                    <li><i class="fas fa-download"></i> Download template</li>
+                    <li><i class="fas fa-upload"></i> Upload CSV</li>
+                    <li><i class="fas fa-check-circle"></i> Review & confirm</li>
+                </ul>
+            </div>
+        </a>
+    </div>
+    <?php endif; ?>
+
     <?php if (!empty($sessionMessage)): ?>
         <?php $messageClass = (strpos(strtolower($sessionMessage), 'error') !== false) ? 'error-message' : 'success-message'; ?>
         <div class="<?php echo $messageClass; ?>">
-            <strong><?php 
+            <strong><?php
                 // Allow HTML in success messages (for scheduling links), but escape error messages
                 if ($messageClass === 'success-message') {
                     echo $sessionMessage;
@@ -2894,8 +3010,7 @@ if (!empty($bolCompletionMessage)) {
             <input type="hidden" name="action" value="ship_pallets">
             
             <div class="pallets-section">
-                <h2 class="section-title" style="display:none;">Select Pallets to Create Shipment</h2>
-                <!-- New Unified Filter Bar -->
+                <!-- Unified Filter Bar -->
                 <div class="filter-section">
                     <div class="filter-header">
                         <h2 class="filter-title"><i class="fas fa-filter"></i> Filter Pallets</h2>
@@ -2945,7 +3060,7 @@ if (!empty($bolCompletionMessage)) {
                 </div>
 
                 <!-- Section Title (moved below filters) -->
-                <h2 class="section-title"><?php echo $can_manage_shipments ? 'Select Pallets to Create Shipment' : 'Pallet Inventory'; ?></h2>
+                <h2 class="section-title">Pallet Inventory</h2>
 
                 <!-- Legacy controls (hidden) -->
                 <div class="filters-container" style="display:none; margin-bottom: 15px; justify-content: space-between; align-items: flex-start; gap: 20px;">
