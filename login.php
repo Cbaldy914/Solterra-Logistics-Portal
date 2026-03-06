@@ -91,6 +91,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $log_stmt->execute();
             $log_stmt->close();
 
+            // Rotate session ID after authentication to prevent session fixation.
+            session_regenerate_id(true);
+
             // Set session variables
             $_SESSION['user_id'] = $user_id;
             $_SESSION['username'] = $username;

@@ -10,8 +10,15 @@ session_start();
 
 header('Content-Type: application/json');
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed']);
+    exit();
+}
+
 // Only global admin can access this API
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'global_admin') {
+    http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Unauthorized access']);
     exit();
 }
@@ -21,6 +28,14 @@ require_once '../../config.php';
 $conn = getDBConnection();
 if (!$conn) {
     echo json_encode(['success' => false, 'message' => 'Database connection failed']);
+    exit();
+}
+
+$sessionCsrf = $_SESSION['admin_management_csrf_token'] ?? '';
+$requestCsrf = (string)($_POST['csrf_token'] ?? '');
+if ($sessionCsrf === '' || $requestCsrf === '' || !hash_equals($sessionCsrf, $requestCsrf)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Invalid request token']);
     exit();
 }
 

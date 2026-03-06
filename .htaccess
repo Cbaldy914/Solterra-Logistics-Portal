@@ -1,5 +1,16 @@
 RewriteEngine On
 
+# Block direct access to debug utilities, dumps, logs, and internal docs
+<FilesMatch "^(phpinfo\.php|ping\.php|apply_schema\.php|debug_schema\.php|error_log)$">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "\.(sql|log|md)$">
+    Require all denied
+</FilesMatch>
+
+RewriteRule ^(?:docs|migrations|vendor_old)(?:/|$) - [F,L,NC]
+
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
