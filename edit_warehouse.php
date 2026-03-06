@@ -1032,22 +1032,22 @@ if (!$warehouse && empty($successMessage)) {
                 <div class="form-row single">
                     <div class="form-group">
                         <label for="street_address">Street Address</label>
-                        <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($warehouse['street_address'] ?? ''); ?>" placeholder="123 Main Street">
+                        <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($warehouse['street_address'] ?? ''); ?>" placeholder="123 Example Street">
                     </div>
                 </div>
 
                 <div class="address-grid">
                     <div class="form-group">
                         <label for="city">City</label>
-                        <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($warehouse['city'] ?? ''); ?>" placeholder="Phoenix">
+                        <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($warehouse['city'] ?? ''); ?>" placeholder="City">
                     </div>
                     <div class="form-group">
                         <label for="state">State/Province</label>
-                        <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($warehouse['state'] ?? ''); ?>" placeholder="AZ">
+                        <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($warehouse['state'] ?? ''); ?>" placeholder="State/Province">
                     </div>
                     <div class="form-group">
                         <label for="zip_code">ZIP/Postal Code</label>
-                        <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($warehouse['zip_code'] ?? ''); ?>" placeholder="85001">
+                        <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($warehouse['zip_code'] ?? ''); ?>" placeholder="Postal Code">
                     </div>
                     <div class="form-group">
                         <label for="country">Country</label>

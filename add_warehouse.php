@@ -970,7 +970,7 @@ $conn->close();
                 <div class="form-row single">
                     <div class="form-group" id="name-group">
                         <label for="name">Warehouse Name <span class="required-star">*</span></label>
-                        <input type="text" id="name" name="name" required placeholder="e.g., Charlotte Distribution Center">
+                        <input type="text" id="name" name="name" required placeholder="e.g., Regional Distribution Center">
                         <span class="help-text">A unique, descriptive name for this facility</span>
                         <span class="error-message">Please enter a warehouse name</span>
                     </div>
@@ -1007,22 +1007,22 @@ $conn->close();
                 <div class="form-row single">
                     <div class="form-group">
                         <label for="street_address">Street Address</label>
-                        <input type="text" id="street_address" name="street_address" placeholder="5430 Franklin Springs Circle">
+                        <input type="text" id="street_address" name="street_address" placeholder="123 Example Street">
                     </div>
                 </div>
 
                 <div class="address-grid">
                     <div class="form-group">
                         <label for="city">City</label>
-                        <input type="text" id="city" name="city" placeholder="Charlotte">
+                        <input type="text" id="city" name="city" placeholder="City">
                     </div>
                     <div class="form-group">
                         <label for="state">State/Province</label>
-                        <input type="text" id="state" name="state" placeholder="NC">
+                        <input type="text" id="state" name="state" placeholder="State/Province">
                     </div>
                     <div class="form-group">
                         <label for="zip_code">Zip/Postal Code</label>
-                        <input type="text" id="zip_code" name="zip_code" placeholder="28217">
+                        <input type="text" id="zip_code" name="zip_code" placeholder="Postal Code">
                     </div>
                     <div class="form-group">
                         <label for="country">Country</label>

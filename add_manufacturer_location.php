@@ -592,7 +592,7 @@ $conn->close();
         <div class="section-title">Location Information</div>
         
         <label for="location_name">Location Name: <span style="color: red;">*</span></label>
-        <input type="text" id="location_name" name="location_name" required placeholder="e.g., Phoenix Warehouse, Main Office, Distribution Center" value="<?php echo htmlspecialchars(slp_form_value('location_name', $request_data)); ?>">
+        <input type="text" id="location_name" name="location_name" required placeholder="e.g., Main Warehouse, Main Office, Distribution Center" value="<?php echo htmlspecialchars(slp_form_value('location_name', $request_data)); ?>">
         <div class="form-note">Descriptive name to identify this location</div>
 
         <div class="section-title">Address <span style="color: red;">*</span></div>
@@ -601,19 +601,19 @@ $conn->close();
         <div class="address-grid">
             <div>
                 <label for="street_address" style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
-                <input type="text" id="street_address" name="street_address" placeholder="123 Industrial Blvd" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
+                <input type="text" id="street_address" name="street_address" placeholder="123 Example Street" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
             </div>
             <div>
                 <label for="city" style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
-                <input type="text" id="city" name="city" placeholder="Phoenix" value="<?php echo htmlspecialchars(slp_form_value('city', $request_data)); ?>">
+                <input type="text" id="city" name="city" placeholder="City" value="<?php echo htmlspecialchars(slp_form_value('city', $request_data)); ?>">
             </div>
             <div>
                 <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State/Province:</label>
-                <input type="text" id="state" name="state" placeholder="AZ" value="<?php echo htmlspecialchars(slp_form_value('state', $request_data)); ?>">
+                <input type="text" id="state" name="state" placeholder="State/Province" value="<?php echo htmlspecialchars(slp_form_value('state', $request_data)); ?>">
             </div>
             <div>
                 <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip/Postal Code:</label>
-                <input type="text" id="zip_code" name="zip_code" placeholder="85281" value="<?php echo htmlspecialchars(slp_form_value('zip_code', $request_data)); ?>">
+                <input type="text" id="zip_code" name="zip_code" placeholder="Postal Code" value="<?php echo htmlspecialchars(slp_form_value('zip_code', $request_data)); ?>">
             </div>
         </div>
 

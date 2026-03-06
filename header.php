@@ -430,6 +430,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="modules" role="menuitem">Manage Modules</a>
               <a href="add_module_batch" role="menuitem">Add Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
+              <a href="manage_pallets" role="menuitem">View Pallets</a>
             </div>
           </li>
 
@@ -439,6 +440,9 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="add_warehouse" role="menuitem">Add Warehouse</a>
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
               <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
+              <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
+              <a href="warehouse_estimate" role="menuitem">Warehouse Quotes</a>
+              <a href="admin_warehouse_estimate" role="menuitem">Manage Warehouse Quotes</a>
             </div>
           </li>
 
@@ -465,6 +469,8 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="create_shipment" role="menuitem">Create Shipment</a>
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
               <a href="container_tracking" role="menuitem">Container ETA Tracker</a>
+              <a href="freight_estimate" role="menuitem">Freight Estimate</a>
+              <a href="admin_freight_estimates" role="menuitem">Manage Freight Estimates</a>
             </div>
           </li>
 

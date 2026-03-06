@@ -510,7 +510,7 @@ $conn->close();
             </div>
 
             <label for="warehouse_location">Location Reference <span class="required">*</span></label>
-            <input type="text" id="warehouse_location" name="warehouse_location" placeholder="e.g., Phoenix, AZ" required>
+            <input type="text" id="warehouse_location" name="warehouse_location" placeholder="e.g., City, State" required>
             <p style="font-size: 0.85em; color: #6b7280; margin: 4px 0 12px;">Auto-populated from warehouse, override if needed</p>
 
             <div class="fee-grid">

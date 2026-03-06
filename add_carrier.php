@@ -357,21 +357,21 @@ $conn->close();
                 <div class="form-row single">
                     <div class="form-group">
                         <label for="street_address">Street Address</label>
-                        <input type="text" id="street_address" name="street_address" placeholder="123 Logistics Blvd" value="<?php echo htmlspecialchars($_POST['street_address'] ?? ''); ?>">
+                        <input type="text" id="street_address" name="street_address" placeholder="123 Example Street" value="<?php echo htmlspecialchars($_POST['street_address'] ?? ''); ?>">
                     </div>
                 </div>
                 <div class="form-row quad">
                     <div class="form-group">
                         <label for="city">City</label>
-                        <input type="text" id="city" name="city" placeholder="Phoenix" value="<?php echo htmlspecialchars($_POST['city'] ?? ''); ?>">
+                        <input type="text" id="city" name="city" placeholder="City" value="<?php echo htmlspecialchars($_POST['city'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
                         <label for="state">State</label>
-                        <input type="text" id="state" name="state" placeholder="AZ" value="<?php echo htmlspecialchars($_POST['state'] ?? ''); ?>">
+                        <input type="text" id="state" name="state" placeholder="State/Province" value="<?php echo htmlspecialchars($_POST['state'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
                         <label for="zip_code">Zip Code</label>
-                        <input type="text" id="zip_code" name="zip_code" placeholder="85281" value="<?php echo htmlspecialchars($_POST['zip_code'] ?? ''); ?>">
+                        <input type="text" id="zip_code" name="zip_code" placeholder="Postal Code" value="<?php echo htmlspecialchars($_POST['zip_code'] ?? ''); ?>">
                     </div>
                     <div class="form-group">
                         <label for="country">Country</label>
