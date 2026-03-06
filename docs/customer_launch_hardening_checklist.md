@@ -340,3 +340,4 @@ This is the highest-value first batch to implement next:
 - 2026-03-06: Hardened remaining standalone destructive endpoints and authenticated notification/projection delete flows with `POST + CSRF`, including project delete, warehouse delete, future project delete, module batch delete, notification bulk actions, and projection delete.
 - 2026-03-06: Added CSRF enforcement to projection save/link APIs and required a request token for notification read-through links.
 - 2026-03-06: Added CSRF protection to planning scenario mutations in `api/planning_scenarios.php` and direct scenario-management forms in `scenario_detail.php`.
+- 2026-03-06: Added baseline browser security headers at the app layer via `.htaccess`, including HSTS, nosniff, frame protection, referrer policy, permissions policy, and a conservative CSP.
