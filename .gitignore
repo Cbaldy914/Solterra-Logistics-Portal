@@ -6,6 +6,9 @@ node_modules/
 config.php
 .env
 .env.*
+env.php
+**/env.local.php
+dev.solterrasol.com/env.php
 
 # Logs and cache
 *.log
