@@ -224,6 +224,12 @@ function send_notification_email(int $userId, string $title, string $message, ?s
 function mark_notification_read_if_requested(): void {
     if (isset($_GET['mark_read']) && is_numeric($_GET['mark_read'])) {
         if (isset($_SESSION['user_id'])) {
+            $token = (string)($_GET['mark_read_token'] ?? '');
+            $sessionToken = (string)($_SESSION['csrf_token'] ?? '');
+            if ($sessionToken === '' || $token === '' || !hash_equals($sessionToken, $token)) {
+                return;
+            }
+
             $userId = $_SESSION['user_id'];
             $notifId = (int)$_GET['mark_read'];
             

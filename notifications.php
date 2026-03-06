@@ -585,8 +585,9 @@ $conn->close();
                                     <span><?php echo date('M j, Y g:i A', strtotime($notif['created_at'])); ?></span>
                                 </div>
                                 <?php if (!empty($notif['link'])): ?>
+                                    <?php $markReadSeparator = strpos($notif['link'], '?') === false ? '?' : '&'; ?>
                                     <div class="notification-link">
-                                        <a href="<?php echo htmlspecialchars($notif['link']); ?>?mark_read=<?php echo $notif['id']; ?>" class="btn btn-primary">
+                                        <a href="<?php echo htmlspecialchars($notif['link'] . $markReadSeparator . 'mark_read=' . urlencode((string)$notif['id']) . '&mark_read_token=' . urlencode((string)$_SESSION['csrf_token'])); ?>" class="btn btn-primary">
                                             View Details →
                                         </a>
                                     </div>

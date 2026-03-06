@@ -22,6 +22,10 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 $role = isset($_SESSION['role']) ? $_SESSION['role'] : 'user';
 $user_id = $_SESSION['user_id'];
 
@@ -91,6 +95,10 @@ $message = '';
 $messageType = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])) {
+        $message = 'Invalid request token.';
+        $messageType = 'error';
+    } else {
     $action = $_POST['action'] ?? '';
 
     switch ($action) {
@@ -246,6 +254,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmt->close();
             break;
+    }
     }
 }
 
@@ -1200,6 +1209,7 @@ $conn->close();
             <?php endif; ?>
             <form method="POST" class="inline-form">
                 <input type="hidden" name="action" value="add_manufacturer">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 <div class="planning-form-group">
                     <label>Add Manufacturer</label>
                     <input type="text" name="manufacturer_name" placeholder="e.g., JA Solar" required>
@@ -1263,6 +1273,7 @@ $conn->close();
 
             <form method="POST" class="inline-form">
                 <input type="hidden" name="action" value="add_contract">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 <div class="planning-form-group">
                     <label>Contract Name</label>
                     <input type="text" name="contract_name" placeholder="e.g., 2025 Supply Agreement" required>
@@ -1341,6 +1352,7 @@ $conn->close();
             <?php endif; ?>
             <form method="POST" class="inline-form">
                 <input type="hidden" name="action" value="add_project">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 <div class="planning-form-group">
                     <label>Project Name</label>
                     <input type="text" name="project_name" placeholder="e.g., Solar Farm Alpha" required>
@@ -1402,6 +1414,7 @@ $conn->close();
                                     <td class="actions">
                                         <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this allocation?')">
                                             <input type="hidden" name="action" value="delete_allocation">
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                                             <input type="hidden" name="allocation_id" value="<?php echo $alloc['id']; ?>">
                                             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
                                         </form>
@@ -1416,6 +1429,7 @@ $conn->close();
             <?php if (!empty($plannedProjects) && !empty($contracts)): ?>
                 <form method="POST" class="inline-form">
                     <input type="hidden" name="action" value="add_allocation">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                     <div class="planning-form-group">
                         <label>Project</label>
                         <select name="project_id" required>
@@ -1473,6 +1487,7 @@ $conn->close();
             <div class="card-body">
                 <form method="POST">
                     <input type="hidden" name="action" value="update_scenario">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                     <div class="planning-form-group">
                         <label>Scenario Name</label>
                         <input type="text" name="scenario_name" value="<?php echo htmlspecialchars($scenario['name']); ?>" required>
@@ -1509,6 +1524,7 @@ $conn->close();
         </div>
         <form method="POST">
             <input type="hidden" name="action" value="request_activation">
+            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
             <div class="planning-modal-body">
                 <p style="margin-bottom: 20px; color: #6c757d;">
                     Submitting an activation request will notify Solterra administrators to review your scenario and convert it to active projects.
