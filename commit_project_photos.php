@@ -4,6 +4,7 @@ session_name('logistics_session');
 session_start();
 
 if (!isset($_SESSION['user_id'])) { http_response_code(401); echo json_encode(['success'=>false,'message'=>'Not logged in']); exit(); }
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); echo json_encode(['success'=>false,'message'=>'Method not allowed']); exit(); }
 $user_id = intval($_SESSION['user_id']);
 $role = $_SESSION['role'] ?? 'user';
 
@@ -13,6 +14,13 @@ $conn = getDBConnection();
 if (!$conn) { http_response_code(500); echo json_encode(['success'=>false,'message'=>'DB connection failed']); exit(); }
 
 $payload = json_decode(file_get_contents('php://input'), true);
+$sessionCsrf = $_SESSION['csrf_token'] ?? '';
+$requestCsrf = (string)($payload['csrf_token'] ?? '');
+if ($sessionCsrf === '' || $requestCsrf === '' || !hash_equals($sessionCsrf, $requestCsrf)) {
+  http_response_code(403);
+  echo json_encode(['success'=>false,'message'=>'Invalid request token']);
+  exit();
+}
 $project_id = intval($payload['project_id'] ?? 0);
 $token = preg_replace('/[^A-Za-z0-9_-]/','', $payload['token'] ?? '');
 $order = $payload['order'] ?? [];
@@ -92,4 +100,3 @@ echo json_encode(['success'=>true]);
 $conn->close();
 exit();
 ?>
-

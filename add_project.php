@@ -2,6 +2,7 @@
 
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 
 // 2) Ensure user has role admin, global_admin, or customer_admin
@@ -2137,6 +2138,7 @@ function submitForm() {
 
 // Photo upload handling
 (function() {
+    const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
     const profilePreview = document.getElementById('profileImagePreview');
     const profileImg = document.getElementById('profileImageImg');
     const input = document.getElementById('prePhotoInput');
@@ -2184,6 +2186,7 @@ function submitForm() {
         const fd = new FormData();
         fd.append('file', file);
         fd.append('token', token.value);
+        fd.append('csrf_token', csrfToken);
         const previousPhoto = currentPhoto;
 
         try {
@@ -2254,7 +2257,7 @@ function submitForm() {
             await fetch('delete_temp_photo.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: token.value, name })
+                body: JSON.stringify({ token: token.value, name, csrf_token: csrfToken })
             });
         } catch (err) {
             console.warn('Failed to delete temp photo', err);

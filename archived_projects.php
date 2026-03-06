@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // Allow access for all roles
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin', 'user'])) {
@@ -38,6 +39,11 @@ unset($_SESSION['archive_success']);
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_archive_id'])) {
     if (!$canDeleteArchives) {
         $_SESSION['archive_error'] = 'You do not have permission to delete archived projects.';
+        header('Location: archived_projects.php');
+        exit();
+    }
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf_token'])) {
+        $_SESSION['archive_error'] = 'Invalid request token.';
         header('Location: archived_projects.php');
         exit();
     }
@@ -690,6 +696,7 @@ $conn->close();
                     <?php if ($canDeleteArchives): ?>
                     <form method="POST" onsubmit="return confirm('Permanently delete the archived project \"<?php echo htmlspecialchars(addslashes($archive['project_name'] ?? ''), ENT_QUOTES); ?>\" and all associated data? This cannot be undone.');">
                         <input type="hidden" name="delete_archive_id" value="<?php echo (int)$archive['id']; ?>">
+                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                         <button type="submit" class="icon-btn icon-btn-delete" aria-label="Delete project">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                 <path d="M9 3h6l1 2h5v2H3V5h5l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM6 9h2v9H6V9z"/>
@@ -769,6 +776,7 @@ $conn->close();
                                 <?php if ($canDeleteArchives): ?>
                                 <form method="POST" onsubmit="return confirm('Permanently delete the archived project \"<?php echo htmlspecialchars(addslashes($archive['project_name'] ?? ''), ENT_QUOTES); ?>\" and all associated data? This cannot be undone.');">
                                     <input type="hidden" name="delete_archive_id" value="<?php echo (int)$archive['id']; ?>">
+                                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                                     <button type="submit" class="icon-btn icon-btn-delete" aria-label="Delete project">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                             <path d="M9 3h6l1 2h5v2H3V5h5l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM6 9h2v9H6V9z"/>

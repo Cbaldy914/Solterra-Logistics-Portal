@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -18,8 +19,13 @@ if (!$conn) {
 }
 
 // Handle estimate deletion
-if (isset($_GET['delete_estimate'])) {
-    $estimate_id_to_delete = intval($_GET['delete_estimate']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_estimate'])) {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf_token'])) {
+        $_SESSION['calc_message'] = ['type' => 'error', 'text' => 'Invalid request token.'];
+        header("Location: cost_estimate_calculator");
+        exit();
+    }
+    $estimate_id_to_delete = intval($_POST['delete_estimate']);
     $stmt = $conn->prepare("DELETE FROM warehouse_estimates WHERE id = ? AND user_id = ? AND app_type = 'calculator'");
     $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
     if ($stmt->execute()) {
@@ -1892,7 +1898,24 @@ function closeSavedEstimates() {
 
 function deleteEstimate(id) {
     if (confirm('Are you sure you want to delete this estimate?')) {
-        window.location.href = `cost_estimate_calculator.php?delete_estimate=${id}`;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = 'cost_estimate_calculator.php';
+
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'delete_estimate';
+        idInput.value = id;
+        form.appendChild(idInput);
+
+        const csrfInput = document.createElement('input');
+        csrfInput.type = 'hidden';
+        csrfInput.name = 'csrf_token';
+        csrfInput.value = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+        form.appendChild(csrfInput);
+
+        document.body.appendChild(form);
+        form.submit();
     }
 }
 

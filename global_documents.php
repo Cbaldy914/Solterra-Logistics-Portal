@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -3192,6 +3193,8 @@ async function exportToCSV() {
     }
 }
 
+const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+
 // Delete selected documents
 async function deleteSelected() {
     if (selectedDocuments.size === 0) {
@@ -3215,7 +3218,7 @@ async function deleteSelected() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ ids: documentIds })
+            body: JSON.stringify({ ids: documentIds, csrf_token: csrfToken })
         });
         
         const result = await response.json();
@@ -3697,6 +3700,7 @@ async function uploadDocuments() {
     selectedFiles.forEach(file => {
         formData.append('files[]', file);
     });
+    formData.append('csrf_token', csrfToken);
     
     // Show progress
     document.getElementById('uploadProgress').style.display = 'block';

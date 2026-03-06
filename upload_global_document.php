@@ -18,6 +18,19 @@ if (!in_array($user_role, ['admin', 'global_admin', 'customer_admin'])) {
     echo json_encode(['success' => false, 'message' => 'Insufficient permissions']);
     exit();
 }
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed']);
+    exit();
+}
+
+$sessionCsrf = $_SESSION['csrf_token'] ?? '';
+$requestCsrf = (string)($_POST['csrf_token'] ?? '');
+if ($sessionCsrf === '' || $requestCsrf === '' || !hash_equals($sessionCsrf, $requestCsrf)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Invalid request token']);
+    exit();
+}
 
 // Database connection
 require_once '../config.php';
