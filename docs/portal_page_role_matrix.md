@@ -45,6 +45,12 @@ This is the operational source for page purpose + role behavior used by Sunny pa
 - `admin`: browse/download/upload/manage in account scope
 - `global_admin`: browse/download/upload/manage globally
 
+`internal_quote_admins_only`
+- `user`: no access
+- `customer_admin`: no access
+- `admin`: review and respond to pricing requests in assigned account scope
+- `global_admin`: review and respond to pricing requests globally
+
 `custom`
 - role behavior is page-specific and defined directly in [page-context-map.php](/mnt/c/xampp/htdocs/Solterra-Solutions/Solterra-Logistics-Portal/ai-assistant/config/page-context-map.php).
 
@@ -79,12 +85,12 @@ This table covers all pages currently modeled in Sunny page context.
 | pods.php | Proof of Delivery | all_read_with_admin_actions | user, customer_admin, admin, global_admin | scheduling, manage_deliveries, global_documents |
 | ftd.php | Flash Test Data | all_read | user, customer_admin, admin, global_admin | module_overview, global_documents, project_overview |
 | freight_estimate.php | Freight Estimate | all_personal_workspace | user, customer_admin, admin, global_admin | admin_freight_estimates, create_shipment, module_cost_analysis |
-| admin_freight_estimates.php | Admin Freight Estimates | account_admins_only | customer_admin, admin, global_admin | freight_estimate, create_shipment, module_cost_analysis |
+| admin_freight_estimates.php | Admin Freight Estimates | internal_quote_admins_only | admin, global_admin | freight_estimate, create_shipment, module_cost_analysis |
 | generate_bol.php | Generate BOL | account_admins_only | customer_admin, admin, global_admin | create_shipment, bills_of_lading, global_documents |
 | warehousing_overview.php | Warehousing Overview | all_read_with_admin_actions | user, customer_admin, admin, global_admin | warehouse, cost_estimate_calculator, warehouse_optimization, warehouse_estimate |
 | warehouse.php | Warehouse Inventory | all_read_with_admin_actions | user, customer_admin, admin, global_admin | warehousing_overview, create_shipment, module_movements, pods |
 | add_warehouse.php | Add Warehouse | account_admins_only | customer_admin, admin, global_admin | warehousing_overview, warehouse, admin_warehouse_estimate |
-| admin_warehouse_estimate.php | Admin Warehouse Estimate | account_admins_only | customer_admin, admin, global_admin | warehouse_estimate, warehousing_overview, accounting |
+| admin_warehouse_estimate.php | Admin Warehouse Estimate | internal_quote_admins_only | admin, global_admin | warehouse_estimate, warehousing_overview, accounting |
 | warehouse_estimate.php | Warehouse Estimate | all_personal_workspace | user, customer_admin, admin, global_admin | admin_warehouse_estimate, warehousing_overview |
 | cost_estimate_calculator.php | Cost Estimate Calculator | all_personal_workspace | user, customer_admin, admin, global_admin | warehousing_overview, warehouse_estimate, warehouse_optimization |
 | warehouse_optimization.php | Warehouse Optimization | all_personal_workspace | user, customer_admin, admin, global_admin | cost_estimate_calculator, warehousing_overview |
@@ -111,9 +117,9 @@ This table covers all pages currently modeled in Sunny page context.
 | accounts_payable_info.php | Accounts Payable Detail | global_only | global_admin | accounts_payable, accounting, total_payables |
 | add_delivery.php | Add Delivery | account_admins_only | customer_admin, admin, global_admin | manage_deliveries, create_shipment, scheduling |
 | add_manufacturer_location.php | Add Manufacturer Location | custom | customer_admin, admin, global_admin | manufacturer_locations, manufacturers, add_manufacturer |
-| admin_freight_estimate_view.php | Admin Freight Estimate Detail | account_admins_only | customer_admin, admin, global_admin | admin_freight_estimates, freight_estimate |
+| admin_freight_estimate_view.php | Admin Freight Estimate Detail | internal_quote_admins_only | admin, global_admin | admin_freight_estimates, freight_estimate |
 | admin_login_attempts.php | Admin Login Attempts | global_only | global_admin | admin_management, account_settings |
-| admin_warehouse_estimate_view.php | Admin Warehouse Estimate Detail | account_admins_only | customer_admin, admin, global_admin | admin_warehouse_estimate, warehouse_estimate |
+| admin_warehouse_estimate_view.php | Admin Warehouse Estimate Detail | internal_quote_admins_only | admin, global_admin | admin_warehouse_estimate, warehouse_estimate |
 | assign_warehouse.php | Assign Warehouse (Legacy) | global_only | global_admin | warehousing_overview, warehouse, manage_projects |
 | calculator_results.php | Calculator Results | all_personal_workspace | user, customer_admin, admin, global_admin | cost_estimate_calculator, view_estimate |
 | create_replacements.php | Create Replacements | account_admins_only | customer_admin, admin, global_admin | warranty, warranty_detail, warranty_create |

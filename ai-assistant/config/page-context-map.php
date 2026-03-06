@@ -43,6 +43,12 @@ $profiles = [
         'admin' => 'Can browse, download, and upload/manage documents in account scope.',
         'global_admin' => 'Can browse, download, upload, and manage documents across all accounts.',
     ],
+    'internal_quote_admins_only' => [
+        'user' => 'No access.',
+        'customer_admin' => 'No access.',
+        'admin' => 'Can review and respond to pricing requests in assigned account scope.',
+        'global_admin' => 'Can review and respond to pricing requests globally.',
+    ],
 ];
 
 return [
@@ -287,8 +293,8 @@ return [
             'help' => 'Help admins review requests, estimate outcomes, and move estimates through approval/response flow.',
             'actions' => ['Review freight requests', 'Respond with quotes', 'Manage estimate pipeline'],
             'supporting_pages' => ['freight_estimate', 'create_shipment', 'module_cost_analysis'],
-            'access_roles' => ['customer_admin', 'admin', 'global_admin'],
-            'role_capabilities' => $profiles['account_admins_only'],
+            'access_roles' => ['admin', 'global_admin'],
+            'role_capabilities' => $profiles['internal_quote_admins_only'],
         ],
         'generate_bol' => [
             'name' => 'Generate BOL',
@@ -332,8 +338,8 @@ return [
             'help' => 'Help admins evaluate and manage warehouse quote requests and quote history.',
             'actions' => ['Review warehouse quote requests', 'Respond/manage quote records'],
             'supporting_pages' => ['warehouse_estimate', 'warehousing_overview', 'accounting'],
-            'access_roles' => ['customer_admin', 'admin', 'global_admin'],
-            'role_capabilities' => $profiles['account_admins_only'],
+            'access_roles' => ['admin', 'global_admin'],
+            'role_capabilities' => $profiles['internal_quote_admins_only'],
         ],
         'warehouse_estimate' => [
             'name' => 'Warehouse Estimate',
@@ -605,8 +611,8 @@ return [
             'help' => 'Help admins review estimate details and communicate/record quote outcomes.',
             'actions' => ['Inspect request detail', 'Update estimate response'],
             'supporting_pages' => ['admin_freight_estimates', 'freight_estimate'],
-            'access_roles' => ['customer_admin', 'admin', 'global_admin'],
-            'role_capabilities' => $profiles['account_admins_only'],
+            'access_roles' => ['admin', 'global_admin'],
+            'role_capabilities' => $profiles['internal_quote_admins_only'],
         ],
         'admin_login_attempts' => [
             'name' => 'Admin Login Attempts',
@@ -623,8 +629,8 @@ return [
             'help' => 'Help admins review quote specifics and manage response updates.',
             'actions' => ['Inspect quote detail', 'Respond/update quote'],
             'supporting_pages' => ['admin_warehouse_estimate', 'warehouse_estimate'],
-            'access_roles' => ['customer_admin', 'admin', 'global_admin'],
-            'role_capabilities' => $profiles['account_admins_only'],
+            'access_roles' => ['admin', 'global_admin'],
+            'role_capabilities' => $profiles['internal_quote_admins_only'],
         ],
         'assign_warehouse' => [
             'name' => 'Assign Warehouse (Legacy)',

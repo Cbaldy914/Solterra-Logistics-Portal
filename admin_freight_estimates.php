@@ -9,7 +9,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $role = $_SESSION['role'] ?? '';
-if ($role !== 'global_admin' && $role !== 'admin' && $role !== 'customer_admin') {
+if ($role !== 'global_admin' && $role !== 'admin') {
     header("Location: unauthorized");
     exit();
 }
@@ -25,7 +25,7 @@ if (!$conn) {
 $currentUserId = (int)$_SESSION['user_id'];
 $accountFilter = [];
 
-if (in_array($role, ['admin', 'customer_admin'], true)) {
+if ($role === 'admin') {
     $accountFilter = account_ids_for_user($currentUserId);
     if (empty($accountFilter)) {
         $error_message = "No customer account is assigned to your user yet.";
@@ -81,7 +81,7 @@ if (empty($error_message)) {
     $params = [];
     $types = '';
 
-    if (in_array($role, ['admin', 'customer_admin'], true) && !empty($accountFilter)) {
+    if ($role === 'admin' && !empty($accountFilter)) {
         $placeholders = implode(',', array_fill(0, count($accountFilter), '?'));
         $baseQuery .= " WHERE cau.account_id IN ($placeholders)";
         $types = str_repeat('i', count($accountFilter));
