@@ -408,7 +408,7 @@ $conn->close();
 </main>
 
 <!-- Load the Google Maps JavaScript API -->
-<script src="https://maps.googleapis.com/maps/api/js?key=REDACTED_GOOGLE_MAPS_KEY"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars(getGoogleMapsApiKey()); ?>"></script>
 
 <script>
     // JavaScript code to display the map and warehouse locations

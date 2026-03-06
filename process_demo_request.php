@@ -52,7 +52,7 @@ if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
     }
 }
 
-$recaptcha_secret = 'REDACTED_RECAPTCHA_SECRET';
+$recaptcha_secret = getenv('RECAPTCHA_SECRET_KEY') ?: '';
 $recaptcha_response = trim($_POST['g-recaptcha-response'] ?? '');
 
 if (empty($recaptcha_response)) {
