@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // 1) Ensure user is global_admin
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'global_admin') {
@@ -80,20 +81,24 @@ function overheadFilterFactor(float $amount, int $recurring, ?string $freq, stri
 /* ------------------------------------------------------------------
    B) Handle 'delete_overhead' action
    ------------------------------------------------------------------ */
-if (isset($_GET['action']) && $_GET['action'] === 'delete_overhead' && !empty($_GET['overhead_id'])) {
-    $delId = (int)$_GET['overhead_id'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_overhead' && !empty($_POST['overhead_id'])) {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf_token'])) {
+        $successMessage = "Invalid request token.";
+    } else {
+        $delId = (int)$_POST['overhead_id'];
 
-    // Attempt to delete from overheads table
-    $sqlDel = "DELETE FROM overheads WHERE id=? LIMIT 1";
-    $stmtDel = $conn->prepare($sqlDel);
-    if ($stmtDel) {
-        $stmtDel->bind_param("i", $delId);
-        if ($stmtDel->execute()) {
-            $successMessage = "Overhead ID #{$delId} has been removed.";
-        } else {
-            $successMessage = "Error removing overhead: " . $stmtDel->error;
+        // Attempt to delete from overheads table
+        $sqlDel = "DELETE FROM overheads WHERE id=? LIMIT 1";
+        $stmtDel = $conn->prepare($sqlDel);
+        if ($stmtDel) {
+            $stmtDel->bind_param("i", $delId);
+            if ($stmtDel->execute()) {
+                $successMessage = "Overhead ID #{$delId} has been removed.";
+            } else {
+                $successMessage = "Error removing overhead: " . $stmtDel->error;
+            }
+            $stmtDel->close();
         }
-        $stmtDel->close();
     }
 }
 
@@ -668,11 +673,12 @@ switch ($overheadView) {
             <td><?php echo $projLabel; ?></td>
             <td class="actions-cell">
               <!-- Remove Overhead Button -->
-              <form method="GET" onsubmit="return confirm('Are you sure you want to remove this overhead line?');">
+              <form method="POST" onsubmit="return confirm('Are you sure you want to remove this overhead line?');">
                 <!-- Keep overhead_view so we don't lose the current filter -->
                 <input type="hidden" name="overhead_view" value="<?php echo htmlspecialchars($overheadView); ?>">
                 <input type="hidden" name="action" value="delete_overhead">
                 <input type="hidden" name="overhead_id" value="<?php echo $ohId; ?>">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 <button type="submit" class="remove-button">Remove</button>
               </form>
             </td>

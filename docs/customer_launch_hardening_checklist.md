@@ -335,3 +335,5 @@ This is the highest-value first batch to implement next:
 - 2026-03-06: Hardened app-level `.htaccess` in the repo to block common debug/artifact paths and removed `phpinfo.php` from the repo. Production still needs the same cleanup applied and verified.
 - 2026-03-06: Verified production `.htaccess` denies direct access to blocked artifact paths and quarantined `phpinfo.php`, `apply_schema.php`, `debug_schema.php`, and `ping.php` out of the production app root.
 - 2026-03-06: Added session ID rotation to `login.php` and added CSRF token generation/enforcement for `admin_management.php` and `api/admin_management.php` in the repo.
+- 2026-03-06: Added CSRF enforcement for authenticated photo/document mutation endpoints (`upload_temp_photo.php`, `delete_temp_photo.php`, `commit_project_photos.php`, `delete_project_documents.php`, `upload_project_document.php`, `upload_global_document.php`) and patched current page callers to send the token.
+- 2026-03-06: Converted selected legacy destructive actions from `GET` to `POST + CSRF` for estimate deletion flows and accounting overhead deletion, and added CSRF protection to archived project deletion forms.

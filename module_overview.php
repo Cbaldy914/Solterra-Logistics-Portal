@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // Allow access for admin, global_admin, customer_admin, and user roles.
 // Specific functionalities will be controlled by role checks within the page.
@@ -3043,6 +3044,8 @@ $conn->close();
 
 
 <script>
+const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+
 // ----------------- PAGINATION FOR PALLETS -----------------
 let currentPage = 1;
 let itemsPerPage = 100;
@@ -3417,6 +3420,7 @@ async function uploadModuleOverviewDocs() {
                     } else reject(new Error('Upload failed'));
                 };
                 xhr.onerror = function() { reject(new Error('Network error')); };
+                fd.append('csrf_token', csrfToken);
                 xhr.open('POST', 'upload_project_document.php');
                 xhr.send(fd);
             });

@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 if (!isset($_SESSION['user_id'])) {
     header('Location: login');
@@ -213,6 +214,7 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
 
 <script>
 const projectId = <?php echo $project_id; ?>;
+const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
 const grid = document.getElementById('photoGrid');
 const fileInput = document.getElementById('fileInput');
 const saveBtn = document.getElementById('saveBtn');
@@ -240,6 +242,7 @@ async function uploadTemp(files){
       updateUploadModal(index, fileList.length);
       const form = new FormData();
       form.append('token', tempToken);
+      form.append('csrf_token', csrfToken);
       form.append('file', f);
       const res = await fetch('upload_temp_photo.php', { method:'POST', body: form });
       const data = await res.json();
@@ -343,7 +346,7 @@ async function saveAll(){
     })
     .filter(Boolean);
   try {
-    const res = await fetch('commit_project_photos.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ project_id: projectId, token: tempToken, order: mixed }) });
+    const res = await fetch('commit_project_photos.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ project_id: projectId, token: tempToken, order: mixed, csrf_token: csrfToken }) });
     const data = await res.json();
     if (!data.success){
       alert(data.message || 'Failed to save');
@@ -387,7 +390,7 @@ function addStagedTile(name, path){
 
 async function removeStaged(name, btn){
   if (!confirm('Remove this photo?')) return;
-  try { await fetch('delete_temp_photo.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: tempToken, name }) }); } catch(e){}
+  try { await fetch('delete_temp_photo.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: tempToken, name, csrf_token: csrfToken }) }); } catch(e){}
   const tile = btn.closest('.tile'); if (tile) tile.remove(); updateIndices();
 }
 
@@ -396,7 +399,7 @@ async function deletePhoto(id) {
   try {
     const res = await fetch('delete_project_documents.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: [id] })
+      body: JSON.stringify({ ids: [id], csrf_token: csrfToken })
     });
     const data = await res.json();
     if (!data.success) { alert('Delete failed'); return; }

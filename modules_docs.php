@@ -1,6 +1,7 @@
 <?php
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -738,6 +739,8 @@ $can_upload = in_array($user_role, ['admin', 'global_admin', 'customer_admin']);
 </main>
 
 <script>
+const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+
 document.addEventListener('DOMContentLoaded', function() {
     const projectId = <?php echo $project_id; ?>;
     const canUpload = <?php echo $can_upload ? 'true' : 'false'; ?>;
@@ -1140,6 +1143,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         reject(new Error('Upload failed. Please check your connection and try again.'));
                     };
 
+                    formData.append('csrf_token', csrfToken);
                     xhr.open('POST', 'upload_project_document.php');
                     xhr.send(formData);
                 });
@@ -1178,7 +1182,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch('delete_project_documents.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: documentIds })
+                body: JSON.stringify({ ids: documentIds, csrf_token: csrfToken })
             });
             const data = await response.json();
             if (data.success) {

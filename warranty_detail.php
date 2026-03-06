@@ -689,6 +689,7 @@ $conn->close();
                 if (prog) prog.style.display='block';
                 if (btn) btn.disabled = true;
                 try {
+                    form.append('csrf_token', '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>');
                     var resp = await fetch('upload_global_document.php', { method:'POST', body: form });
                     var data = await resp.json();
                     if (data && data.success) {
@@ -721,7 +722,7 @@ $conn->close();
                         var resp = await fetch('delete_project_documents.php', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ ids: ids })
+                            body: JSON.stringify({ ids: ids, csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>' })
                         });
                         var data = await resp.json();
                         if (!data || (!data.success && (!data.deleted_ids || data.deleted_ids.length===0))) {
@@ -888,6 +889,7 @@ async function irUpload(){
     prog.style.display='block';
     btn.disabled = true;
     try{
+        form.append('csrf_token', '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>');
         const resp = await fetch('upload_global_document.php', { method:'POST', body: form });
         const data = await resp.json();
         if (data && data.success){

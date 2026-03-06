@@ -16,6 +16,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_FILES['document'])) {
     exit();
 }
 
+$sessionCsrf = $_SESSION['csrf_token'] ?? '';
+$requestCsrf = (string)($_POST['csrf_token'] ?? '');
+if ($sessionCsrf === '' || $requestCsrf === '' || !hash_equals($sessionCsrf, $requestCsrf)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Invalid request token']);
+    exit();
+}
+
 require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {

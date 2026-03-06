@@ -5,6 +5,15 @@ session_name('logistics_session');
 session_start();
 
 if (!isset($_SESSION['user_id'])) { http_response_code(401); echo json_encode(['success'=>false,'message'=>'Not logged in']); exit(); }
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); echo json_encode(['success'=>false,'message'=>'Method not allowed']); exit(); }
+
+$sessionCsrf = $_SESSION['csrf_token'] ?? '';
+$requestCsrf = (string)($_POST['csrf_token'] ?? '');
+if ($sessionCsrf === '' || $requestCsrf === '' || !hash_equals($sessionCsrf, $requestCsrf)) {
+  http_response_code(403);
+  echo json_encode(['success'=>false,'message'=>'Invalid request token']);
+  exit();
+}
 
 $token = isset($_POST['token']) ? preg_replace('/[^A-Za-z0-9_-]/', '', $_POST['token']) : '';
 if ($token === '') { http_response_code(400); echo json_encode(['success'=>false,'message'=>'Missing token']); exit(); }
@@ -37,4 +46,3 @@ $publicPath = 'uploads/tmp_photos/' . $token . '/' . $filename;
 echo json_encode(['success'=>true, 'file'=>[ 'name'=>$filename, 'path'=>$publicPath ]]);
 exit();
 ?>
-

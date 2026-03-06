@@ -2,6 +2,7 @@
 // warehouse_estimate
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 // Notification email (legacy) - we now rely on notifications
 $notification_email = 'cbaldy@solterrasol.com';
@@ -74,29 +75,31 @@ $success_message = '';
 $error_message = '';
 
 // Handle estimate deletion
-if (isset($_GET['delete_estimate'])) {
-    $estimate_id_to_delete = intval($_GET['delete_estimate']);
-
-    if (!validateDatabaseConnection($conn)) {
-        $error_message = "Database connection error.";
-    }
-
-    if ($conn) {
-        $stmt = $conn->prepare("DELETE FROM warehouse_quotes WHERE id = ? AND user_id = ?");
-        if ($stmt) {
-            $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
-            if ($stmt->execute()) {
-                $success_message = "Quote deleted successfully!";
-            } else {
-                $error_message = "Error deleting quote: " . $stmt->error;
-            }
-            $stmt->close();
-        } else {
-            $error_message = "Database error: Unable to prepare delete statement.";
-            error_log("Failed to prepare delete statement: " . $conn->error);
-        }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_estimate'])) {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf_token'])) {
+        $error_message = "Invalid request token.";
     } else {
-        $error_message = "Database connection error.";
+        $estimate_id_to_delete = intval($_POST['delete_estimate']);
+
+        if (!validateDatabaseConnection($conn)) {
+            $error_message = "Database connection error.";
+        }
+
+        if ($conn) {
+            $stmt = $conn->prepare("DELETE FROM warehouse_quotes WHERE id = ? AND user_id = ?");
+            if ($stmt) {
+                $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
+                if ($stmt->execute()) {
+                    $success_message = "Quote deleted successfully!";
+                } else {
+                    $error_message = "Error deleting quote: " . $stmt->error;
+                }
+                $stmt->close();
+            } else {
+                $error_message = "Database error: Unable to prepare delete statement.";
+                error_log("Failed to prepare delete statement: " . $conn->error);
+            }
+        }
     }
 
     header("Location: " . basename($_SERVER['PHP_SELF']));
@@ -728,7 +731,24 @@ if (!empty($error_message)) {
             event.stopPropagation();
             const estimateId = btn.getAttribute('data-id');
             if (confirm('Are you sure you want to delete this quote?')) {
-                window.location.href = window.location.href.split('?')[0] + '?delete_estimate=' + estimateId;
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = window.location.href.split('?')[0];
+
+                const idInput = document.createElement('input');
+                idInput.type = 'hidden';
+                idInput.name = 'delete_estimate';
+                idInput.value = estimateId;
+                form.appendChild(idInput);
+
+                const csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = 'csrf_token';
+                csrfInput.value = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+                form.appendChild(csrfInput);
+
+                document.body.appendChild(form);
+                form.submit();
             }
         });
     });

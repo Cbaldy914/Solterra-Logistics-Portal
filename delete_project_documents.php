@@ -12,6 +12,11 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit();
 }
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed']);
+    exit();
+}
 
 require_once '../config.php';
 $conn = getDBConnection();
@@ -25,7 +30,14 @@ $userId = intval($_SESSION['user_id']);
 $role = $_SESSION['role'];
 
 $payload = json_decode(file_get_contents('php://input'), true);
-$ids = $payload['ids'] ?? [];
+$sessionCsrf = $_SESSION['csrf_token'] ?? '';
+$requestCsrf = (string)($payload['csrf_token'] ?? '');
+if ($sessionCsrf === '' || $requestCsrf === '' || !hash_equals($sessionCsrf, $requestCsrf)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Invalid request token']);
+    exit();
+}
+$ids = $payload['ids'] ?? ($payload['document_ids'] ?? []);
 
 if (!is_array($ids) || count($ids) === 0) {
     http_response_code(400);

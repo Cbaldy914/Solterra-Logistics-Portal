@@ -3,6 +3,7 @@
 
 session_name("logistics_session");
 session_start();
+if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); }
 
 $notification_email = 'cbaldy@solterrasol.com';
 
@@ -83,32 +84,34 @@ $cost_per_truck = $total_accessorial_cost = '';
 $total_freight_cost = $grand_total = 0;
 
 // Handle estimate deletion
-if (isset($_GET['delete_estimate'])) {
-    $estimate_id_to_delete = intval($_GET['delete_estimate']);
-
-    // Validate connection before using it
-    if (!validateDatabaseConnection($conn)) {
-        $error_message = "Database connection error.";
-    }
-    
-    if ($conn) {
-        // Verify that the estimate belongs to the current user
-        $stmt = $conn->prepare("DELETE FROM freight_estimates WHERE id = ? AND user_id = ?");
-        if ($stmt) {
-            $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
-
-            if ($stmt->execute()) {
-                $success_message = "Estimate deleted successfully!";
-            } else {
-                $error_message = "Error deleting estimate: " . $stmt->error;
-            }
-            $stmt->close();
-        } else {
-            $error_message = "Database error: Unable to prepare delete statement.";
-            error_log("Failed to prepare delete statement: " . $conn->error);
-        }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_estimate'])) {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$_POST['csrf_token'])) {
+        $error_message = "Invalid request token.";
     } else {
-        $error_message = "Database connection error.";
+        $estimate_id_to_delete = intval($_POST['delete_estimate']);
+
+        // Validate connection before using it
+        if (!validateDatabaseConnection($conn)) {
+            $error_message = "Database connection error.";
+        }
+        
+        if ($conn) {
+            // Verify that the estimate belongs to the current user
+            $stmt = $conn->prepare("DELETE FROM freight_estimates WHERE id = ? AND user_id = ?");
+            if ($stmt) {
+                $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
+
+                if ($stmt->execute()) {
+                    $success_message = "Estimate deleted successfully!";
+                } else {
+                    $error_message = "Error deleting estimate: " . $stmt->error;
+                }
+                $stmt->close();
+            } else {
+                $error_message = "Database error: Unable to prepare delete statement.";
+                error_log("Failed to prepare delete statement: " . $conn->error);
+            }
+        }
     }
 
     // Refresh the page to update the list
@@ -599,7 +602,24 @@ if (isset($error_message)) {
             event.stopPropagation();
             const estimateId = btn.getAttribute('data-id');
             if (confirm('Are you sure you want to delete this estimate?')) {
-                window.location.href = window.location.href.split('?')[0] + '?delete_estimate=' + estimateId;
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = window.location.href.split('?')[0];
+
+                const idInput = document.createElement('input');
+                idInput.type = 'hidden';
+                idInput.name = 'delete_estimate';
+                idInput.value = estimateId;
+                form.appendChild(idInput);
+
+                const csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = 'csrf_token';
+                csrfInput.value = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+                form.appendChild(csrfInput);
+
+                document.body.appendChild(form);
+                form.submit();
             }
         });
     });
