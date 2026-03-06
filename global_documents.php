@@ -3121,7 +3121,10 @@ async function downloadSelected() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ document_ids: documentIds })
+            body: JSON.stringify({
+                document_ids: documentIds,
+                csrf_token: <?php echo json_encode($_SESSION['csrf_token']); ?>
+            })
         });
         
         if (response.ok) {

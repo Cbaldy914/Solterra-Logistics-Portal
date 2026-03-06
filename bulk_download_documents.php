@@ -35,6 +35,13 @@ if (!$input || !isset($input['document_ids']) || !is_array($input['document_ids'
     exit();
 }
 
+$request_csrf = (string) ($input['csrf_token'] ?? '');
+if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $request_csrf)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Invalid request token']);
+    exit();
+}
+
 $document_ids = array_filter(array_map('intval', $input['document_ids']));
 if (empty($document_ids)) {
     http_response_code(400);

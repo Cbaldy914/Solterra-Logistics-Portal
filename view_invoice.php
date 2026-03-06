@@ -48,15 +48,12 @@ if (empty($invoice_file)) {
 
 // Now we must verify that the current user has access:
 
-// If user is global_admin or admin, we allow access unconditionally
-if ($role === 'global_admin' || $role === 'admin' || $role === 'customer_admin') {
+// Only global admins bypass account scoping.
+if ($role === 'global_admin') {
     $hasAccess = true;
 } else {
-    // Otherwise, we check if this user belongs to the same account via customer_account_users
-    // We look for a row matching (account_id = $project_account_id, user_id = $user_id)
-    // If found, user has access; otherwise, deny.
     $sqlCheck = "
-        SELECT role
+        SELECT 1
         FROM customer_account_users
         WHERE account_id = ?
           AND user_id    = ?

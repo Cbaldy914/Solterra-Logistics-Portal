@@ -344,3 +344,5 @@ This is the highest-value first batch to implement next:
 - 2026-03-06: Centralized baseline session cookie policy in `prepend.php` so portal routes consistently use `HttpOnly`, `SameSite=Lax`, HTTPS-aware `Secure`, and strict cookie/session settings before individual pages call `session_start()`.
 - 2026-03-06: Hardened bulk POD downloads by requiring CSRF, validating mixed `document_*` and `legacy_*` selections correctly, and scoping both document-backed and legacy delivery downloads to the requested project and the current user's account access.
 - 2026-03-06: Hardened invoice ZIP downloads by requiring CSRF and aligning project/account access checks in `download_invoices.php` with the portal's account-based authorization model.
+- 2026-03-06: Added CSRF protection to global document bulk downloads by requiring a session token in `bulk_download_documents.php` and sending it from `global_documents.php`.
+- 2026-03-06: Closed direct file-view IDOR gaps by scoping `view_invoice.php` and `view_pod.php` to the current user's account access instead of treating `admin` and `customer_admin` as globally trusted readers.

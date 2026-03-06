@@ -8,8 +8,6 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Basic role check: If user is "global_admin" or "admin," they can see all
-$allowed_admin_roles = ['global_admin', 'admin', 'customer_admin'];
 $current_role = isset($_SESSION['role']) ? $_SESSION['role'] : 'unknown';
 
 $delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : 0;
@@ -31,12 +29,14 @@ $sql_new = "
     SELECT pd.file_path,
            pd.original_file_name,
            p.account_id,
+           w.account_id AS warehouse_account_id,
            c.name       AS account_name,
            p.id         AS project_id,
            d.warehouse_id
       FROM project_documents pd
       JOIN deliveries d           ON pd.delivery_id = d.id
       LEFT JOIN projects p        ON pd.project_id = p.id
+      LEFT JOIN warehouses w      ON d.warehouse_id = w.id
       LEFT JOIN customer_accounts c ON p.account_id = c.id
      WHERE pd.delivery_id = ?
        AND pd.document_type = 'pods'
@@ -47,7 +47,7 @@ $sql_new = "
 $stmt_new = $conn->prepare($sql_new);
 $stmt_new->bind_param("i", $delivery_id);
 $stmt_new->execute();
-$stmt_new->bind_result($pod_path, $original_filename, $account_id, $account_name, $project_id, $warehouse_id);
+$stmt_new->bind_result($pod_path, $original_filename, $account_id, $warehouse_account_id, $account_name, $project_id, $warehouse_id);
 $found_new_pod = $stmt_new->fetch();
 $stmt_new->close();
 
@@ -57,11 +57,13 @@ if (!$found_new_pod) {
         SELECT d.proof_of_delivery,
                '',                  -- no original filename in legacy
                p.account_id,
+               w.account_id AS warehouse_account_id,
                c.name       AS account_name,
                p.id         AS project_id,
                d.warehouse_id
           FROM deliveries d
           LEFT JOIN projects p            ON d.project_id = p.id
+          LEFT JOIN warehouses w          ON d.warehouse_id = w.id
           LEFT JOIN customer_accounts c   ON p.account_id = c.id
          WHERE d.id = ?
            AND d.proof_of_delivery IS NOT NULL
@@ -70,7 +72,7 @@ if (!$found_new_pod) {
     $stmt_legacy = $conn->prepare($sql_legacy);
     $stmt_legacy->bind_param("i", $delivery_id);
     $stmt_legacy->execute();
-    $stmt_legacy->bind_result($pod_path, $original_filename, $account_id, $account_name, $project_id, $warehouse_id);
+    $stmt_legacy->bind_result($pod_path, $original_filename, $account_id, $warehouse_account_id, $account_name, $project_id, $warehouse_id);
     $found_legacy_pod = $stmt_legacy->fetch();
     $stmt_legacy->close();
     
@@ -89,13 +91,9 @@ if (empty($pod_path)) {
     die("POD file not found or invalid delivery ID.");
 }
 
-/**
- * If user is NOT admin/global_admin, we must verify they belong to this same account
- * so that they have permission to view the POD.
- * Skip this check for warehouse deliveries (no account association)
- */
-if (!in_array($current_role, $allowed_admin_roles) && $account_id) {
-    // Check if user is in the same account in the bridging table
+$access_account_id = (int) ($account_id ?: $warehouse_account_id);
+
+if ($current_role !== 'global_admin' && $access_account_id > 0) {
     $checkSql = "
         SELECT COUNT(*)
           FROM customer_account_users
@@ -111,12 +109,10 @@ if (!in_array($current_role, $allowed_admin_roles) && $account_id) {
     $checkStmt->close();
 
     if ($countAccounts < 1) {
-        // The user does not belong to this account => no access
         die("Access denied: You do not belong to this account.");
     }
-} elseif (!in_array($current_role, $allowed_admin_roles) && $warehouse_id) {
-    // For warehouse deliveries, only admin/global_admin can view PODs
-    die("Access denied: Only administrators can view warehouse PODs.");
+} elseif ($current_role !== 'global_admin' && $warehouse_id) {
+    die("Access denied: This POD is not associated with an accessible account.");
 }
 
 // Now serve the file if it exists
