@@ -585,11 +585,18 @@ $conn->close();
                                     <span><?php echo date('M j, Y g:i A', strtotime($notif['created_at'])); ?></span>
                                 </div>
                                 <?php if (!empty($notif['link'])): ?>
-                                    <?php $markReadSeparator = strpos($notif['link'], '?') === false ? '?' : '&'; ?>
+                                    <?php
+                                        $linkState = notification_link_state($user_id, $role, $notif['link']);
+                                        $markReadSeparator = strpos($notif['link'], '?') === false ? '?' : '&';
+                                    ?>
                                     <div class="notification-link">
-                                        <a href="<?php echo htmlspecialchars($notif['link'] . $markReadSeparator . 'mark_read=' . urlencode((string)$notif['id']) . '&mark_read_token=' . urlencode((string)$_SESSION['csrf_token'])); ?>" class="btn btn-primary">
-                                            View Details →
-                                        </a>
+                                        <?php if (!empty($linkState['available'])): ?>
+                                            <a href="<?php echo htmlspecialchars($notif['link'] . $markReadSeparator . 'mark_read=' . urlencode((string)$notif['id']) . '&mark_read_token=' . urlencode((string)$_SESSION['csrf_token'])); ?>" class="btn btn-primary">
+                                                View Details →
+                                            </a>
+                                        <?php else: ?>
+                                            <span style="color: #6c757d; font-size: 0.9em;"><?php echo htmlspecialchars($linkState['reason'] ?? 'This notification target is no longer available.'); ?></span>
+                                        <?php endif; ?>
                                     </div>
                                 <?php endif; ?>
                             </div>
