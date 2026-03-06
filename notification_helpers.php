@@ -250,6 +250,84 @@ function mark_notification_read_if_requested(): void {
 }
 
 /**
+ * Resolve whether a notification link still points to something the user can access.
+ *
+ * Returns:
+ * - available: bool
+ * - url: original URL when available
+ * - reason: short user-facing fallback when unavailable
+ */
+function notification_link_state(int $userId, string $role, ?string $link): array {
+    $link = trim((string)$link);
+    if ($link === '') {
+        return ['available' => false, 'url' => null, 'reason' => 'No destination available'];
+    }
+
+    $parsed = parse_url($link);
+    if ($parsed === false) {
+        return ['available' => false, 'url' => null, 'reason' => 'Invalid destination'];
+    }
+
+    $path = basename((string)($parsed['path'] ?? $link));
+    $projectScopedPages = ['project_overview', 'project_overview.php', 'view_project', 'view_project.php', 'scheduling', 'scheduling.php'];
+
+    if (!in_array($path, $projectScopedPages, true)) {
+        return ['available' => true, 'url' => $link, 'reason' => null];
+    }
+
+    parse_str((string)($parsed['query'] ?? ''), $query);
+    $projectId = (int)($query['project_id'] ?? 0);
+    if ($projectId <= 0) {
+        return ['available' => false, 'url' => null, 'reason' => 'Project link is incomplete'];
+    }
+
+    require_once __DIR__ . '/../config.php';
+    $conn = getDBConnection();
+    if (!$conn) {
+        return ['available' => false, 'url' => null, 'reason' => 'Project details unavailable'];
+    }
+
+    try {
+        if ($role === 'global_admin') {
+            $stmt = $conn->prepare("SELECT id, status FROM projects WHERE id = ? LIMIT 1");
+            $stmt->bind_param('i', $projectId);
+        } else {
+            $stmt = $conn->prepare("
+                SELECT p.id, p.status
+                FROM projects p
+                JOIN customer_account_users cau ON p.account_id = cau.account_id
+                WHERE p.id = ? AND cau.user_id = ?
+                LIMIT 1
+            ");
+            $stmt->bind_param('ii', $projectId, $userId);
+        }
+
+        $stmt->execute();
+        $project = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $conn->close();
+
+        if (!$project) {
+            return ['available' => false, 'url' => null, 'reason' => 'Project no longer available'];
+        }
+
+        $status = strtolower((string)($project['status'] ?? ''));
+        if ($status !== '' && $status !== 'active') {
+            return ['available' => false, 'url' => null, 'reason' => 'Project has been archived'];
+        }
+
+        return ['available' => true, 'url' => $link, 'reason' => null];
+    } catch (Throwable $e) {
+        error_log('Notification link state error: ' . $e->getMessage());
+        if (isset($stmt) && $stmt instanceof mysqli_stmt) {
+            $stmt->close();
+        }
+        $conn->close();
+        return ['available' => false, 'url' => null, 'reason' => 'Project details unavailable'];
+    }
+}
+
+/**
  * Notify all users associated with a project (excludes the current user who made the change)
  * @param int $projectId Project ID
  * @param string $type Notification type

@@ -30,6 +30,7 @@ $page_title_info  = "Delivery Tracker";
 // (Use shared breadcrumbs in template)
 $source_vendor_name_for_batch = null;
 $batch_account_id = null;
+$carrier_scope_account_id = null;
 $is_global_admin = ($role === 'global_admin');
 $is_account_admin = in_array($role, ['admin', 'customer_admin'], true);
 $can_manage_deliveries = in_array($role, ['admin', 'customer_admin', 'global_admin'], true);
@@ -241,6 +242,7 @@ if ($project_id) {
     $stmt->close();
 
     $page_title_info = htmlspecialchars($project['project_name']);
+    $carrier_scope_account_id = isset($project['account_id']) ? (int)$project['account_id'] : null;
     // For project context, template will render: Dashboard » Project Overview » Delivery Tracker
 
 /* -------------------- context by origin_batch_id ------------------------*/
@@ -254,6 +256,7 @@ if ($project_id) {
 
     $source_vendor_name_for_batch = $batch['vendor_name'];
     $batch_account_id             = $batch['account_id'];
+    $carrier_scope_account_id     = (int)$batch_account_id;
 
     if (!$is_global_admin) {
         $stmt = $conn->prepare("SELECT 1 FROM customer_account_users WHERE user_id=? AND account_id=? LIMIT 1");
@@ -928,18 +931,28 @@ sort($unique_suppliers);
 
 // Fetch active carriers for bulk edit dropdown
 $all_carriers = [];
-$carrier_account_clause = $is_global_admin ? '' : ' AND (account_id IS NULL OR account_id = ?)';
-$stmtC = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_account_clause} ORDER BY is_solterra_managed DESC, name ASC");
-if ($stmtC) {
-    if (!$is_global_admin && $account_id_for_admin) {
-        $stmtC->bind_param("i", $account_id_for_admin);
+if ($can_manage_deliveries) {
+    $carrier_account_clause = $is_global_admin ? '' : ' AND (account_id IS NULL OR account_id = ?)';
+    $stmtC = $conn->prepare("SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1{$carrier_account_clause} ORDER BY is_solterra_managed DESC, name ASC");
+    if ($stmtC) {
+        if (!$is_global_admin) {
+            $carrierScopeId = $account_id_for_admin ?: $carrier_scope_account_id;
+            if ($carrierScopeId === null) {
+                $stmtC->close();
+                $stmtC = null;
+            } else {
+                $stmtC->bind_param("i", $carrierScopeId);
+            }
+        }
     }
-    $stmtC->execute();
-    $resultC = $stmtC->get_result();
-    while ($c = $resultC->fetch_assoc()) {
-        $all_carriers[] = $c;
+    if ($stmtC) {
+        $stmtC->execute();
+        $resultC = $stmtC->get_result();
+        while ($c = $resultC->fetch_assoc()) {
+            $all_carriers[] = $c;
+        }
+        $stmtC->close();
     }
-    $stmtC->close();
 }
 ?>
 <!DOCTYPE html>
