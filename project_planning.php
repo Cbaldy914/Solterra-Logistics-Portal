@@ -16,6 +16,10 @@ if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
     exit();
 }
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 require_once '../config.php';
 require_once 'projection_helpers.php';
 
@@ -779,7 +783,8 @@ function submitCreateGeneral() {
             projection_name: name,
             general_project_name: name,
             general_project_address: address,
-            general_estimated_mw: parseFloat(mw)
+            general_estimated_mw: parseFloat(mw),
+            csrf_token: <?php echo json_encode($_SESSION['csrf_token']); ?>
         })
     })
     .then(r => r.json())

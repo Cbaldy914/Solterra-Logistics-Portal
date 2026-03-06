@@ -338,3 +338,5 @@ This is the highest-value first batch to implement next:
 - 2026-03-06: Added CSRF enforcement for authenticated photo/document mutation endpoints (`upload_temp_photo.php`, `delete_temp_photo.php`, `commit_project_photos.php`, `delete_project_documents.php`, `upload_project_document.php`, `upload_global_document.php`) and patched current page callers to send the token.
 - 2026-03-06: Converted selected legacy destructive actions from `GET` to `POST + CSRF` for estimate deletion flows and accounting overhead deletion, and added CSRF protection to archived project deletion forms.
 - 2026-03-06: Hardened remaining standalone destructive endpoints and authenticated notification/projection delete flows with `POST + CSRF`, including project delete, warehouse delete, future project delete, module batch delete, notification bulk actions, and projection delete.
+- 2026-03-06: Added CSRF enforcement to projection save/link APIs and required a request token for notification read-through links.
+- 2026-03-06: Added CSRF protection to planning scenario mutations in `api/planning_scenarios.php` and direct scenario-management forms in `scenario_detail.php`.

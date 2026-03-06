@@ -420,7 +420,10 @@ if (empty($_SESSION['csrf_token'])) {
             fetch('api/projection_save.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(createPayload)
+                body: JSON.stringify({
+                    ...createPayload,
+                    csrf_token: csrfToken
+                })
             })
             .then(response => response.json())
             .then(data => {
@@ -538,7 +541,10 @@ if (empty($_SESSION['csrf_token'])) {
             fetch('api/projection_save.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    ...payload,
+                    csrf_token: csrfToken
+                })
             })
             .then(async response => {
                 const text = await response.text();
@@ -610,7 +616,10 @@ if (empty($_SESSION['csrf_token'])) {
             fetch('api/projection_save.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    ...payload,
+                    csrf_token: csrfToken
+                })
             })
             .then(response => response.json())
             .then(data => {
@@ -7977,7 +7986,10 @@ if (empty($_SESSION['csrf_token'])) {
             fetch('api/link_projection_to_project.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'list_projects' })
+                body: JSON.stringify({
+                    action: 'list_projects',
+                    csrf_token: csrfToken
+                })
             })
             .then(r => r.json())
             .then(data => {
@@ -8021,7 +8033,8 @@ if (empty($_SESSION['csrf_token'])) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     projection_id: generalProjectionId,
-                    project_id: projectIdToLink
+                    project_id: projectIdToLink,
+                    csrf_token: csrfToken
                 })
             })
             .then(r => r.json())

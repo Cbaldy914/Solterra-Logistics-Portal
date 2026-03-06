@@ -61,6 +61,32 @@ if (empty($accountIds)) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
+$rawInput = file_get_contents('php://input');
+$input = [];
+if ($rawInput !== '') {
+    $decoded = json_decode($rawInput, true);
+    if (is_array($decoded)) {
+        $input = $decoded;
+    }
+}
+
+if ($method !== 'GET') {
+    $requestToken = '';
+    if (isset($_POST['csrf_token'])) {
+        $requestToken = (string) $_POST['csrf_token'];
+    } elseif (isset($input['csrf_token'])) {
+        $requestToken = (string) $input['csrf_token'];
+    } elseif (isset($_SERVER['HTTP_X_CSRF_TOKEN'])) {
+        $requestToken = (string) $_SERVER['HTTP_X_CSRF_TOKEN'];
+    }
+
+    $sessionToken = (string)($_SESSION['csrf_token'] ?? '');
+    if ($sessionToken === '' || $requestToken === '' || !hash_equals($sessionToken, $requestToken)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid request token']);
+        exit();
+    }
+}
 
 try {
     switch ($method) {
@@ -68,13 +94,13 @@ try {
             handleGet($conn, $accountIds, $action);
             break;
         case 'POST':
-            handlePost($conn, $accountIds, $user_id);
+            handlePost($conn, $accountIds, $user_id, $input);
             break;
         case 'PUT':
-            handlePut($conn, $accountIds, $user_id);
+            handlePut($conn, $accountIds, $user_id, $input);
             break;
         case 'DELETE':
-            handleDelete($conn, $accountIds);
+            handleDelete($conn, $accountIds, $input);
             break;
         default:
             http_response_code(405);
@@ -255,8 +281,7 @@ function handleGet($conn, $accountIds, $action) {
     }
 }
 
-function handlePost($conn, $accountIds, $user_id) {
-    $input = json_decode(file_get_contents('php://input'), true);
+function handlePost($conn, $accountIds, $user_id, array $input) {
     $type = $input['type'] ?? '';
     $accountId = $accountIds[0]; // Use primary account
 
@@ -390,8 +415,7 @@ function handlePost($conn, $accountIds, $user_id) {
     }
 }
 
-function handlePut($conn, $accountIds, $user_id) {
-    $input = json_decode(file_get_contents('php://input'), true);
+function handlePut($conn, $accountIds, $user_id, array $input) {
     $type = $input['type'] ?? '';
     $id = (int)($input['id'] ?? 0);
 
@@ -429,9 +453,9 @@ function handlePut($conn, $accountIds, $user_id) {
     }
 }
 
-function handleDelete($conn, $accountIds) {
-    $type = $_GET['type'] ?? '';
-    $id = (int)($_GET['id'] ?? 0);
+function handleDelete($conn, $accountIds, array $input) {
+    $type = (string)($input['type'] ?? ($_GET['type'] ?? ''));
+    $id = (int)($input['id'] ?? ($_GET['id'] ?? 0));
 
     if (!$id) {
         http_response_code(400);
