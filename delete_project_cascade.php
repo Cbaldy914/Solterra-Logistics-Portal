@@ -14,6 +14,15 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit(json_encode(['error' => 'Only POST method allowed']));
 }
 
+if (
+    empty($_SESSION['csrf_token']) ||
+    !isset($_POST['csrf_token']) ||
+    !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])
+) {
+    http_response_code(400);
+    exit(json_encode(['error' => 'Invalid request token']));
+}
+
 if (!isset($_POST['project_id']) || !is_numeric($_POST['project_id'])) {
     exit(json_encode(['error' => 'Invalid project ID']));
 }

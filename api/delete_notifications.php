@@ -8,6 +8,21 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header("Location: ../notifications");
+    exit();
+}
+
+if (
+    empty($_SESSION['csrf_token']) ||
+    !isset($_POST['csrf_token']) ||
+    !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])
+) {
+    $_SESSION['error_message'] = 'Invalid request token';
+    header("Location: ../notifications");
+    exit();
+}
+
 require_once '../../config.php';
 
 $user_id = $_SESSION['user_id'];

@@ -6,13 +6,26 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
     die("Unauthorized: You must be 'admin', 'global_admin', or 'customer_admin' to delete projects.");
 }
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    die("Only POST requests are allowed.");
+}
 
-// Get the project ID from the URL
-if (!isset($_GET['id']) || empty($_GET['id'])) {
+if (
+    empty($_SESSION['csrf_token']) ||
+    !isset($_POST['csrf_token']) ||
+    !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])
+) {
+    http_response_code(400);
+    die("Invalid request token.");
+}
+
+// Get the project ID from the request
+if (!isset($_POST['project_id']) || empty($_POST['project_id'])) {
     die("Project ID is missing.");
 }
 
-$project_id = intval($_GET['id']);
+$project_id = intval($_POST['project_id']);
 
 // Database connection
 require_once '../config.php';

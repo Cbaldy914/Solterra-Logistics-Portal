@@ -8,6 +8,10 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 require_once '../config.php';
 require_once 'notification_helpers.php';
 
@@ -758,6 +762,8 @@ $conn->close();
 </div>
 
 <script>
+const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+
 // Enable/disable email sub-options based on master toggle
 document.getElementById('email_enabled').addEventListener('change', function() {
     const enabled = this.checked;
@@ -803,6 +809,12 @@ function markSelectedAsRead() {
     const form = document.createElement('form');
     form.method = 'POST';
     form.action = 'api/mark_notification_read.php';
+
+    const csrfInput = document.createElement('input');
+    csrfInput.type = 'hidden';
+    csrfInput.name = 'csrf_token';
+    csrfInput.value = csrfToken;
+    form.appendChild(csrfInput);
     
     selected.forEach(id => {
         const input = document.createElement('input');
@@ -831,6 +843,12 @@ function deleteSelected() {
     const form = document.createElement('form');
     form.method = 'POST';
     form.action = 'api/delete_notifications.php';
+
+    const csrfInput = document.createElement('input');
+    csrfInput.type = 'hidden';
+    csrfInput.name = 'csrf_token';
+    csrfInput.value = csrfToken;
+    form.appendChild(csrfInput);
     
     selected.forEach(id => {
         const input = document.createElement('input');

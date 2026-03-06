@@ -8,6 +8,10 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 $user_id = $_SESSION['user_id'];
 
 // Database connection
@@ -510,6 +514,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_project'])) {
     <?php endif; ?>
     </main>
     <script>
+        const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
+
         // Show/Hide Add Project Form
         document.getElementById('add-project-button').addEventListener('click', function() {
             var form = document.getElementById('add-project-form');
@@ -551,7 +557,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_project'])) {
                 event.preventDefault();
                 var projectId = this.getAttribute('data-id');
                 if (confirm('Are you sure you want to delete this project?')) {
-                    window.location.href = 'delete_future_project?id=' + projectId;
+                    var form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = 'delete_future_project';
+
+                    var projectInput = document.createElement('input');
+                    projectInput.type = 'hidden';
+                    projectInput.name = 'project_id';
+                    projectInput.value = projectId;
+                    form.appendChild(projectInput);
+
+                    var csrfInput = document.createElement('input');
+                    csrfInput.type = 'hidden';
+                    csrfInput.name = 'csrf_token';
+                    csrfInput.value = csrfToken;
+                    form.appendChild(csrfInput);
+
+                    document.body.appendChild(form);
+                    form.submit();
                 }
             });
         });

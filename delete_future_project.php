@@ -8,12 +8,25 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-if (!isset($_GET['id'])) {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header("Location: future_projects");
+    exit();
+}
+
+if (
+    empty($_SESSION['csrf_token']) ||
+    !isset($_POST['csrf_token']) ||
+    !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])
+) {
+    die("Invalid request token.");
+}
+
+if (!isset($_POST['project_id'])) {
     die("Project ID not specified.");
 }
 
 $user_id = $_SESSION['user_id'];
-$project_id = intval($_GET['id']);
+$project_id = intval($_POST['project_id']);
 
 // Database connection
 require_once '../config.php';
