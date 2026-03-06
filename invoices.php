@@ -2,6 +2,10 @@
 session_name("logistics_session");
 session_start();
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
@@ -250,6 +254,7 @@ sort($statuses);
         <?php if (count($invoices) > 0): ?>
             <form action="download_invoices" method="post">
                 <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
 
                 <!-- Controls: Download Selected (Left) and Search (Right) -->
                 <div class="controls-container">

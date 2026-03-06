@@ -342,3 +342,5 @@ This is the highest-value first batch to implement next:
 - 2026-03-06: Added CSRF protection to planning scenario mutations in `api/planning_scenarios.php` and direct scenario-management forms in `scenario_detail.php`.
 - 2026-03-06: Added baseline browser security headers at the app layer via `.htaccess`, including HSTS, nosniff, frame protection, referrer policy, permissions policy, and a conservative CSP.
 - 2026-03-06: Centralized baseline session cookie policy in `prepend.php` so portal routes consistently use `HttpOnly`, `SameSite=Lax`, HTTPS-aware `Secure`, and strict cookie/session settings before individual pages call `session_start()`.
+- 2026-03-06: Hardened bulk POD downloads by requiring CSRF, validating mixed `document_*` and `legacy_*` selections correctly, and scoping both document-backed and legacy delivery downloads to the requested project and the current user's account access.
+- 2026-03-06: Hardened invoice ZIP downloads by requiring CSRF and aligning project/account access checks in `download_invoices.php` with the portal's account-based authorization model.

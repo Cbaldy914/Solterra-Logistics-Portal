@@ -2,6 +2,10 @@
 session_name("logistics_session");
 session_start();
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
@@ -546,6 +550,7 @@ $stmt->close();
         <div class="pods-container">
             <form action="download_pods" method="post" id="downloadForm">
                 <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 
                 <!-- Action Bar -->
                 <div class="action-bar">

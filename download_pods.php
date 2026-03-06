@@ -15,12 +15,40 @@ if (!isset($_POST['download_selected'])) {
 $project_id = intval($_POST['project_id']);
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
+$csrf_token = (string) ($_POST['csrf_token'] ?? '');
+
+if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $csrf_token)) {
+    http_response_code(403);
+    die("Invalid request token.");
+}
 
 // Make sure at least one POD was selected
 if (!isset($_POST['selected_pods']) || empty($_POST['selected_pods'])) {
     die("No PODs selected for download.");
 }
-$selected_pods = array_map('intval', $_POST['selected_pods']);
+$selected_document_ids = [];
+$selected_legacy_delivery_ids = [];
+
+foreach ((array) $_POST['selected_pods'] as $selected_pod) {
+    $selected_pod = trim((string) $selected_pod);
+
+    if (preg_match('/^document_(\d+)$/', $selected_pod, $matches)) {
+        $selected_document_ids[] = (int) $matches[1];
+        continue;
+    }
+
+    if (preg_match('/^legacy_(\d+)$/', $selected_pod, $matches)) {
+        $selected_legacy_delivery_ids[] = (int) $matches[1];
+    }
+}
+
+$selected_document_ids = array_values(array_unique(array_filter($selected_document_ids)));
+$selected_legacy_delivery_ids = array_values(array_unique(array_filter($selected_legacy_delivery_ids)));
+
+if (empty($selected_document_ids) && empty($selected_legacy_delivery_ids)) {
+    http_response_code(400);
+    die("No valid POD selections were provided.");
+}
 
 // Database connection
 require_once '../config.php';
@@ -29,34 +57,19 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Account access control
-$account_id_for_admin = null;
-$is_global_admin = ($role === 'global_admin');
-
-if ($role === 'admin') {
-    // Get the account_id for this admin user
-    $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
-    $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
-    if ($stmtAdminAcc) {
-        $stmtAdminAcc->bind_param("i", $user_id);
-        $stmtAdminAcc->execute();
-        $stmtAdminAcc->bind_result($account_id_for_admin);
-        $stmtAdminAcc->fetch();
-        $stmtAdminAcc->close();
-    }
-}
-
 // Verify that this user has access to the project
-$project_access_sql = "SELECT project_name FROM projects WHERE id = ?";
-if ($role === 'admin' && $account_id_for_admin) {
-    $project_access_sql .= " AND account_id = ?";
-}
-
-$stmt = $conn->prepare($project_access_sql);
-if ($role === 'admin' && $account_id_for_admin) {
-    $stmt->bind_param("ii", $project_id, $account_id_for_admin);
-} else {
+if ($role === 'global_admin') {
+    $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
     $stmt->bind_param("i", $project_id);
+} else {
+    $stmt = $conn->prepare("
+        SELECT p.project_name
+        FROM projects p
+        JOIN customer_account_users cau ON p.account_id = cau.account_id
+        WHERE p.id = ? AND cau.user_id = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param("ii", $project_id, $user_id);
 }
 $stmt->execute();
 $stmt->bind_result($project_name);
@@ -64,28 +77,8 @@ $stmt->fetch();
 $stmt->close();
 
 if (!$project_name) {
+    $conn->close();
     die("You do not have access to this project.");
-}
-
-// Fetch the proof_of_delivery paths for the selected deliveries
-$placeholders = implode(',', array_fill(0, count($selected_pods), '?'));
-$types = str_repeat('i', count($selected_pods));
-$params = $selected_pods;
-
-$stmt = $conn->prepare("
-    SELECT id, proof_of_delivery
-    FROM deliveries
-    WHERE id IN ($placeholders) AND proof_of_delivery IS NOT NULL
-");
-$stmt->bind_param($types, ...$params);
-$stmt->execute();
-$result = $stmt->get_result();
-$stmt->close();
-
-error_log("Database query returned " . $result->num_rows . " POD records for IDs: " . implode(', ', $selected_pods));
-
-if ($result->num_rows == 0) {
-    die("No PODs found for download.");
 }
 
 // Prepare a ZIP archive in the system temp directory
@@ -97,51 +90,83 @@ if ($zip->open($zip_filename, ZipArchive::CREATE) !== TRUE) {
     die("Could not create ZIP archive.");
 }
 
-// -- IMPORTANT: Adjust these to match your view_pod logic --
-// If your actual PODs are in /public_html/Solterra-Logistics-Portal/customers/... 
-// then:
 $web_root  = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
-$subfolder = '/Solterra-Logistics-Portal'; // Adjust/remove if needed
+$subfolder = '/Solterra-Logistics-Portal';
 
-// Add each valid file to the ZIP
 $files_found = 0;
 $files_missing = 0;
-while ($row = $result->fetch_assoc()) {
-    $pod_path = $row['proof_of_delivery']; // e.g. "customers/DESRI/projects/24/documents/pods/..."
-    
-    // Use the same path construction as view_pod.php
-    $full_path = $web_root . $subfolder . '/' . ltrim($pod_path, '/');
-    
-    // Debug: Log the paths being checked
-    error_log("Checking POD file: " . $full_path);
-    
-    // Only add the file if it physically exists AND is actually a file (not a directory)
-    if (file_exists($full_path) && is_file($full_path)) {
-        // The second parameter to addFile() is the name inside the ZIP
-        $zip->addFile($full_path, basename($full_path));
-        $files_found++;
-        error_log("Added to ZIP: " . $full_path);
-    } else {
-        // Log missing files or directories for debugging
-        if (file_exists($full_path) && is_dir($full_path)) {
-            error_log("POD path is a directory (skipped): " . $full_path);
-        } else {
-            error_log("POD file not found for download: " . $full_path);
+
+if (!empty($selected_document_ids)) {
+    $placeholders = implode(',', array_fill(0, count($selected_document_ids), '?'));
+    $types = str_repeat('i', count($selected_document_ids) + 1);
+    $params = array_merge([$project_id], $selected_document_ids);
+
+    $stmt = $conn->prepare("
+        SELECT id, file_path, original_file_name
+        FROM project_documents
+        WHERE project_id = ?
+          AND document_type = 'pods'
+          AND is_active = 1
+          AND id IN ($placeholders)
+    ");
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $full_path = $row['file_path'];
+        if (!file_exists($full_path) || !is_file($full_path)) {
+            $files_missing++;
+            continue;
         }
-        $files_missing++;
+
+        $archive_name = basename($row['original_file_name'] ?: $full_path);
+        if ($zip->addFile($full_path, $archive_name)) {
+            $files_found++;
+        } else {
+            $files_missing++;
+        }
     }
+    $stmt->close();
+}
+
+if (!empty($selected_legacy_delivery_ids)) {
+    $placeholders = implode(',', array_fill(0, count($selected_legacy_delivery_ids), '?'));
+    $types = str_repeat('i', count($selected_legacy_delivery_ids) + 1);
+    $params = array_merge([$project_id], $selected_legacy_delivery_ids);
+
+    $stmt = $conn->prepare("
+        SELECT id, proof_of_delivery
+        FROM deliveries
+        WHERE project_id = ?
+          AND proof_of_delivery IS NOT NULL
+          AND proof_of_delivery != ''
+          AND id IN ($placeholders)
+    ");
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $full_path = $web_root . $subfolder . '/' . ltrim($row['proof_of_delivery'], '/');
+        if (!file_exists($full_path) || !is_file($full_path)) {
+            $files_missing++;
+            continue;
+        }
+
+        if ($zip->addFile($full_path, basename($full_path))) {
+            $files_found++;
+        } else {
+            $files_missing++;
+        }
+    }
+    $stmt->close();
 }
 
 $zip->close();
 
-// Log summary
-error_log("ZIP creation summary: $files_found files found, $files_missing files missing");
-
-// Double-check if the ZIP is actually non-empty
 if (!filesize($zip_filename)) {
-    // If it's 0 bytes, that means no files were successfully added
     unlink($zip_filename);
-    die("None of the selected files could be found on the server. Found: $files_found, Missing: $files_missing. Check server error logs for detailed paths.");
+    $conn->close();
+    die("None of the selected POD files could be found on the server.");
 }
 
 // Send the ZIP to the browser
@@ -150,15 +175,18 @@ if (ob_get_level()) {
     ob_end_clean();
 }
 
-// Set a cookie to signal download completion (expires in 1 minute)
-setcookie('download_complete', '1', time() + 60, '/');
+// Set a cookie to signal download completion for the current page JS.
+setcookie('download_complete', '1', [
+    'expires' => time() + 60,
+    'path' => '/',
+    'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+    'httponly' => false,
+    'samesite' => 'Lax',
+]);
 
 header('Content-Type: application/zip');
 // e.g. "PODs_ProjectName.zip"
 header('Content-Disposition: attachment; filename="PODs_' . preg_replace('/[^A-Za-z0-9_\-]/', '_', $project_name) . '.zip"');
-// We skip Content-Length to avoid potential truncation
-// header('Content-Length: ' . filesize($zip_filename));
-
 readfile($zip_filename);
 
 // Clean up
