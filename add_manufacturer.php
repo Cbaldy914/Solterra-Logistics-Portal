@@ -776,23 +776,23 @@ $conn->close();
                 <div class="form-row single">
                     <div class="form-group">
                         <label for="street_address">Street Address <span class="required-star">*</span></label>
-                        <input type="text" id="street_address" name="street_address" placeholder="123 Manufacturing Blvd" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
+                        <input type="text" id="street_address" name="street_address" placeholder="123 Example Street" value="<?php echo htmlspecialchars(slp_form_value('street_address', $request_data)); ?>">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="city">City <span class="required-star">*</span></label>
-                        <input type="text" id="city" name="city" placeholder="Phoenix" value="<?php echo htmlspecialchars(slp_form_value('city', $request_data)); ?>">
+                        <input type="text" id="city" name="city" placeholder="City" value="<?php echo htmlspecialchars(slp_form_value('city', $request_data)); ?>">
                     </div>
                     <div class="form-group">
                         <label for="state">State/Province</label>
-                        <input type="text" id="state" name="state" placeholder="AZ" value="<?php echo htmlspecialchars(slp_form_value('state', $request_data)); ?>">
+                        <input type="text" id="state" name="state" placeholder="State/Province" value="<?php echo htmlspecialchars(slp_form_value('state', $request_data)); ?>">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="zip_code">Zip/Postal Code</label>
-                        <input type="text" id="zip_code" name="zip_code" placeholder="85281" value="<?php echo htmlspecialchars(slp_form_value('zip_code', $request_data)); ?>">
+                        <input type="text" id="zip_code" name="zip_code" placeholder="Postal Code" value="<?php echo htmlspecialchars(slp_form_value('zip_code', $request_data)); ?>">
                     </div>
                     <div class="form-group">
                         <label for="country">Country <span class="required-star">*</span></label>

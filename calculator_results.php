@@ -1390,7 +1390,7 @@ $conn->close();
                 <div class="form-group">
                     <label for="estimate_name">Estimate Name</label>
                     <input type="text" name="estimate_name" id="estimate_name" required
-                           placeholder="e.g., Phoenix vs Dallas Comparison"
+                           placeholder="e.g., Option A vs Option B Comparison"
                            value="<?php echo isset($_POST['edit_name']) ? htmlspecialchars($_POST['edit_name']) : ''; ?>">
                 </div>
 
