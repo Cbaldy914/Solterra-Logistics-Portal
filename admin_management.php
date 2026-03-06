@@ -2,8 +2,14 @@
 session_name("logistics_session");
 session_start();
 
+$adminManagementCsrfToken = $_SESSION['admin_management_csrf_token'] ?? '';
+if ($adminManagementCsrfToken === '') {
+    $adminManagementCsrfToken = bin2hex(random_bytes(32));
+    $_SESSION['admin_management_csrf_token'] = $adminManagementCsrfToken;
+}
+
 // Only global admin can access this page
-if ($_SESSION['role'] !== 'global_admin') {
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'global_admin') {
     header("Location: unauthorized");
     exit();
 }
@@ -951,6 +957,14 @@ $conn->close();
 </div>
 
 <script>
+const adminManagementCsrfToken = <?php echo json_encode($adminManagementCsrfToken); ?>;
+
+function buildAdminManagementFormData(formOrData) {
+    const formData = formOrData instanceof FormData ? formOrData : new FormData(formOrData);
+    formData.append('csrf_token', adminManagementCsrfToken);
+    return formData;
+}
+
 // Tab switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', function() {
@@ -1020,7 +1034,7 @@ function filterTable(tableId, searchTerm) {
 // User CRUD
 function submitAddUser(event) {
     event.preventDefault();
-    const formData = new FormData(event.target);
+    const formData = buildAdminManagementFormData(event.target);
     formData.append('action', 'add_user');
 
     fetch('api/admin_management.php', {
@@ -1050,7 +1064,7 @@ function editUser(user) {
 
 function submitEditUser(event) {
     event.preventDefault();
-    const formData = new FormData(event.target);
+    const formData = buildAdminManagementFormData(event.target);
     formData.append('action', 'update_user');
 
     fetch('api/admin_management.php', {
@@ -1078,7 +1092,7 @@ function confirmDeleteUser(userId, username) {
 }
 
 function deleteUser(userId) {
-    const formData = new FormData();
+    const formData = buildAdminManagementFormData(new FormData());
     formData.append('action', 'delete_user');
     formData.append('user_id', userId);
 
@@ -1102,7 +1116,7 @@ function deleteUser(userId) {
 // Account CRUD
 function submitAddAccount(event) {
     event.preventDefault();
-    const formData = new FormData(event.target);
+    const formData = buildAdminManagementFormData(event.target);
     formData.append('action', 'add_account');
 
     fetch('api/admin_management.php', {
@@ -1130,7 +1144,7 @@ function editAccount(account) {
 
 function submitEditAccount(event) {
     event.preventDefault();
-    const formData = new FormData(event.target);
+    const formData = buildAdminManagementFormData(event.target);
     formData.append('action', 'update_account');
 
     fetch('api/admin_management.php', {
@@ -1158,7 +1172,7 @@ function confirmDeleteAccount(accountId, accountName) {
 }
 
 function deleteAccount(accountId) {
-    const formData = new FormData();
+    const formData = buildAdminManagementFormData(new FormData());
     formData.append('action', 'delete_account');
     formData.append('account_id', accountId);
 
@@ -1200,7 +1214,7 @@ function submitInviteUser(event) {
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span style="display: inline-flex; align-items: center; gap: 8px;"><svg width="16" height="16" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/></svg> Sending...</span>';
 
-    const formData = new FormData(form);
+    const formData = buildAdminManagementFormData(form);
     formData.append('action', 'invite_user');
 
     fetch('api/admin_management.php', {
