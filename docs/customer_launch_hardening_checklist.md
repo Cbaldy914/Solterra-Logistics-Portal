@@ -346,3 +346,4 @@ This is the highest-value first batch to implement next:
 - 2026-03-06: Hardened invoice ZIP downloads by requiring CSRF and aligning project/account access checks in `download_invoices.php` with the portal's account-based authorization model.
 - 2026-03-06: Added CSRF protection to global document bulk downloads by requiring a session token in `bulk_download_documents.php` and sending it from `global_documents.php`.
 - 2026-03-06: Closed direct file-view IDOR gaps by scoping `view_invoice.php` and `view_pod.php` to the current user's account access instead of treating `admin` and `customer_admin` as globally trusted readers.
+- 2026-03-06: Scoped `view_flash_test.php` to the pallet's warehouse account so non-global admins can only open flash-test files for accounts they actually belong to.

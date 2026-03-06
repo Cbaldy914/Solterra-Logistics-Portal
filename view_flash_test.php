@@ -2,7 +2,7 @@
 session_name("logistics_session");
 session_start();
 
-// Check if user is logged in and has appropriate role (admin/global_admin)
+// Check if user is logged in and has an allowed role.
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'])) {
     http_response_code(403); // Forbidden
     die("Access Denied: You do not have permission to view this file.");
@@ -22,8 +22,13 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
-// Fetch the flash test data path for the given pallet ID
-$sql = "SELECT flash_test_data FROM inventory_pallets WHERE id = ?";
+// Fetch the flash test data path and owning account for the given pallet ID.
+$sql = "
+    SELECT ip.flash_test_data, w.account_id
+    FROM inventory_pallets ip
+    LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+    WHERE ip.id = ?
+";
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
     error_log("Failed to prepare statement to fetch flash test data: " . $conn->error);
@@ -33,7 +38,7 @@ if (!$stmt) {
 
 $stmt->bind_param("i", $pallet_id);
 $stmt->execute();
-$stmt->bind_result($flash_test_path);
+$stmt->bind_result($flash_test_path, $account_id);
 
 if (!$stmt->fetch()) {
     $stmt->close();
@@ -43,6 +48,34 @@ if (!$stmt->fetch()) {
 }
 
 $stmt->close();
+
+if ($_SESSION['role'] !== 'global_admin') {
+    $account_id = (int) $account_id;
+    if ($account_id <= 0) {
+        $conn->close();
+        http_response_code(403);
+        die("Access denied: This flash test is not associated with an accessible account.");
+    }
+
+    $stmt = $conn->prepare("
+        SELECT 1
+        FROM customer_account_users
+        WHERE account_id = ? AND user_id = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param("ii", $account_id, $_SESSION['user_id']);
+    $stmt->execute();
+    $stmt->store_result();
+    $hasAccess = $stmt->num_rows > 0;
+    $stmt->close();
+
+    if (!$hasAccess) {
+        $conn->close();
+        http_response_code(403);
+        die("Access denied: You do not belong to this account.");
+    }
+}
+
 $conn->close();
 
 // Check if a path is actually stored
