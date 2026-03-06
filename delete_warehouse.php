@@ -8,12 +8,25 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
     exit();
 }
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header("Location: warehouses");
+    exit();
+}
+
+if (
+    empty($_SESSION['csrf_token']) ||
+    !isset($_POST['csrf_token']) ||
+    !hash_equals($_SESSION['csrf_token'], (string) $_POST['csrf_token'])
+) {
+    die("Invalid request token.");
+}
+
 // Check if warehouse_id is provided
-if (!isset($_GET['warehouse_id']) || empty($_GET['warehouse_id'])) {
+if (!isset($_POST['warehouse_id']) || empty($_POST['warehouse_id'])) {
     die("Warehouse ID is missing.");
 }
 
-$warehouse_id = intval($_GET['warehouse_id']);
+$warehouse_id = intval($_POST['warehouse_id']);
 
 // Database connection
 require_once '../config.php';

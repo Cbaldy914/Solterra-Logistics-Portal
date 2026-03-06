@@ -8,6 +8,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
     exit();
 }
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Database connection
 require_once '../config.php';
 $conn = getDBConnection();
@@ -131,7 +135,11 @@ $stmt->close();
                         
                         <p style="margin-top: 15px;">
                             <a href="edit_warehouse?warehouse_id=<?php echo $warehouse['id']; ?>" class="button">Edit</a>
-                            <a href="delete_warehouse?warehouse_id=<?php echo $warehouse['id']; ?>" class="button delete-button" onclick="return confirm('Are you sure you want to delete this warehouse?');">Delete</a>
+                            <form action="delete_warehouse" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this warehouse?');">
+                                <input type="hidden" name="warehouse_id" value="<?php echo (int) $warehouse['id']; ?>">
+                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                                <button type="submit" class="button delete-button">Delete</button>
+                            </form>
                         </p>
                     </div>
                 </div>

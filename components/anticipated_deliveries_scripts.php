@@ -1,5 +1,11 @@
+<?php
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+?>
 <script>
         // ==================== GLOBAL STATE ====================
+        const csrfToken = <?php echo json_encode($_SESSION['csrf_token']); ?>;
         const isGeneralMode = <?= json_encode($is_general_mode ?? false) ?>;
         const generalProjectionId = <?= json_encode($requested_projection_id ?? 0) ?>;
         const projectId = <?php echo $project_id; ?>;
@@ -639,7 +645,10 @@
             fetch('api/projection_delete.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ projection_id: workingState.projectionId })
+                body: JSON.stringify({
+                    projection_id: workingState.projectionId,
+                    csrf_token: csrfToken
+                })
             })
             .then(response => response.json())
             .then(data => {

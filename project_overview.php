@@ -1,5 +1,8 @@
 <?php
 require_once 'components/project_overview/data_processing.php';
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -3381,7 +3384,7 @@ function confirmDelete() {
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: 'project_id=' + deleteProjectId
+        body: 'project_id=' + encodeURIComponent(deleteProjectId) + '&csrf_token=' + encodeURIComponent(<?php echo json_encode($_SESSION['csrf_token']); ?>)
     })
     .then(response => response.json())
     .then(data => {

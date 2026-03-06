@@ -8,6 +8,10 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
     header("Location: unauthorized");
     exit();
 }
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 // Database connection
 require_once '../config.php';
 require_once 'module_reconciliation_audit_helpers.php';
@@ -1991,6 +1995,7 @@ if ($conn && $conn instanceof mysqli) {
                                         <a href="edit_module_batch.php?project_id=<?php echo (int)$batch['project_id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                                             <button type="submit" class="dropdown-item delete" style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;">Delete</button>
                                         </form>
                                     </div>
@@ -2116,6 +2121,7 @@ if ($conn && $conn instanceof mysqli) {
                                         </button>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
+                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                                             <button type="submit" class="dropdown-item delete" style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;">Delete</button>
                                         </form>
                                     </div>

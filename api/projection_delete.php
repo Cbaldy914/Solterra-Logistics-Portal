@@ -25,9 +25,26 @@ if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
     exit();
 }
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Only POST method allowed']);
+    exit();
+}
+
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
-$projection_id = intval($input['projection_id'] ?? $_GET['projection_id'] ?? 0);
+
+if (
+    empty($_SESSION['csrf_token']) ||
+    empty($input['csrf_token']) ||
+    !hash_equals($_SESSION['csrf_token'], (string) $input['csrf_token'])
+) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Invalid request token']);
+    exit();
+}
+
+$projection_id = intval($input['projection_id'] ?? 0);
 
 if (!$projection_id) {
     http_response_code(400);

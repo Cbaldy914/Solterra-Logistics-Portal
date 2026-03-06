@@ -8,6 +8,10 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
     exit();
 }
 
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Database connection
 require_once '../config.php';
 $conn = getDBConnection();
@@ -978,6 +982,7 @@ $conn->close(); // Close connection after fetching project data
             // Execute deletion
             const formData = new FormData();
             formData.append('project_id', projectId);
+            formData.append('csrf_token', <?php echo json_encode($_SESSION['csrf_token']); ?>);
             
             fetch('delete_project_cascade.php', {
                 method: 'POST',
