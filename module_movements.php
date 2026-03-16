@@ -2483,7 +2483,7 @@ function createRouteLines(locations) {
             (status === 'In Warehouse' || status === 'Delivered to Project' || status === 'In Transit to Warehouse');
 
         // Create manufacturer → warehouse route only when there is no explicit intermediate-origin transfer.
-        if (shouldShowManufacturerToWarehouse && !$warehouseIsPort) {
+        if (shouldShowManufacturerToWarehouse && !warehouseIsPort) {
             const route1Key = `${manufacturerKey}_to_${warehouseKey}`;
             addMovementRoute(route1Key, {
                 from: manufacturerKey,
@@ -2494,7 +2494,7 @@ function createRouteLines(locations) {
         }
 
         // Create manufacturer → origin warehouse route for pallets delivered to project (to preserve historical path)
-        if (!warehouseKey && originWarehouseKey && status === 'Delivered to Project' && !$originWarehouseIsPort) {
+        if (!warehouseKey && originWarehouseKey && status === 'Delivered to Project' && !originWarehouseIsPort) {
             const routeOrigKey = `${manufacturerKey}_to_${originWarehouseKey}`;
             addMovementRoute(routeOrigKey, {
                 from: manufacturerKey,
