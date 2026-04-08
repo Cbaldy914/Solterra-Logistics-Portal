@@ -606,15 +606,16 @@ function handleImport($conn, $user_id) {
     $columnMapping = json_decode($_POST['column_mapping'] ?? '{}', true);
     $manufacturer_id = intval($_POST['manufacturer_id'] ?? 0);
     $manufacturer_location_id = intval($_POST['manufacturer_location_id'] ?? 0) ?: null;
-    $project_id = intval($_POST['project_id'] ?? 0);
+    $project_id = intval($_POST['project_id'] ?? 0) ?: null;
     $account_id = intval($_POST['account_id'] ?? 0) ?: getAccountIdForUser($conn, $user_id);
     $saveMapping = $_POST['save_mapping'] === '1';
     $batch_name = trim($_POST['batch_name'] ?? '');
     $trackDomesticContent = !empty($_POST['track_domestic_content']);
+    $intake_warehouse_id = intval($_POST['intake_warehouse_id'] ?? 0) ?: null;
     $defaultDomesticContentPct = null;
 
-    if (!$manufacturer_id || !$project_id || !$account_id) {
-        echo json_encode(['error' => 'Missing required parameters']);
+    if (!$manufacturer_id || !$account_id) {
+        echo json_encode(['error' => 'Missing required parameters (manufacturer and account are required)']);
         return;
     }
 
@@ -648,9 +649,22 @@ function handleImport($conn, $user_id) {
     $manufacturerName = $mfgResult ? $mfgResult['name'] : 'Unknown';
     $stmt->close();
 
-    // Get manufacturer location address for initial_location
+    // Get initial_location: use warehouse address for intake, otherwise manufacturer location
     $initial_location = '';
-    if ($manufacturer_location_id) {
+    if ($intake_warehouse_id) {
+        $stmt = $conn->prepare("SELECT name, city, state FROM warehouses WHERE id = ?");
+        $stmt->bind_param("i", $intake_warehouse_id);
+        $stmt->execute();
+        $whResult = $stmt->get_result()->fetch_assoc();
+        if ($whResult) {
+            $initial_location = implode(', ', array_filter([
+                $whResult['name'] ?? '',
+                $whResult['city'] ?? '',
+                $whResult['state'] ?? ''
+            ]));
+        }
+        $stmt->close();
+    } elseif ($manufacturer_location_id) {
         $stmt = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?");
         $stmt->bind_param("i", $manufacturer_location_id);
         $stmt->execute();
@@ -773,19 +787,20 @@ function handleImport($conn, $user_id) {
                 // Find or create unassigned_module_item for this wattage
                 $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity, $defaultDomesticContentPct);
 
-                $defaultStatus = 'At Manufacturer';
+                $defaultStatus = $intake_warehouse_id ? 'In Warehouse' : 'At Manufacturer';
+                $arrivalDate = $intake_warehouse_id ? date('Y-m-d H:i:s') : null;
                 $stmt = $conn->prepare("
                     INSERT INTO inventory_pallets (
                         pallet_identifier, manufacturer_pallet_id, unassigned_module_item_id,
                         wattage, quantity, status, manufacturer, manufacturer_location_id,
-                        assigned_project_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        assigned_project_id, current_warehouse_id, arrival_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->bind_param(
-                    "ssiiissii",
+                    "ssiiissiiis",
                     $palletId, $palletId, $moduleItemId, $wattage, $quantity,
                     $defaultStatus, $manufacturerName, $manufacturer_location_id,
-                    $project_id
+                    $project_id, $intake_warehouse_id, $arrivalDate
                 );
                 $stmt->execute();
                 $stmt->close();
@@ -869,7 +884,8 @@ function handleImport($conn, $user_id) {
             'success' => true,
             'pallets_created' => $palletsCreated,
             'pallets_updated' => $palletsUpdated,
-            'total_modules' => $totalModules
+            'total_modules' => $totalModules,
+            'intake_warehouse_id' => $intake_warehouse_id
         ]);
 
     } catch (Exception $e) {

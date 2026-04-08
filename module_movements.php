@@ -177,6 +177,7 @@ try {
                 COALESCE(ml.city, mfg.city, '') as mfg_city,
                 COALESCE(ml.state, mfg.state, '') as mfg_state,
                 COALESCE(ml.zip_code, mfg.zip_code, '') as mfg_zip,
+                CASE WHEN ip.manufacturer_location_id IS NOT NULL THEN 1 ELSE 0 END as has_mfg_location,
                 
                 -- Warehouse info (current location)
                 w2.id as current_warehouse_id_info,
@@ -263,8 +264,8 @@ try {
             LEFT JOIN warehouses w_origin ON ((d.origin_type = 'warehouse' OR d.origin_type = 'port') AND d.origin_id = w_origin.id)
             
             WHERE p.id = ?
-            GROUP BY 
-                ip.status, ip.wattage, m.vendor_name, 
+            GROUP BY
+                ip.status, ip.wattage, m.vendor_name, ip.manufacturer_location_id,
                 mfg.name, mfg.street_address, mfg.city, mfg.state, mfg.zip_code,
                 w2.id, w2.name, w2.is_port, w2.street_address, w2.city, w2.state, w2.zip_code,
                 w.id, w.name, w.is_port, w.street_address, w.city, w.state, w.zip_code,
@@ -1571,14 +1572,15 @@ function processMovementData() {
     
     // Process each aggregated movement group
     movementData.forEach(movement => {
-        // Add manufacturer location for ALL groups that have manufacturer info
-        if (movement.manufacturer_name) {
+        // Add manufacturer location for groups that have a known manufacturer location
+        // Skip for warehouse-intake pallets (has_mfg_location = 0) to avoid phantom pins
+        if (movement.manufacturer_name && parseInt(movement.has_mfg_location || 0, 10) === 1) {
             const mfgKey = 'mfg_' + movement.manufacturer_name;
             if (!locations.has(mfgKey)) {
                 // Use manufacturer company name if available, otherwise extract from vendor_name
                 const manufacturerName = movement.manufacturer_company || movement.manufacturer_name.split(' - ')[0] || movement.manufacturer_name;
                 const manufacturerAddress = buildAddress(movement.mfg_street, movement.mfg_city, movement.mfg_state, movement.mfg_zip);
-                
+
                 locations.set(mfgKey, {
                     type: 'manufacturer',
                     name: manufacturerName,
@@ -2432,7 +2434,8 @@ function createRouteLines(locations) {
     
     // Analyze movement patterns to create routes based on aggregated delivery history
     movementData.forEach(movement => {
-        const manufacturerKey = 'mfg_' + movement.manufacturer_name;
+        const hasMfgLocation = parseInt(movement.has_mfg_location || 0, 10) === 1;
+        const manufacturerKey = hasMfgLocation ? 'mfg_' + movement.manufacturer_name : null;
         const projectKey = 'proj_' + projectData.id;
         const status = String(movement.status || '').trim();
         
@@ -2483,7 +2486,7 @@ function createRouteLines(locations) {
             (status === 'In Warehouse' || status === 'Delivered to Project' || status === 'In Transit to Warehouse');
 
         // Create manufacturer → warehouse route only when there is no explicit intermediate-origin transfer.
-        if (shouldShowManufacturerToWarehouse && !warehouseIsPort) {
+        if (manufacturerKey && shouldShowManufacturerToWarehouse && !warehouseIsPort) {
             const route1Key = `${manufacturerKey}_to_${warehouseKey}`;
             addMovementRoute(route1Key, {
                 from: manufacturerKey,
@@ -2494,7 +2497,7 @@ function createRouteLines(locations) {
         }
 
         // Create manufacturer → origin warehouse route for pallets delivered to project (to preserve historical path)
-        if (!warehouseKey && originWarehouseKey && status === 'Delivered to Project' && !originWarehouseIsPort) {
+        if (manufacturerKey && !warehouseKey && originWarehouseKey && status === 'Delivered to Project' && !originWarehouseIsPort) {
             const routeOrigKey = `${manufacturerKey}_to_${originWarehouseKey}`;
             addMovementRoute(routeOrigKey, {
                 from: manufacturerKey,
@@ -2524,7 +2527,7 @@ function createRouteLines(locations) {
             const isDirectFromManufacturer = movement.origin_type === 'manufacturer';
             const isFromWarehouse = movement.origin_type === 'warehouse';
             
-            if (isDirectFromManufacturer && !isFromWarehouse) {
+            if (manufacturerKey && isDirectFromManufacturer && !isFromWarehouse) {
                 const directRouteKey = `${manufacturerKey}_to_${projectKey}`;
                 addMovementRoute(directRouteKey, {
                     from: manufacturerKey,

@@ -140,6 +140,19 @@ if ($account_id) {
     $stmt->close();
 }
 
+// Fetch warehouses for intake location option
+$warehouses = [];
+if ($account_id) {
+    $stmt = $conn->prepare("SELECT id, name, city, state FROM warehouses WHERE account_id = ? ORDER BY name ASC");
+    $stmt->bind_param("i", $account_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $warehouses[] = $row;
+    }
+    $stmt->close();
+}
+
 // Check if Excel is supported
 $excelSupported = ScheduleParser::isExcelSupported();
 
@@ -1210,6 +1223,7 @@ $conn->close();
         <div class="step-content active" id="step1">
             <div class="content-card">
                 <h2>Step 1: Select Manufacturer & Upload Pallet Manifest</h2>
+                <p style="color: #6c757d; font-size: 0.9rem; margin: -16px 0 20px 0;">Import pallets from a manufacturer factory or record existing inventory at a warehouse.</p>
 
                 <div class="info-banner">
                     <h3>What This Does</h3>
@@ -1283,7 +1297,7 @@ $conn->close();
                         </div>
                     </div>
 
-                    <!-- Row 2: Manufacturer | Location -->
+                    <!-- Row 2: Manufacturer | Current Location -->
                     <div class="form-row-inline">
                         <div class="form-group">
                             <label class="required" for="manufacturer_id">Manufacturer</label>
@@ -1297,14 +1311,40 @@ $conn->close();
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="form-group" id="locationGroup">
-                            <label class="required" for="manufacturer_location_id">Manufacturer Location</label>
-                            <select name="manufacturer_location_id" id="manufacturer_location_id" disabled>
-                                <option value="">Select a manufacturer first</option>
-                            </select>
-                            <div id="locationAddressDisplay" class="location-address-display" style="display: none;">
-                                <span class="address-icon">📍</span>
-                                <span id="locationAddressText"></span>
+                        <div class="form-group" id="currentLocationGroup">
+                            <label style="font-weight: 500; color: #333; margin-bottom: 8px; display: block;">Current Location</label>
+                            <div style="display: inline-flex; background: #f0f0f0; border-radius: 6px; padding: 2px; gap: 2px; margin-bottom: 10px;">
+                                <label style="cursor: pointer; font-weight: 500; font-size: 0.85rem; padding: 6px 14px; border-radius: 5px; transition: all 0.2s; margin: 0; color: #666;" class="location-mode-option" id="locationModeFactory">
+                                    <input type="radio" name="location_mode" value="manufacturer" checked style="display: none;"> At Manufacturer
+                                </label>
+                                <label style="cursor: pointer; font-weight: 500; font-size: 0.85rem; padding: 6px 14px; border-radius: 5px; transition: all 0.2s; margin: 0; color: #666;" class="location-mode-option" id="locationModeWarehouse">
+                                    <input type="radio" name="location_mode" value="warehouse" style="display: none;"> In Warehouse
+                                </label>
+                            </div>
+                            <!-- Manufacturer Location (shown when At Manufacturer) -->
+                            <div id="locationGroup">
+                                <select name="manufacturer_location_id" id="manufacturer_location_id" disabled style="width: 100%; padding: 12px 16px; border: 2px solid #e8e8e8; border-radius: 8px; font-size: 1rem; background: #fafafa; box-sizing: border-box;">
+                                    <option value="">Select a manufacturer first</option>
+                                </select>
+                                <div id="locationAddressDisplay" class="location-address-display" style="display: none;">
+                                    <span class="address-icon">📍</span>
+                                    <span id="locationAddressText"></span>
+                                </div>
+                            </div>
+                            <!-- Warehouse (shown when In Warehouse) -->
+                            <div id="warehouseSelectGroup" style="display: none;">
+                                <select name="intake_warehouse_id" id="intake_warehouse_id" style="width: 100%; padding: 12px 16px; border: 2px solid #e8e8e8; border-radius: 8px; font-size: 1rem; background: #fafafa; box-sizing: border-box;">
+                                    <option value="">Select Warehouse</option>
+                                    <?php foreach ($warehouses as $wh): ?>
+                                        <option value="<?php echo $wh['id']; ?>">
+                                            <?php echo htmlspecialchars($wh['name']); ?>
+                                            <?php if ($wh['city'] || $wh['state']): ?>
+                                                — <?php echo htmlspecialchars(trim($wh['city'] . ', ' . $wh['state'], ', ')); ?>
+                                            <?php endif; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="field-hint">Pallets will be imported as "In Warehouse" at this location.</div>
                             </div>
                         </div>
                     </div>
@@ -1588,6 +1628,9 @@ $conn->close();
                     </button>
                 </div>
 
+                <!-- Warehouse Intake Banner -->
+                <div id="warehouseIntakeBanner" style="display: none;"></div>
+
                 <div class="summary-stats" id="summaryStats">
                     <!-- Populated by JavaScript -->
                 </div>
@@ -1865,9 +1908,11 @@ include 'components/module_batch_scripts.php';
     };
 
     const manufacturerId = () => document.getElementById('manufacturer_id').value;
-    const manufacturerLocationId = () => document.getElementById('manufacturer_location_id').value;
+    const manufacturerLocationId = () => locationMode() === 'warehouse' ? '' : document.getElementById('manufacturer_location_id').value;
     const projectId = () => document.getElementById('destination_project_id')?.value || '';
     const accountId = () => document.querySelector('[name="account_id"]')?.value || '<?php echo $account_id ?? ''; ?>';
+    const locationMode = () => document.querySelector('input[name="location_mode"]:checked')?.value || 'manufacturer';
+    const intakeWarehouseId = () => locationMode() === 'warehouse' ? (document.getElementById('intake_warehouse_id')?.value || '') : '';
 
     // System fields for pallet import (simplified)
     const systemFields = {
@@ -2081,10 +2126,40 @@ include 'components/module_batch_scripts.php';
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
+    // Location mode toggle (At Manufacturer vs In Warehouse)
+    function updateLocationToggleStyles() {
+        const factoryOption = document.getElementById('locationModeFactory');
+        const warehouseOption = document.getElementById('locationModeWarehouse');
+        const active = locationMode();
+        [factoryOption, warehouseOption].forEach(el => {
+            el.style.background = 'transparent';
+            el.style.color = '#666';
+            el.style.boxShadow = 'none';
+        });
+        const activeEl = active === 'warehouse' ? warehouseOption : factoryOption;
+        activeEl.style.background = '#fff';
+        activeEl.style.color = '#293E4C';
+        activeEl.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+    }
+    document.querySelectorAll('input[name="location_mode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const warehouseGroup = document.getElementById('warehouseSelectGroup');
+            const locationGroup = document.getElementById('locationGroup');
+            const isWarehouse = this.value === 'warehouse';
+            warehouseGroup.style.display = isWarehouse ? 'block' : 'none';
+            locationGroup.style.display = isWarehouse ? 'none' : 'block';
+            updateLocationToggleStyles();
+            updateStep1Validation();
+        });
+    });
+    updateLocationToggleStyles();
+
+    document.getElementById('intake_warehouse_id')?.addEventListener('change', updateStep1Validation);
+
     function updateStep1Validation() {
         const mfgSelected = manufacturerId();
-        // Project is optional now (can be unassigned)
-        btnNext1.disabled = !(uploadedFile && mfgSelected);
+        const warehouseValid = locationMode() !== 'warehouse' || intakeWarehouseId();
+        btnNext1.disabled = !(uploadedFile && mfgSelected && warehouseValid);
     }
 
     // Step 1 -> Step 2
@@ -2095,6 +2170,7 @@ include 'components/module_batch_scripts.php';
         formData.append('pallet_file', uploadedFile);
         formData.append('action', 'parse_headers');
         formData.append('manufacturer_id', manufacturerId());
+        formData.append('intake_warehouse_id', intakeWarehouseId());
 
         try {
             const response = await fetch('process_pallet_upload.php', {
@@ -2240,6 +2316,7 @@ include 'components/module_batch_scripts.php';
         formData.append('manufacturer_location_id', manufacturerLocationId());
         formData.append('project_id', projectId());
         formData.append('account_id', accountId());
+        formData.append('intake_warehouse_id', intakeWarehouseId());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
 
@@ -2312,6 +2389,28 @@ include 'components/module_batch_scripts.php';
                 <div class="stat-label">Avg Modules/Pallet</div>
             </div>
         `;
+
+        // Warehouse intake banner
+        const warehouseIntakeBanner = document.getElementById('warehouseIntakeBanner');
+        if (warehouseIntakeBanner) {
+            const whId = intakeWarehouseId();
+            if (whId) {
+                const whSelect = document.getElementById('intake_warehouse_id');
+                const whName = whSelect?.options[whSelect.selectedIndex]?.text || 'Selected Warehouse';
+                warehouseIntakeBanner.innerHTML = `
+                    <div style="background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border: 1px solid #81c784; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.5rem;">🏭</span>
+                        <div>
+                            <strong style="color: #2e7d32;">Warehouse Intake</strong>
+                            <div style="color: #388e3c; font-size: 0.9rem;">Pallets will be imported as <strong>"In Warehouse"</strong> at <strong>${whName.replace(/</g, '&lt;')}</strong></div>
+                        </div>
+                    </div>
+                `;
+                warehouseIntakeBanner.style.display = 'block';
+            } else {
+                warehouseIntakeBanner.style.display = 'none';
+            }
+        }
 
         // Pricing & Milestone Summary
         const pricingSummaryDiv = document.getElementById('pricingMilestoneSummary');
@@ -2638,6 +2737,11 @@ include 'components/module_batch_scripts.php';
             const palletsNew = summary.pallets_new || 0;
             const palletsExisting = summary.pallets_existing || 0;
             let confirmMsg = 'Are you sure you want to import these pallets?\n\n';
+            if (intakeWarehouseId()) {
+                const whSelect = document.getElementById('intake_warehouse_id');
+                const whName = whSelect?.options[whSelect.selectedIndex]?.text || 'selected warehouse';
+                confirmMsg += `• Status: "In Warehouse" at ${whName}\n`;
+            }
             if (palletsNew > 0) confirmMsg += `• ${palletsNew} new pallet(s) will be added\n`;
             if (palletsExisting > 0) confirmMsg += `• ${palletsExisting} existing pallet(s) will be updated\n`;
             if (totalImportMw !== 0) {
@@ -2659,6 +2763,7 @@ include 'components/module_batch_scripts.php';
         formData.append('manufacturer_location_id', manufacturerLocationId());
         formData.append('project_id', projectId());
         formData.append('account_id', accountId());
+        formData.append('intake_warehouse_id', intakeWarehouseId());
         formData.append('batch_name', document.getElementById('batch_name')?.value || '');
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
@@ -2746,9 +2851,18 @@ include 'components/module_batch_scripts.php';
 
             const hasUpdates = result.pallets_updated && result.pallets_updated > 0;
 
+            const whId = intakeWarehouseId();
+            let warehouseNote = '';
+            if (whId) {
+                const whSelect = document.getElementById('intake_warehouse_id');
+                const whName = whSelect?.options[whSelect.selectedIndex]?.text || 'warehouse';
+                warehouseNote = `<div style="background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border: 1px solid #81c784; border-radius: 12px; padding: 16px; margin-bottom: 16px; text-align: center; color: #2e7d32;">All pallets imported as <strong>"In Warehouse"</strong> at <strong>${whName.replace(/</g, '&lt;')}</strong></div>`;
+            }
+
             container.innerHTML = `
                 <div class="results-icon success">✓</div>
                 <h2>Import Complete!</h2>
+                ${warehouseNote}
                 <div class="summary-stats">
                     <div class="stat-card">
                         <div class="stat-value">${result.pallets_created}</div>

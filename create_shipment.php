@@ -3261,6 +3261,8 @@ if (!empty($bolCompletionMessage)) {
                                 <?php endforeach; ?>
                                 <option value="__add_new__">+ Add new carrier...</option>
                             </select>
+                            <label for="carrier_reference_number" style="margin-top: 8px; display: block;">Carrier Reference #:</label>
+                            <input type="text" id="carrier_reference_number" name="carrier_reference_number" placeholder="Optional" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                         </div>
                         <div id="domestic-cost-fields">
                             <label for="freight_cost">Freight Cost ($):</label>
@@ -3397,6 +3399,8 @@ if (!empty($bolCompletionMessage)) {
                                 <?php endforeach; ?>
                                 <option value="__add_new__">+ Add new carrier...</option>
                             </select>
+                            <label for="carrier_reference_number_multi" style="margin-top: 8px; display: block;">Carrier Reference #:</label>
+                            <input type="text" id="carrier_reference_number_multi" name="carrier_reference_number_multi" placeholder="Optional" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                         </div>
                         <div>
                             <label for="freight_cost_multi">Freight Cost ($):</label>
