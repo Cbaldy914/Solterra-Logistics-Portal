@@ -983,62 +983,96 @@ $conn->close();
             border-bottom: 1px solid #ddd;
             padding-bottom: 10px;
         }
-        .status-flow-row {
+        /* --- Flow DAG Layout --- */
+        .flow-dag {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 12px;
+            gap: 0;
             overflow-x: auto;
             padding-bottom: 4px;
         }
+        .flow-dag-column {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-width: 140px;
+            flex-shrink: 0;
+        }
+        .flow-dag-arrows {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            padding: 0 4px;
+            color: #94a3b8;
+            font-weight: 700;
+            font-size: 1.3rem;
+        }
+        .flow-dag-overflow {
+            font-size: 0.82em;
+            color: #64748b;
+            cursor: pointer;
+            padding: 4px 10px;
+            border-radius: 6px;
+            background: #f1f5f9;
+            transition: background 0.15s;
+        }
+        .flow-dag-overflow:hover {
+            background: #e2e8f0;
+            color: #334155;
+        }
+
+        /* --- Flow Cards --- */
         .status-flow-card {
-            min-width: 190px;
-            min-height: 132px;
             border-radius: 12px;
             border: 2px solid transparent;
-            padding: 12px;
             background: #fff;
             text-align: center;
             display: flex;
             flex-direction: column;
             justify-content: center;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
-            cursor: default;
-        }
-        .status-flow-card.is-clickable {
             cursor: pointer;
         }
-        .status-flow-card.is-clickable:hover {
+        .status-flow-card:hover {
             box-shadow: 0 8px 18px rgba(15,23,42,0.14);
         }
-        .status-flow-card.manufacturer {
-            background: #e3f2fd;
-            border-color: #3498db;
+        .flow-card-wide {
+            min-width: 190px;
+            min-height: 110px;
+            padding: 14px 16px;
         }
-        .status-flow-card.port {
-            background: #e0f2fe;
-            border-color: #0ea5e9;
+        .flow-card-compact {
+            min-width: 150px;
+            max-width: 210px;
+            padding: 8px 12px;
         }
-        .status-flow-card.warehouse {
-            background: #fff3e0;
-            border-color: #f39c12;
+        .flow-card-compact .status-flow-title {
+            font-size: 0.82em;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        .status-flow-card.project {
-            background: #e8f5e8;
-            border-color: #27ae60;
+        .flow-card-compact .status-flow-pallets {
+            font-size: 0.88em;
         }
+
+        /* Card type colors */
+        .status-flow-card.manufacturer { background: #e3f2fd; border-color: #3498db; }
+        .status-flow-card.port { background: #f0fdfa; border-color: #0f766e; }
+        .status-flow-card.warehouse { background: #fff3e0; border-color: #f39c12; }
+        .status-flow-card.project { background: #e8f5e8; border-color: #27ae60; }
+
+        /* Card text */
         .status-flow-title {
             font-weight: 700;
             color: #1f2937;
             margin-bottom: 6px;
             font-size: 0.92em;
-        }
-        .status-flow-destination {
-            font-size: 0.78em;
-            color: #475569;
-            margin-bottom: 8px;
-            line-height: 1.35;
-            display: none;
         }
         .status-flow-pallets {
             font-size: 1.02em;
@@ -1048,27 +1082,14 @@ $conn->close();
         .status-flow-modules {
             font-size: 0.82em;
             color: #475569;
-            min-height: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             line-height: 1.35;
+            margin-top: 2px;
         }
-        .status-flow-arrow {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 32px;
-            color: #94a3b8;
-            font-weight: 700;
-            background: transparent;
-            border: none;
-            padding: 0;
-            cursor: default;
-        }
-        .status-flow-arrow .arrow-line {
-            font-size: 1.2rem;
-            line-height: 1;
+        .status-flow-annotation {
+            font-size: 0.75em;
+            color: #64748b;
+            font-style: italic;
+            margin-top: 2px;
         }
         
         .pallet-count {
@@ -1426,48 +1447,189 @@ $conn->close();
                     $intermediate_count = count($intermediate_summary['ports']) + count($intermediate_summary['warehouses']);
                     $project_count = count($project_summary);
 
-                    $flow_nodes = [
-                        [
-                            'key' => 'manufacturer',
-                            'class' => 'manufacturer',
-                            'title' => '📍 ' . (($manufacturer_count === 1) ? 'Manufacturer' : 'Manufacturers'),
-                            'pallets' => (int)$status_totals['manufacturer']['pallets'],
-                            'modules' => (int)$status_totals['manufacturer']['modules'],
-                            'click' => 'manufacturer'
-                        ],
-                        [
-                            'key' => 'intermediate',
-                            'class' => 'warehouse',
-                            'title' => '🧭 ' . (($intermediate_count === 1) ? 'Port / Warehouse' : 'Ports / Warehouses'),
-                            'pallets' => (int)$status_totals['intermediate']['pallets'],
-                            'modules' => (int)$status_totals['intermediate']['modules'],
-                            'click' => 'intermediate'
-                        ],
-                        [
-                            'key' => 'project',
-                            'class' => 'project',
-                            'title' => '🎯 ' . (($project_count === 1) ? 'Project' : 'Projects'),
-                            'pallets' => (int)$status_totals['project']['pallets'],
-                            'modules' => (int)$status_totals['project']['modules'],
-                            'click' => 'project'
-                        ]
-                    ];
+                    // ── Build Dynamic Supply Chain Flow DAG ──
+                    $dag_nodes = [];
+                    $dag_edges = [];
+                    $on_water_by_port = []; // port node key => on-water pallet count
+
+                    $registerNode = function(string $key, string $type, string $label, ?int $id = null) use (&$dag_nodes) {
+                        if (!isset($dag_nodes[$key])) {
+                            $dag_nodes[$key] = [
+                                'key' => $key, 'type' => $type, 'label' => $label,
+                                'id' => $id, 'pallets' => 0, 'modules' => 0, 'on_water' => 0, 'column' => -1
+                            ];
+                        }
+                    };
+                    $addTally = function(string $key, int $pallets, int $modules) use (&$dag_nodes) {
+                        if (isset($dag_nodes[$key])) {
+                            $dag_nodes[$key]['pallets'] += $pallets;
+                            $dag_nodes[$key]['modules'] += $modules;
+                        }
+                    };
+                    $registerEdge = function(string $from, string $to, int $pallets, int $modules) use (&$dag_edges) {
+                        $ek = $from . '|' . $to;
+                        if (!isset($dag_edges[$ek])) {
+                            $dag_edges[$ek] = ['from' => $from, 'to' => $to, 'pallets' => 0, 'modules' => 0];
+                        }
+                        $dag_edges[$ek]['pallets'] += $pallets;
+                        $dag_edges[$ek]['modules'] += $modules;
+                    };
+
+                    // Always register the project node
+                    $projKey = 'proj_' . $selected_project_id;
+                    $registerNode($projKey, 'project', $projectNameDefault, $selected_project_id);
+                    $addTally($projKey, (int)$status_totals['project']['pallets'], (int)$status_totals['project']['modules']);
+
+                    foreach ($movement_data as $me) {
+                        $st = trim((string)($me['status'] ?? ''));
+                        $pc = (int)($me['pallet_count'] ?? 0);
+                        $mc = (int)($me['total_quantity'] ?? 0);
+                        $hasMfg = ((int)($me['has_mfg_location'] ?? 0)) === 1;
+
+                        // Manufacturer node
+                        $mfgKey = null;
+                        if ($hasMfg) {
+                            $mfgName = trim((string)($me['manufacturer_company'] ?? $me['manufacturer_name'] ?? ''));
+                            if ($mfgName !== '') {
+                                $mfgKey = 'mfg_' . $mfgName;
+                                $registerNode($mfgKey, 'manufacturer', $mfgName);
+                                if ($st === 'At Manufacturer') {
+                                    $addTally($mfgKey, $pc, $mc);
+                                }
+                            }
+                        }
+
+                        // Determine current warehouse/port
+                        $curWhKey = null;
+                        $curWhId = null;
+                        if (!empty($me['current_warehouse_id_info']) && !empty($me['current_warehouse_name'])) {
+                            $curWhId = (int)$me['current_warehouse_id_info'];
+                            $curWhKey = 'wh_' . $curWhId;
+                            $isPort = ((int)($me['current_warehouse_is_port'] ?? 0)) === 1;
+                            $registerNode($curWhKey, $isPort ? 'port' : 'warehouse', trim($me['current_warehouse_name']), $curWhId);
+                        } elseif (!empty($me['delivery_warehouse_id']) && !empty($me['delivery_warehouse_name'])) {
+                            $curWhId = (int)$me['delivery_warehouse_id'];
+                            $curWhKey = 'wh_' . $curWhId;
+                            $isPort = ((int)($me['delivery_warehouse_is_port'] ?? 0)) === 1;
+                            $registerNode($curWhKey, $isPort ? 'port' : 'warehouse', trim($me['delivery_warehouse_name']), $curWhId);
+                        }
+
+                        // Origin warehouse
+                        $origWhKey = null;
+                        $origType = trim((string)($me['origin_type'] ?? ''));
+                        if (in_array($origType, ['warehouse', 'port'], true) && !empty($me['origin_warehouse_id'])) {
+                            $origWhId = (int)$me['origin_warehouse_id'];
+                            $origWhKey = 'wh_' . $origWhId;
+                            $isOrigPort = ((int)($me['origin_warehouse_is_port'] ?? 0)) === 1;
+                            $registerNode($origWhKey, $isOrigPort ? 'port' : 'warehouse', trim($me['origin_warehouse_name']), $origWhId);
+                        }
+
+                        // Tally intermediate counts
+                        if (in_array($st, ['In Warehouse', 'Cleared Customs', 'Customs Hold'], true) && $curWhKey) {
+                            $addTally($curWhKey, $pc, $mc);
+                        }
+                        if ($st === 'In Transit to Warehouse' && $curWhKey) {
+                            // In transit — don't add to current tally
+                        }
+
+                        // Build edges
+                        if ($origWhKey && $curWhKey && $origWhKey !== $curWhKey) {
+                            // Warehouse-to-warehouse transfer
+                            $registerEdge($origWhKey, $curWhKey, $pc, $mc);
+                            if ($mfgKey) {
+                                $registerEdge($mfgKey, $origWhKey, $pc, $mc);
+                            }
+                        } elseif ($mfgKey && $curWhKey) {
+                            // Manufacturer to warehouse
+                            $registerEdge($mfgKey, $curWhKey, $pc, $mc);
+                        }
+
+                        if (strpos($st, 'Delivered to Project') !== false) {
+                            $lastWh = $origWhKey ?: $curWhKey;
+                            if ($lastWh) {
+                                $registerEdge($lastWh, $projKey, $pc, $mc);
+                                if ($mfgKey && !$origWhKey && $curWhKey) {
+                                    $registerEdge($mfgKey, $curWhKey, $pc, $mc);
+                                }
+                            } elseif ($mfgKey) {
+                                $registerEdge($mfgKey, $projKey, $pc, $mc);
+                            }
+                        }
+                    }
+
+                    // Fold in on-water containers
+                    if (!empty($on_water_containers)) {
+                        foreach ($on_water_containers as $ce) {
+                            $portName = trim((string)($ce['destination_port_name'] ?? ''));
+                            $portId = (int)($ce['destination_port_id'] ?? 0);
+                            if ($portName !== '' && $portId > 0) {
+                                $pk = 'wh_' . $portId;
+                                $registerNode($pk, 'port', $portName, $portId);
+                                $dag_nodes[$pk]['on_water'] += (int)($ce['pallet_count'] ?? 0);
+                            }
+                        }
+                    }
+
+                    // ── Assign columns ──
+                    $mfgNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'manufacturer');
+                    $portNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'port');
+                    $whNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'warehouse');
+                    $projNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'project');
+
+                    $dag_columns = [];
+                    $colIdx = 0;
+                    if (!empty($mfgNodes)) {
+                        $dag_columns[$colIdx] = array_keys($mfgNodes);
+                        foreach ($mfgNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
+                        $colIdx++;
+                    }
+                    if (!empty($portNodes)) {
+                        $dag_columns[$colIdx] = array_keys($portNodes);
+                        foreach ($portNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
+                        $colIdx++;
+                    }
+                    if (!empty($whNodes)) {
+                        $dag_columns[$colIdx] = array_keys($whNodes);
+                        foreach ($whNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
+                        $colIdx++;
+                    }
+                    if (!empty($projNodes)) {
+                        $dag_columns[$colIdx] = array_keys($projNodes);
+                        foreach ($projNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
+                    }
                     ?>
 
-                    <div class="status-flow-row">
-                        <?php foreach ($flow_nodes as $flowIndex => $node): ?>
-                            <div
-                                class="status-flow-card <?php echo htmlspecialchars((string)$node['class']); ?> is-clickable"
-                                onclick="showDetailedBreakdown('<?php echo htmlspecialchars((string)$node['click']); ?>')"
-                            >
-                                <div class="status-flow-title"><?php echo htmlspecialchars((string)$node['title']); ?></div>
-                                <div class="status-flow-pallets"><?php echo number_format((int)$node['pallets']); ?> pallets</div>
-                                <div class="status-flow-modules"><?php echo number_format((int)$node['modules']); ?> modules</div>
+                    <div class="flow-dag">
+                        <?php foreach ($dag_columns as $ci => $nodeKeys): ?>
+                            <div class="flow-dag-column">
+                                <?php
+                                $visibleKeys = array_slice($nodeKeys, 0, 5);
+                                $overflowCount = max(0, count($nodeKeys) - 5);
+                                $isSolo = (count($nodeKeys) === 1);
+                                foreach ($visibleKeys as $nk):
+                                    $node = $dag_nodes[$nk];
+                                    $cardClass = $node['type'] . ($isSolo ? ' flow-card-wide' : ' flow-card-compact');
+                                ?>
+                                    <div class="status-flow-card <?php echo $cardClass; ?>"
+                                         onclick="showNodeDetail('<?php echo htmlspecialchars($nk); ?>')">
+                                        <div class="status-flow-title"><?php echo htmlspecialchars($node['label']); ?></div>
+                                        <div class="status-flow-pallets"><?php echo number_format($node['pallets']); ?> pallets</div>
+                                        <?php if ($isSolo): ?>
+                                            <div class="status-flow-modules"><?php echo number_format($node['modules']); ?> modules</div>
+                                        <?php endif; ?>
+                                        <?php if ($node['on_water'] > 0): ?>
+                                            <div class="status-flow-annotation">+ <?php echo number_format($node['on_water']); ?> on water</div>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                                <?php if ($overflowCount > 0): ?>
+                                    <div class="flow-dag-overflow" onclick="showColumnOverflow(<?php echo $ci; ?>)">
+                                        +<?php echo $overflowCount; ?> more
+                                    </div>
+                                <?php endif; ?>
                             </div>
-                            <?php if ($flowIndex < count($flow_nodes) - 1): ?>
-                                <div class="status-flow-arrow">
-                                    <span class="arrow-line">→</span>
-                                </div>
+                            <?php if ($ci < count($dag_columns) - 1): ?>
+                                <div class="flow-dag-arrows">→</div>
                             <?php endif; ?>
                         <?php endforeach; ?>
                     </div>
@@ -1514,6 +1676,8 @@ const detailedBreakdown = <?php echo json_encode($detailed_breakdown ?? []); ?>;
 const manufacturerSummary = <?php echo json_encode($manufacturer_summary ?? []); ?>;
 const intermediateSummary = <?php echo json_encode($intermediate_summary ?? ['ports' => [], 'warehouses' => []]); ?>;
 const projectSummary = <?php echo json_encode($project_summary ?? []); ?>;
+const dagNodes = <?php echo json_encode($dag_nodes ?? []); ?>;
+const dagColumns = <?php echo json_encode($dag_columns ?? []); ?>;
 const onWaterContainers = <?php echo json_encode($on_water_containers ?? []); ?>;
 const selectedProjectId = <?php echo json_encode($selected_project_id); ?>;
 
@@ -2688,7 +2852,83 @@ function createRouteLines(locations) {
 // Initialize map when page loads
 google.maps.event.addDomListener(window, 'load', initMap);
 
-// Modal functions
+// Flow DAG node click handler
+function showNodeDetail(nodeKey) {
+    const node = dagNodes[nodeKey];
+    if (!node) return;
+
+    const modal = document.getElementById('detailModal');
+    const title = document.getElementById('modalTitle');
+    const content = document.getElementById('modalContent');
+
+    const typeIcons = { manufacturer: '📍', port: '🧭', warehouse: '🧭', project: '🎯' };
+    const typeColors = { manufacturer: '#3498db', port: '#0f766e', warehouse: '#f39c12', project: '#27ae60' };
+    const icon = typeIcons[node.type] || '';
+    const color = typeColors[node.type] || '#488C9A';
+
+    title.textContent = icon + ' ' + node.label;
+
+    let html = '<div style="max-height: 420px; overflow-y: auto;">';
+    html += '<div style="padding: 16px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid ' + color + '; margin-bottom: 12px;">';
+    html += '<div style="font-size: 1.3em; font-weight: 700; color: #0f172a;">' + node.pallets.toLocaleString() + ' pallets</div>';
+    html += '<div style="color: #475569;">' + node.modules.toLocaleString() + ' modules</div>';
+    if (node.on_water > 0) {
+        html += '<div style="color: #64748b; font-style: italic; margin-top: 4px;">+ ' + node.on_water.toLocaleString() + ' on water</div>';
+    }
+    html += '</div>';
+
+    // Show sub-details from existing summaries
+    if (node.type === 'manufacturer') {
+        html += generateManufacturerBreakdown();
+    } else if (node.type === 'port' || node.type === 'warehouse') {
+        // Find this specific location in the intermediate summary
+        const allPorts = intermediateSummary.ports || {};
+        const allWarehouses = intermediateSummary.warehouses || {};
+        const found = allPorts[node.label] || allWarehouses[node.label];
+        if (found) {
+            html += '<div style="padding: 12px; background: #fff; border-radius: 8px; border: 1px solid #e9ecef;">';
+            html += '<strong>' + node.label + '</strong><br>';
+            html += found.pallets.toLocaleString() + ' pallets, ' + found.modules.toLocaleString() + ' modules';
+            html += '</div>';
+        }
+    } else if (node.type === 'project') {
+        html += generateProjectBreakdown();
+    }
+
+    html += '</div>';
+    content.innerHTML = html;
+    modal.style.display = 'block';
+}
+
+function showColumnOverflow(colIdx) {
+    const modal = document.getElementById('detailModal');
+    const title = document.getElementById('modalTitle');
+    const content = document.getElementById('modalContent');
+
+    const nodeKeys = dagColumns[colIdx] || [];
+    title.textContent = 'All Locations (' + nodeKeys.length + ')';
+
+    let html = '<div style="max-height: 420px; overflow-y: auto;">';
+    nodeKeys.forEach(function(nk) {
+        const node = dagNodes[nk];
+        if (!node) return;
+        const typeColors = { manufacturer: '#3498db', port: '#0f766e', warehouse: '#f39c12', project: '#27ae60' };
+        const color = typeColors[node.type] || '#488C9A';
+        html += '<div style="padding: 12px; margin-bottom: 8px; background: #fff; border-radius: 8px; border-left: 4px solid ' + color + '; border: 1px solid #e9ecef; cursor: pointer;" onclick="showNodeDetail(\'' + nk.replace(/'/g, "\\'") + '\')">';
+        html += '<strong>' + (node.label || 'Unknown').replace(/</g, '&lt;') + '</strong>';
+        html += '<div style="color: #475569; font-size: 0.9em;">' + node.pallets.toLocaleString() + ' pallets, ' + node.modules.toLocaleString() + ' modules</div>';
+        if (node.on_water > 0) {
+            html += '<div style="color: #64748b; font-size: 0.85em; font-style: italic;">+ ' + node.on_water.toLocaleString() + ' on water</div>';
+        }
+        html += '</div>';
+    });
+    html += '</div>';
+
+    content.innerHTML = html;
+    modal.style.display = 'block';
+}
+
+// Modal functions (legacy)
 function showDetailedBreakdown(type) {
     const modal = document.getElementById('detailModal');
     const title = document.getElementById('modalTitle');
