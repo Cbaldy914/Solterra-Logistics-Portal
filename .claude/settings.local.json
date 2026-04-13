@@ -39,7 +39,11 @@
       "WebFetch(domain:github.com)",
       "Bash(more:*)",
       "mcp__ide__getDiagnostics",
+      "Bash(git cherry-pick:*)",
+      "Bash(echo \"exit=$?\")",
       "Bash(git checkout:*)",
+      "Bash(git reset:*)",
+      "Bash(git push:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)"
     ],
