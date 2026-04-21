@@ -115,6 +115,30 @@ if ($stmtWh) {
     $stmtWh->close();
 }
 
+// Fetch manufacturer locations for optional placeholder-resolution origin scoping
+$manufacturer_locations = [];
+$stmtMl = $conn->prepare("
+    SELECT
+        ml.id,
+        ml.location_name,
+        ml.city,
+        ml.state,
+        ml.country,
+        m.name AS manufacturer_name
+    FROM manufacturer_locations ml
+    JOIN manufacturers m ON m.id = ml.manufacturer_id
+    WHERE ml.is_active = 1 AND m.is_active = 1
+    ORDER BY m.name ASC, ml.is_primary DESC, ml.location_name ASC, ml.city ASC
+");
+if ($stmtMl) {
+    $stmtMl->execute();
+    $resMl = $stmtMl->get_result();
+    while ($row = $resMl->fetch_assoc()) {
+        $manufacturer_locations[] = $row;
+    }
+    $stmtMl->close();
+}
+
 // Fetch carriers for default carrier selection
 $all_carriers = [];
 $carrier_sql = "SELECT id, name, short_name, carrier_type, is_solterra_managed FROM carriers WHERE is_active = 1 AND (account_id IS NULL" . ($account_id ? " OR account_id = ?" : "") . ") ORDER BY is_solterra_managed DESC, name ASC";
@@ -274,6 +298,58 @@ $conn->close();
             padding-left: 20px;
             font-size: 0.9rem;
         }
+
+        /* Compact collapsible intro for Step 1 */
+        .intro-note {
+            background: linear-gradient(135deg, #fff8e1 0%, #fffbea 100%);
+            border: 1px solid #ffd86b;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+        }
+        .intro-note > summary {
+            list-style: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            cursor: pointer;
+            color: #6b4d00;
+            font-size: 0.9rem;
+        }
+        .intro-note > summary::-webkit-details-marker { display: none; }
+        .intro-note .intro-note-text code {
+            background: rgba(107, 77, 0, 0.08);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.85em;
+            color: #6b4d00;
+        }
+        .intro-note .intro-note-toggle {
+            color: #0056b3;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .intro-note[open] .intro-note-toggle::after { content: ' \25B2'; }
+        .intro-note:not([open]) .intro-note-toggle::after { content: ' \25BC'; }
+        .intro-note-body {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px dashed #ffd86b;
+            color: #6b4d00;
+            font-size: 0.9rem;
+        }
+        .intro-note-body p { margin: 0 0 10px 0; }
+        .intro-note-body dl { margin: 0 0 10px 0; }
+        .intro-note-body dt { font-weight: 600; margin-top: 6px; }
+        .intro-note-body dd { margin: 2px 0 0 0; padding-left: 0; }
+        .intro-note-body code {
+            background: rgba(107, 77, 0, 0.08);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.85em;
+        }
+        .intro-note-optional { color: #8a6d00; }
 
         /* Form Styles */
         .form-group {
@@ -719,20 +795,27 @@ $conn->close();
             <div class="content-card">
                 <h2>Step 1: Upload Shipping Manifest & Configure Destination</h2>
 
-                <div class="info-banner warning">
-                    <h3>Important: Import Pallets First</h3>
-                    <p>Make sure your pallets are already in the system before importing shipments. This process links existing pallets to deliveries based on Pallet ID.</p>
-                </div>
-
-                <div class="info-banner">
-                    <h3>Required Fields</h3>
-                    <ul>
-                        <li><strong>BOL/Container Number</strong> - Used to group pallets into shipments</li>
-                        <li><strong>Pallet ID</strong> - Must match existing pallets in inventory</li>
-                        <li><strong>Ship Date</strong> - When the shipment departed from the manufacturer</li>
-                    </ul>
-                    <p style="margin-top: 8px;"><strong>Optional:</strong> Freight Cost, Estimated Delivery Date, Actual Delivery Date</p>
-                </div>
+                <details class="intro-note">
+                    <summary>
+                        <span class="intro-note-text">
+                            <strong>Pallets must already be in inventory.</strong>
+                            Required columns: <code>BOL</code>, <code>Pallet ID</code>, <code>Ship Date</code>.
+                        </span>
+                        <span class="intro-note-toggle">What's this?</span>
+                    </summary>
+                    <div class="intro-note-body">
+                        <p>This flow links pallets that are already in inventory to outgoing deliveries. It does not create new pallets.</p>
+                        <dl>
+                            <dt>BOL / Container Number</dt>
+                            <dd>Groups pallets into shipments.</dd>
+                            <dt>Pallet ID</dt>
+                            <dd>Must match the manufacturer pallet ID or the internal pallet identifier on an existing record.</dd>
+                            <dt>Ship Date</dt>
+                            <dd>When the shipment departed. Accepts <code>4/20/2026</code>, <code>2026-04-20</code>, <code>Apr 20, 2026</code>, and similar common formats.</dd>
+                        </dl>
+                        <p class="intro-note-optional"><strong>Optional columns:</strong> Freight Cost, Estimated Delivery, Actual Delivery, Wattage, Carrier.</p>
+                    </div>
+                </details>
 
                 <form id="uploadForm" enctype="multipart/form-data">
                     <input type="hidden" name="account_id" value="<?php echo $account_id ?? ''; ?>">
@@ -795,6 +878,81 @@ $conn->close();
                             <?php endforeach; ?>
                         </select>
                         <small style="color:#6c757d;">Applied to all shipments unless a carrier column is mapped from the file.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; cursor: pointer;">
+                            <input type="checkbox" id="enablePlaceholderResolution" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Resolve missing pallet IDs from placeholder pallets</span>
+                        </label>
+                        <small style="color:#6c757d;">
+                            Optional. When enabled, unmatched pallet IDs can be resolved to placeholder pallets with the same wattage, scoped to the selected origin.
+                        </small>
+                    </div>
+
+                    <div id="placeholderResolutionOptions" style="display: none; border: 1px solid #d7e3e8; border-radius: 12px; padding: 18px; margin-bottom: 22px; background: #f8fbfc;">
+                        <div class="form-group">
+                            <label class="required">Origin Scope for Placeholder Resolution</label>
+                            <div class="destination-toggle">
+                                <label>
+                                    <input type="radio" name="resolution_origin_type" value="warehouse" checked>
+                                    <span>Warehouse</span>
+                                </label>
+                                <label>
+                                    <input type="radio" name="resolution_origin_type" value="manufacturer">
+                                    <span>Manufacturer</span>
+                                </label>
+                            </div>
+                            <small style="color:#6c757d;">Used only for rows whose pallet ID is not found exactly.</small>
+                        </div>
+
+                        <div class="form-group" id="resolutionWarehouseGroup">
+                            <label class="required" for="resolution_origin_warehouse_id">Origin Warehouse</label>
+                            <select id="resolution_origin_warehouse_id">
+                                <option value="">Select Origin Warehouse</option>
+                                <?php foreach ($warehouses as $wh): ?>
+                                    <option value="<?php echo $wh['id']; ?>">
+                                        <?php echo htmlspecialchars($wh['name']); ?>
+                                        <?php if ($wh['city'] || $wh['state']): ?>
+                                            (<?php echo htmlspecialchars(trim($wh['city'] . ', ' . $wh['state'], ', ')); ?>)
+                                        <?php endif; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="resolutionManufacturerGroup" style="display: none;">
+                            <label class="required" for="resolution_origin_manufacturer_location_id">Origin Manufacturer Location</label>
+                            <select id="resolution_origin_manufacturer_location_id">
+                                <option value="">Select Manufacturer Location</option>
+                                <?php foreach ($manufacturer_locations as $location): ?>
+                                    <option value="<?php echo $location['id']; ?>">
+                                        <?php
+                                            $parts = [];
+                                            if (!empty($location['manufacturer_name'])) {
+                                                $parts[] = $location['manufacturer_name'];
+                                            }
+                                            if (!empty($location['location_name'])) {
+                                                $parts[] = $location['location_name'];
+                                            }
+                                            $place = trim(($location['city'] ?? '') . ', ' . ($location['state'] ?? ''), ', ');
+                                            if ($place !== '') {
+                                                $parts[] = $place;
+                                            } elseif (!empty($location['country'])) {
+                                                $parts[] = $location['country'];
+                                            }
+                                            echo htmlspecialchars(implode(' - ', $parts));
+                                        ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="resolution_default_wattage">Default Wattage <small style="color:#6c757d;">(if not in file)</small></label>
+                            <input type="number" id="resolution_default_wattage" min="1" step="1" placeholder="e.g. 585">
+                            <small style="color:#6c757d;">Used for rows that don't have a wattage column. If your file has a wattage column, map it in the next step instead.</small>
+                        </div>
                     </div>
 
                     <!-- File Upload -->
@@ -953,6 +1111,11 @@ $conn->close();
             required: true,
             common_names: ['Ship Date', 'Shipping Date', 'Departure Date', 'Departure', 'Shipped', 'Ship', 'Dispatch Date', 'Date Shipped']
         },
+        'wattage': {
+            label: 'Wattage',
+            required: false,
+            common_names: ['Wattage', 'Watts', 'W', 'Module Wattage', 'Power']
+        },
         'freight_cost': {
             label: 'Freight Cost',
             required: false,
@@ -981,6 +1144,47 @@ $conn->close();
     const btnConfirm = document.getElementById('btnConfirm');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
+    const enablePlaceholderResolutionCheckbox = document.getElementById('enablePlaceholderResolution');
+    const placeholderResolutionOptions = document.getElementById('placeholderResolutionOptions');
+    const resolutionWarehouseGroup = document.getElementById('resolutionWarehouseGroup');
+    const resolutionManufacturerGroup = document.getElementById('resolutionManufacturerGroup');
+    const resolutionOriginWarehouseSelect = document.getElementById('resolution_origin_warehouse_id');
+    const resolutionOriginManufacturerSelect = document.getElementById('resolution_origin_manufacturer_location_id');
+    const resolutionDefaultWattageInput = document.getElementById('resolution_default_wattage');
+
+    const isPlaceholderResolutionEnabled = () => enablePlaceholderResolutionCheckbox?.checked;
+    const getResolutionOriginType = () => document.querySelector('input[name="resolution_origin_type"]:checked')?.value || 'warehouse';
+    const getResolutionOriginId = () => {
+        if (!isPlaceholderResolutionEnabled()) return '';
+        return getResolutionOriginType() === 'manufacturer'
+            ? (resolutionOriginManufacturerSelect?.value || '')
+            : (resolutionOriginWarehouseSelect?.value || '');
+    };
+    const getDefaultWattage = () => {
+        const raw = resolutionDefaultWattageInput?.value ?? '';
+        const n = parseInt(raw, 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    // Wattage is only required as a mapped column when resolution is on AND no default was given.
+    const isFieldRequired = (fieldKey) => {
+        if (systemFields[fieldKey]?.required) {
+            return true;
+        }
+        if (fieldKey === 'wattage') {
+            return isPlaceholderResolutionEnabled() && !getDefaultWattage();
+        }
+        return false;
+    };
+
+    function updatePlaceholderResolutionUI() {
+        const enabled = isPlaceholderResolutionEnabled();
+        placeholderResolutionOptions.style.display = enabled ? 'block' : 'none';
+
+        const originType = getResolutionOriginType();
+        const useManufacturer = enabled && originType === 'manufacturer';
+        resolutionWarehouseGroup.style.display = useManufacturer ? 'none' : 'block';
+        resolutionManufacturerGroup.style.display = useManufacturer ? 'block' : 'none';
+    }
 
     // Destination type toggle
     document.querySelectorAll('input[name="destination_type"]').forEach(radio => {
@@ -994,6 +1198,19 @@ $conn->close();
 
     document.getElementById('destination_project_id').addEventListener('change', updateStep1Validation);
     document.getElementById('destination_warehouse_id').addEventListener('change', updateStep1Validation);
+    enablePlaceholderResolutionCheckbox.addEventListener('change', () => {
+        updatePlaceholderResolutionUI();
+        updateStep1Validation();
+    });
+    document.querySelectorAll('input[name="resolution_origin_type"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            updatePlaceholderResolutionUI();
+            updateStep1Validation();
+        });
+    });
+    resolutionOriginWarehouseSelect.addEventListener('change', updateStep1Validation);
+    resolutionOriginManufacturerSelect.addEventListener('change', updateStep1Validation);
+    resolutionDefaultWattageInput.addEventListener('input', updateStep1Validation);
 
     // Step Navigation
     function goToStep(step) {
@@ -1060,7 +1277,8 @@ $conn->close();
 
     function updateStep1Validation() {
         const destId = getDestinationId();
-        btnNext1.disabled = !(uploadedFile && destId);
+        const resolutionReady = !isPlaceholderResolutionEnabled() || !!getResolutionOriginId();
+        btnNext1.disabled = !(uploadedFile && destId && resolutionReady);
     }
 
     // Step 1 -> Step 2
@@ -1113,7 +1331,7 @@ $conn->close();
 
             const labelCell = document.createElement('td');
             labelCell.innerHTML = fieldConfig.label;
-            if (fieldConfig.required) {
+            if (isFieldRequired(fieldKey)) {
                 labelCell.innerHTML += ' <span class="required-field">*</span>';
             }
 
@@ -1124,7 +1342,7 @@ $conn->close();
 
             const emptyOpt = document.createElement('option');
             emptyOpt.value = '';
-            emptyOpt.textContent = fieldConfig.required ? '-- Select Column --' : '(Not mapped)';
+            emptyOpt.textContent = isFieldRequired(fieldKey) ? '-- Select Column --' : '(Not mapped)';
             select.appendChild(emptyOpt);
 
             fileHeaders.forEach(header => {
@@ -1158,7 +1376,7 @@ $conn->close();
             const select = document.getElementById('mapping_' + fieldKey);
             columnMapping[fieldKey] = select.value;
 
-            if (fieldConfig.required && !select.value) {
+            if (isFieldRequired(fieldKey) && !select.value) {
                 missingRequired.push(fieldConfig.label);
             }
         }
@@ -1179,6 +1397,10 @@ $conn->close();
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
         formData.append('default_carrier_id', document.getElementById('default_carrier_id')?.value || '');
+        formData.append('enable_placeholder_resolution', isPlaceholderResolutionEnabled() ? '1' : '0');
+        formData.append('origin_type', getResolutionOriginType());
+        formData.append('origin_id', getResolutionOriginId());
+        formData.append('default_wattage', String(getDefaultWattage() || ''));
 
         try {
             const response = await fetch('process_shipment_upload.php', {
@@ -1233,6 +1455,12 @@ $conn->close();
                 <div class="stat-value">${summary.pallets_found || 0}</div>
                 <div class="stat-label">Pallets Found</div>
             </div>
+            ${summary.placeholder_resolved ? `
+            <div class="stat-card">
+                <div class="stat-value">${summary.placeholder_resolved || 0}</div>
+                <div class="stat-label">Resolved from Placeholders</div>
+            </div>
+            ` : ''}
             <div class="stat-card">
                 <div class="stat-value ${palletsNotFoundClass}">${summary.pallets_not_found || 0}</div>
                 <div class="stat-label">Not Found</div>
@@ -1293,12 +1521,14 @@ $conn->close();
         const hasFreightCost = parsedData.some(row => row.freight_cost && row.freight_cost > 0);
         const hasEstDelivery = parsedData.some(row => row.estimated_delivery);
         const hasActualDelivery = parsedData.some(row => row.actual_delivery);
+        const showResolutionColumns = isPlaceholderResolutionEnabled() || parsedData.some(row => row.resolved_from_placeholder);
 
         // Build headers dynamically based on mapped columns
         let headerCols = ['BOL/Container', 'Pallet ID', 'Ship Date'];
         if (hasEstDelivery) headerCols.push('Est. Delivery');
         if (hasActualDelivery) headerCols.push('Actual Delivery');
         if (hasFreightCost) headerCols.push('Freight Cost');
+        if (showResolutionColumns) headerCols.push('Match Type', 'Resolved Pallet');
         headerCols.push('Status', 'Pallet Found');
 
         thead.innerHTML = headerCols.map(h => `<th>${h}</th>`).join('');
@@ -1311,6 +1541,8 @@ $conn->close();
             const estDelivery = row.estimated_delivery || '-';
             const actualDelivery = row.actual_delivery || '-';
             const freightCost = row.freight_cost ? '$' + parseFloat(row.freight_cost).toFixed(2) : '-';
+            const matchType = row.match_type_label || row.match_type || '-';
+            const resolvedPallet = row.resolved_display_identifier || row.resolved_pallet_identifier || '-';
 
             let cells = `
                 <td>${row.bol_number || '-'}</td>
@@ -1320,6 +1552,7 @@ $conn->close();
             if (hasEstDelivery) cells += `<td>${estDelivery}</td>`;
             if (hasActualDelivery) cells += `<td>${actualDelivery}</td>`;
             if (hasFreightCost) cells += `<td>${freightCost}</td>`;
+            if (showResolutionColumns) cells += `<td>${matchType}</td><td>${resolvedPallet}</td>`;
             cells += `
                 <td>${row.calculated_status || '-'}</td>
                 <td class="${foundClass}">${foundText}</td>
@@ -1359,6 +1592,17 @@ $conn->close();
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
         formData.append('default_carrier_id', document.getElementById('default_carrier_id')?.value || '');
+        formData.append('enable_placeholder_resolution', isPlaceholderResolutionEnabled() ? '1' : '0');
+        formData.append('origin_type', getResolutionOriginType());
+        formData.append('origin_id', getResolutionOriginId());
+        formData.append('default_wattage', String(getDefaultWattage() || ''));
+
+        // Lock the import to the exact pallet assignments the user saw in preview. Backend
+        // rejects the commit if any row would resolve to a different pallet than was shown.
+        const previewResolution = (parsedData || [])
+            .filter(r => r && r.pallet_db_id && r._row_number)
+            .map(r => ({ row: r._row_number, pallet_db_id: r.pallet_db_id }));
+        formData.append('preview_resolution', JSON.stringify(previewResolution));
 
         try {
             const response = await fetch('process_shipment_upload.php', {
@@ -1383,6 +1627,8 @@ $conn->close();
             alert('Error importing: ' + err.message);
         }
     });
+
+    updatePlaceholderResolutionUI();
 
     function showResults(result) {
         const container = document.getElementById('resultsContent');
