@@ -287,13 +287,39 @@ foreach ($total_orders as $lbl => $info) {
     $fallback_total_watts += $info['raw_quantity'] * $info['wattage'];
 }
 if ($total_raw_modules > 0 || $fallback_total_watts > 0) {
-    $fallback_modules_per_pallet = (!empty($project['modules_per_pallet']) && $project['modules_per_pallet'] > 0)
-        ? (int)$project['modules_per_pallet']
+    // Sum pallets per batch using each batch's own modules_per_pallet.
+    // modules_per_pallet lives on the modules (batch) table, not projects, so a project
+    // with mixed batches needs per-batch rounding before summing.
+    $fallback_total_pallets = 0;
+    $fallback_weighted_mpp_num = 0;
+    $fallback_weighted_mpp_den = 0;
+    $stmt_fallback_mpp = $conn->prepare("
+        SELECT COALESCE(NULLIF(m.modules_per_pallet, 0), 30) AS mpp, SUM(umi.quantity) AS qty
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ? AND umi.quantity > 0
+        GROUP BY m.id, m.modules_per_pallet
+    ");
+    if ($stmt_fallback_mpp) {
+        $stmt_fallback_mpp->bind_param("i", $project_id);
+        $stmt_fallback_mpp->execute();
+        $fallback_mpp_result = $stmt_fallback_mpp->get_result();
+        while ($r = $fallback_mpp_result->fetch_assoc()) {
+            $mpp = max(1, (int)$r['mpp']);
+            $qty = (int)$r['qty'];
+            $fallback_total_pallets += (int)ceil($qty / $mpp);
+            $fallback_weighted_mpp_num += $mpp * $qty;
+            $fallback_weighted_mpp_den += $qty;
+        }
+        $stmt_fallback_mpp->close();
+    }
+    $fallback_modules_per_pallet = $fallback_weighted_mpp_den > 0
+        ? (int)round($fallback_weighted_mpp_num / $fallback_weighted_mpp_den)
         : 30;
+    if ($fallback_total_pallets <= 0 && $total_raw_modules > 0) {
+        $fallback_total_pallets = (int)ceil($total_raw_modules / max(1, $fallback_modules_per_pallet));
+    }
     $fallback_pallets_per_truck = 20;
-    $fallback_total_pallets = ($total_raw_modules > 0 && $fallback_modules_per_pallet > 0)
-        ? (int)ceil($total_raw_modules / $fallback_modules_per_pallet)
-        : 0;
 
     $projection_fallback_totals = [
         'total_modules' => $total_raw_modules,
@@ -2561,19 +2587,26 @@ $stmt_palletized->bind_result($actual_palletized_count);
 $stmt_palletized->fetch();
 $stmt_palletized->close();
 
-// Calculate total EXPECTED pallets based on total modules / modules per pallet
-// This shows what SHOULD be palletized, not what IS palletized
-$modules_per_pallet = 30; // Default
-
-// Try to get project-specific modules_per_pallet if column exists
-if (isset($project['modules_per_pallet']) && $project['modules_per_pallet'] > 0) {
-    $modules_per_pallet = (int)$project['modules_per_pallet'];
-}
-
+// Calculate total EXPECTED pallets using each batch's own modules_per_pallet.
+// The projects table has no modules_per_pallet column; it lives on the modules (batch) table,
+// so a project with mixed batches needs per-batch rounding before summing.
 $expected_pallets = 0;
-if ($total_raw_modules > 0) {
-    $expected_pallets = ceil($total_raw_modules / $modules_per_pallet);
+$stmt_expected = $conn->prepare("
+    SELECT COALESCE(NULLIF(m.modules_per_pallet, 0), 30) AS mpp, SUM(umi.quantity) AS qty
+    FROM modules m
+    JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+    WHERE m.project_id = ? AND umi.quantity > 0
+    GROUP BY m.id, m.modules_per_pallet
+");
+$stmt_expected->bind_param("i", $project_id);
+$stmt_expected->execute();
+$expected_result = $stmt_expected->get_result();
+while ($row = $expected_result->fetch_assoc()) {
+    $mpp = max(1, (int)$row['mpp']);
+    $qty = (int)$row['qty'];
+    $expected_pallets += (int)ceil($qty / $mpp);
 }
+$stmt_expected->close();
 
 // Also get the actual count of existing pallets (for comparison)
 $stmt_existing_pallets = $conn->prepare("
