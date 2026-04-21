@@ -1,0 +1,35 @@
+# =====================================================
+# uploads/ hardening
+#
+# Defense-in-depth against uploaded files being executed as code. Even if an
+# upload path validator is bypassed somewhere in application code (polyglot
+# files, race conditions, etc.), Apache should refuse to run anything in this
+# tree as a script.
+#
+# Rules:
+#   1. Deny direct access to any known executable file extension.
+#   2. Disable the PHP engine on this subtree (Apache mod_php fallback).
+#   3. Force X-Content-Type-Options: nosniff so browsers don't MIME-sniff
+#      image files into HTML/JS.
+# =====================================================
+
+<FilesMatch "\.(php|phtml|phar|php3|php4|php5|php7|php8|pht|py|pl|rb|sh|cgi|asp|aspx|jsp|exe|dll|bat|cmd)$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# Prevent directory listing
+Options -Indexes

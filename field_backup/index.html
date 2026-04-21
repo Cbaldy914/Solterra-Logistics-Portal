@@ -1,0 +1,3122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#488C9A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Field Backup">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Solterra Field Backup</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="../pictures/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="../pictures/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="120x120" href="../pictures/apple-touch-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="152x152" href="../pictures/apple-touch-icon-152x152.png">
+<style>
+/* ============================================
+   RESET + BASE
+   ============================================ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; overflow-x: hidden; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+    color: #1a1a1a;
+    background: #f5f6f8;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; font-size: 16px; }
+
+/* Respect iOS safe areas for notched phones */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+/* ============================================
+   SCREENS (setup, main, saved)
+   ============================================ */
+.screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: #f5f6f8;
+    overflow: hidden;
+}
+.screen[hidden] { display: none; }
+
+/* ============================================
+   HEADER BAR (Solterra blue)
+   ============================================ */
+.header-bar {
+    background: #488C9A;
+    color: #fff;
+    padding: 14px 16px calc(14px + env(safe-area-inset-top)) 16px;
+    padding-top: calc(14px + env(safe-area-inset-top));
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    flex-shrink: 0;
+    z-index: 10;
+}
+.header-bar h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+.header-bar .subtitle {
+    font-size: 12px;
+    opacity: 0.85;
+    margin-top: 2px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.header-bar .subtitle .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.18);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+/* ============================================
+   SETUP SCREEN
+   ============================================ */
+.setup-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 16px;
+    -webkit-overflow-scrolling: touch;
+}
+.setup-body h2 {
+    color: #293E4C;
+    font-size: 20px;
+    margin: 0 0 6px 0;
+}
+.setup-body .setup-intro {
+    color: #5a6b75;
+    font-size: 14px;
+    margin: 0 0 20px 0;
+}
+.field {
+    margin-bottom: 16px;
+}
+.field label {
+    display: block;
+    font-weight: 600;
+    color: #293E4C;
+    font-size: 13px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.field input[type="text"],
+.field input[type="number"],
+.field textarea {
+    width: 100%;
+    padding: 12px 14px;
+    border: 2px solid #d0d7de;
+    border-radius: 10px;
+    font-size: 16px;
+    background: #fff;
+    color: #1a1a1a;
+}
+.field input:focus,
+.field textarea:focus {
+    border-color: #488C9A;
+    outline: none;
+}
+.field .hint {
+    font-size: 12px;
+    color: #6b7780;
+    margin-top: 4px;
+}
+.install-box {
+    background: #fff8e5;
+    border: 2px solid #f0ad4e;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 20px 0;
+}
+.install-box.installed {
+    background: #eaf5e8;
+    border-color: #4caf50;
+}
+.install-box h3 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #8a5a00;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.install-box.installed h3 { color: #2e5a2a; }
+.install-box p { margin: 4px 0; font-size: 13px; color: #3a3a3a; }
+.install-box ol { margin: 6px 0 6px 20px; padding: 0; font-size: 13px; }
+.install-box .status-line {
+    font-weight: 700;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+.btn-primary {
+    width: 100%;
+    background: #488C9A;
+    color: #fff;
+    border: none;
+    padding: 16px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 12px;
+    min-height: 54px;
+}
+.btn-primary:disabled {
+    background: #adb5bd;
+    cursor: not-allowed;
+}
+.btn-primary:active:not(:disabled) { transform: scale(0.98); }
+.btn-secondary {
+    width: 100%;
+    background: #fff;
+    color: #293E4C;
+    border: 2px solid #d0d7de;
+    padding: 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 8px;
+    min-height: 48px;
+}
+.btn-secondary:active { background: #f0f2f5; }
+
+/* ============================================
+   MAIN CAPTURE SCREEN
+   ============================================ */
+.main-header {
+    background: #488C9A;
+    color: #fff;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-bottom: 12px;
+    flex-shrink: 0;
+}
+.main-header .top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+.main-header .session-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+.main-header .menu-btn {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    font-size: 22px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+.main-header .stats-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    font-size: 12px;
+}
+.main-header .stat-pill {
+    background: rgba(255, 255, 255, 0.18);
+    padding: 5px 10px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+}
+.main-header .stat-pill strong { font-size: 14px; }
+
+.wattage-chips {
+    display: flex;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #ffffff;
+    border-bottom: 1px solid #e0e4e7;
+    flex-shrink: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.wattage-chips .chip-label {
+    font-size: 11px;
+    color: #6b7780;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    align-self: center;
+    white-space: nowrap;
+}
+.wattage-chip {
+    background: #f0f2f5;
+    border: 2px solid #d0d7de;
+    color: #293E4C;
+    padding: 8px 14px;
+    border-radius: 18px;
+    font-size: 14px;
+    font-weight: 700;
+    flex-shrink: 0;
+    min-height: 36px;
+}
+.wattage-chip.selected {
+    background: #488C9A;
+    border-color: #488C9A;
+    color: #fff;
+}
+
+.action-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 10px 16px;
+    background: #fff;
+    border-bottom: 1px solid #e0e4e7;
+    flex-shrink: 0;
+}
+.action-btn {
+    background: #fff;
+    border: 2px solid #d0d7de;
+    color: #293E4C;
+    padding: 14px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    min-height: 54px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.action-btn.scan {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-color: #3A6E7F;
+    color: #fff;
+}
+.action-btn:active { transform: scale(0.97); }
+
+/* Tally sheet table */
+.tally-wrap {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #fff;
+}
+table.tally {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+table.tally thead {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+table.tally th {
+    background: #488C9A;
+    color: #fff;
+    padding: 8px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: center;
+    border: 1px solid #3A6E7F;
+}
+table.tally th.col-num { width: 40px; }
+table.tally th.col-watts { width: 48px; }
+table.tally th.col-qty { width: 42px; }
+table.tally th.col-notes { width: 80px; }
+table.tally td {
+    padding: 10px 6px;
+    border: 1px solid #d0d7de;
+    font-size: 13px;
+    vertical-align: middle;
+    min-height: 38px;
+}
+table.tally td.cell-num {
+    background: #f0f2f5;
+    text-align: center;
+    font-weight: 700;
+    color: #6b7780;
+    font-size: 11px;
+}
+table.tally td.cell-id {
+    word-break: break-all;
+    font-family: ui-monospace, Menlo, Monaco, "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.3;
+}
+table.tally td.cell-watts,
+table.tally td.cell-qty {
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+table.tally td.cell-notes {
+    font-size: 11px;
+    color: #6b7780;
+}
+table.tally tr.row-empty td { background: #fafbfc; }
+table.tally tr.row-filled td { background: #fff; }
+table.tally tr.row-current td { background: #fffae6; }
+table.tally tr.row-filled:active td { background: #e8f3f5; }
+
+.tally-empty-state {
+    padding: 40px 20px;
+    text-align: center;
+    color: #6b7780;
+    font-size: 14px;
+}
+
+/* ============================================
+   SAVED SHEETS SCREEN
+   ============================================ */
+.saved-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    -webkit-overflow-scrolling: touch;
+}
+.saved-body .storage-meter {
+    background: #fff;
+    border: 1px solid #e0e4e7;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #6b7780;
+}
+.saved-body .storage-meter .bar {
+    height: 6px;
+    background: #e0e4e7;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 6px;
+}
+.saved-body .storage-meter .fill {
+    height: 100%;
+    background: #488C9A;
+    transition: width 0.3s;
+}
+.saved-body .storage-meter.warn { background: #fff8e5; border-color: #f0ad4e; }
+.saved-body .storage-meter.warn .fill { background: #f0ad4e; }
+
+.sheet-card {
+    background: #fff;
+    border: 1px solid #e0e4e7;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+.sheet-card .thumb {
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    background: #f0f2f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: #6b7780;
+    flex-shrink: 0;
+    background-size: cover;
+    background-position: center;
+}
+.sheet-card .thumb.has-photo { color: transparent; }
+.sheet-card .info { flex: 1; min-width: 0; }
+.sheet-card .info .title {
+    font-weight: 700;
+    color: #293E4C;
+    font-size: 14px;
+}
+.sheet-card .info .meta {
+    font-size: 11px;
+    color: #6b7780;
+    margin-top: 2px;
+}
+.sheet-card .share-btn {
+    background: #488C9A;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    min-height: 40px;
+}
+.saved-body .empty-saved {
+    text-align: center;
+    padding: 40px 20px;
+    color: #6b7780;
+}
+.saved-actions {
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom)) 16px;
+    background: #fff;
+    border-top: 1px solid #e0e4e7;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.saved-actions button {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    min-height: 48px;
+    border: none;
+}
+.saved-actions .btn-export {
+    background: #488C9A;
+    color: #fff;
+}
+.saved-actions .btn-util {
+    background: #f0f2f5;
+    color: #293E4C;
+    border: 1px solid #d0d7de;
+}
+.saved-actions .btn-danger {
+    background: #fff0f0;
+    color: #8a1c25;
+    border: 1px solid #f5c2c7;
+}
+
+/* ============================================
+   CAMERA OVERLAY
+   ============================================ */
+.camera-overlay {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+}
+.camera-overlay[hidden] { display: none; }
+.camera-overlay .cam-header {
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+.camera-overlay .cam-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.camera-overlay .cam-close {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 20px;
+    font-size: 20px;
+    font-weight: bold;
+}
+.camera-overlay .cam-count {
+    background: rgba(255, 255, 255, 0.18);
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.camera-overlay .cam-viewport {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+}
+#scannerViewport {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#scannerViewport video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+}
+.camera-overlay .cam-footer {
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom)) 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+}
+.camera-overlay .cam-footer .wattage-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+.camera-overlay .cam-footer .cam-manual-btn {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.scan-flash {
+    position: absolute;
+    inset: 0;
+    background: rgba(76, 175, 80, 0.5);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 5;
+}
+.scan-flash.active { opacity: 1; }
+
+/* ============================================
+   MODALS
+   ============================================ */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 200;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+.modal-overlay[hidden] { display: none; }
+.modal {
+    background: #fff;
+    border-radius: 16px;
+    width: 100%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #e0e4e7;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.modal-header h3 {
+    margin: 0;
+    color: #293E4C;
+    font-size: 16px;
+}
+.modal-header .close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #6b7780;
+    padding: 0 6px;
+    line-height: 1;
+}
+.modal-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+.modal-footer {
+    padding: 14px 20px calc(14px + env(safe-area-inset-bottom)) 20px;
+    border-top: 1px solid #e0e4e7;
+    display: flex;
+    gap: 10px;
+}
+.modal-footer button {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    min-height: 48px;
+    border: none;
+}
+.modal-footer .btn-ok {
+    background: #488C9A;
+    color: #fff;
+}
+.modal-footer .btn-cancel {
+    background: #f0f2f5;
+    color: #293E4C;
+    border: 1px solid #d0d7de;
+}
+.modal-footer .btn-skip {
+    background: #fff;
+    color: #6b7780;
+    border: 1px solid #d0d7de;
+}
+
+.qty-stepper {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.qty-stepper button {
+    width: 44px;
+    height: 44px;
+    border-radius: 22px;
+    border: 2px solid #d0d7de;
+    background: #fff;
+    font-size: 22px;
+    font-weight: bold;
+    color: #293E4C;
+}
+.qty-stepper button:active { background: #f0f2f5; }
+.qty-stepper input {
+    flex: 1;
+    text-align: center;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 10px;
+    border: 2px solid #d0d7de;
+    border-radius: 10px;
+}
+
+.wattage-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+.wattage-picker button {
+    background: #fff;
+    border: 2px solid #d0d7de;
+    color: #293E4C;
+    padding: 10px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 700;
+    min-height: 42px;
+}
+.wattage-picker button.selected {
+    background: #488C9A;
+    border-color: #488C9A;
+    color: #fff;
+}
+
+.sheet-complete-icon {
+    width: 60px;
+    height: 60px;
+    background: #4caf50;
+    color: #fff;
+    border-radius: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    margin: 0 auto 12px;
+}
+.sheet-complete-body {
+    text-align: center;
+    padding: 10px 6px 16px;
+}
+.sheet-complete-body h3 {
+    margin: 0 0 8px 0;
+    color: #293E4C;
+    font-size: 18px;
+}
+.sheet-complete-body p {
+    color: #6b7780;
+    font-size: 14px;
+    margin: 4px 0;
+}
+
+/* ============================================
+   TOASTS
+   ============================================ */
+.toast-container {
+    position: fixed;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 500;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+}
+.toast {
+    background: #293E4C;
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 24px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.25s, transform 0.25s;
+    max-width: 90vw;
+    text-align: center;
+}
+.toast.visible { opacity: 1; transform: translateY(0); }
+.toast.success { background: #2e7d32; }
+.toast.warn { background: #c77700; }
+.toast.error { background: #b71c1c; }
+
+/* ============================================
+   SHEET DETAIL SCREEN
+   ============================================ */
+.sheet-detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    -webkit-overflow-scrolling: touch;
+}
+.sheet-detail-photo {
+    width: 100%;
+    background: #f0f2f5;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    position: relative;
+}
+.sheet-detail-photo img {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+.sheet-detail-photo-placeholder {
+    text-align: center;
+    padding: 40px 20px;
+    color: #6b7780;
+    font-size: 14px;
+    border: 2px dashed #d0d7de;
+    border-radius: 12px;
+    background: #fafbfc;
+    margin-bottom: 16px;
+}
+.sheet-detail-photo-placeholder button {
+    margin-top: 10px;
+    background: #488C9A;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 700;
+    min-height: 42px;
+}
+.sheet-detail-info {
+    background: #fff;
+    border: 1px solid #e0e4e7;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+.sheet-detail-info .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid #f0f2f5;
+}
+.sheet-detail-info .row:last-child { border-bottom: none; }
+.sheet-detail-info .label { color: #6b7780; }
+.sheet-detail-info .value { color: #293E4C; font-weight: 600; }
+.sheet-detail-scans {
+    background: #fff;
+    border: 1px solid #e0e4e7;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+.sheet-detail-scans .scans-header {
+    background: #f0f2f5;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #293E4C;
+}
+.sheet-detail-scans table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    table-layout: fixed;
+}
+.sheet-detail-scans th {
+    background: #488C9A;
+    color: #fff;
+    padding: 6px 4px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    text-align: center;
+}
+.sheet-detail-scans td {
+    padding: 6px 4px;
+    border-bottom: 1px solid #e0e4e7;
+    font-size: 10px;
+    vertical-align: middle;
+}
+.sheet-detail-scans td.num { text-align: center; background: #fafbfc; width: 28px; color: #6b7780; font-weight: 700; }
+.sheet-detail-scans td.id { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+.sheet-detail-scans td.w, .sheet-detail-scans td.q { text-align: center; width: 38px; }
+.sheet-detail-scans td.n { width: 70px; color: #6b7780; word-break: break-word; }
+.sheet-detail-scans tr:last-child td { border-bottom: none; }
+
+/* ============================================
+   SESSIONS SCREEN
+   ============================================ */
+.sessions-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    -webkit-overflow-scrolling: touch;
+}
+.session-card {
+    background: #fff;
+    border: 1px solid #e0e4e7;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.session-card.active {
+    border-color: #488C9A;
+    border-width: 2px;
+    background: #f0f8fa;
+}
+.session-card .session-title {
+    font-weight: 700;
+    color: #293E4C;
+    font-size: 15px;
+    word-break: break-word;
+}
+.session-card.active .session-title::before {
+    content: '● ';
+    color: #488C9A;
+}
+.session-card .session-stats {
+    font-size: 11px;
+    color: #6b7780;
+}
+.session-card .session-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+.session-card .session-actions button {
+    flex: 1;
+    padding: 9px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 6px;
+    border: 1px solid #d0d7de;
+    background: #fff;
+    color: #293E4C;
+    min-height: 40px;
+    font-family: inherit;
+}
+.session-card .session-actions .btn-open {
+    background: #488C9A;
+    color: #fff;
+    border-color: #488C9A;
+}
+.session-card .session-actions .btn-delete-sess {
+    color: #8a1c25;
+    border-color: #f5c2c7;
+    background: #fff0f0;
+}
+.session-card .active-indicator {
+    flex: 1;
+    text-align: center;
+    color: #488C9A;
+    font-weight: 700;
+    padding: 9px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 6px;
+    background: rgba(72,140,154,0.1);
+    border: 1px solid #488C9A;
+}
+
+/* Make sheet cards clickable with obvious affordance */
+.sheet-card {
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+}
+.sheet-card:active {
+    transform: scale(0.98);
+    box-shadow: 0 2px 8px rgba(72,140,154,0.2);
+}
+.sheet-card .chevron {
+    color: #6b7780;
+    font-size: 18px;
+    padding: 0 4px;
+    flex-shrink: 0;
+}
+
+/* ============================================
+   DUPLICATE MODAL
+   ============================================ */
+.label-preview {
+    background: #fafbfc;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: ui-monospace, Menlo, Monaco, "Courier New", monospace;
+    font-size: 12px;
+    color: #293E4C;
+    word-break: break-all;
+    margin: 8px 0 12px 0;
+}
+.location-line {
+    background: #fff8e5;
+    border-left: 4px solid #f0ad4e;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #6b5200;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+.location-line strong { color: #8a5a00; }
+.modal-header.warn { background: #fff8e5; border-bottom-color: #f0ad4e; }
+.modal-header.warn h3 { color: #8a5a00; }
+
+/* ============================================
+   INLINE ROW EDITOR
+   ============================================ */
+.row-editor {
+    padding: 4px !important;
+}
+.row-editor input {
+    width: 100%;
+    padding: 4px 6px;
+    border: 2px solid #488C9A;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: ui-monospace, Menlo, monospace;
+}
+
+/* ============================================
+   MISC
+   ============================================ */
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ==================== SETUP SCREEN ==================== -->
+<div id="screen-setup" class="screen">
+    <div class="header-bar">
+        <h1>Solterra Field Backup</h1>
+        <div class="subtitle">Offline pallet capture · Warehouse audit tool</div>
+    </div>
+    <div class="setup-body">
+        <h2>Session Setup</h2>
+        <p class="setup-intro">Configure your audit session. Once started, everything saves to this device automatically.</p>
+
+        <div class="field">
+            <label for="f-session-name">Session Name</label>
+            <input type="text" id="f-session-name" placeholder="Pine Gate Kinston 2026-04-14">
+        </div>
+
+        <div class="field">
+            <label for="f-auditor">Auditor Name</label>
+            <input type="text" id="f-auditor" placeholder="Your name">
+        </div>
+
+        <div class="field">
+            <label for="f-default-qty">Default Quantity (modules per pallet)</label>
+            <input type="number" id="f-default-qty" min="1" max="500" value="31">
+            <div class="hint">Canadian Solar Series 7 = 31. Can be overridden per row.</div>
+        </div>
+
+        <div class="field">
+            <label for="f-wattages">Expected Wattages</label>
+            <input type="text" id="f-wattages" placeholder="690, 695, 700" value="690, 695, 700">
+            <div class="hint">Comma-separated. Wattage auto-detected from label tail; these are chip fallbacks.</div>
+        </div>
+
+        <div class="field">
+            <label for="f-rows-per-sheet">Rows Per Sheet</label>
+            <input type="number" id="f-rows-per-sheet" min="1" max="100" value="40">
+            <div class="hint">Default 40 to match the paper sheets. Set to 3 for quick testing tonight.</div>
+        </div>
+
+        <div id="install-box" class="install-box">
+            <h3 id="install-heading">⚠ Install to Home Screen</h3>
+            <p><strong>Before starting a real audit:</strong> install this as an app so your data stays durable if Safari gets aggressive with its cache.</p>
+            <ol id="install-instructions">
+                <li><strong>iOS Safari:</strong> tap the Share button (square with up arrow) → scroll down → "Add to Home Screen" → "Add"</li>
+                <li><strong>Android Chrome:</strong> tap the ⋮ menu → "Add to Home Screen" → "Install"</li>
+            </ol>
+            <p>After installing, <strong>launch the tool from the new home-screen icon</strong> (not from Safari).</p>
+            <div class="status-line" id="install-status">Status: Not installed yet</div>
+            <button type="button" class="btn-secondary" id="btn-manual-confirm-install" style="margin-top:10px;">I know what I'm doing — let me proceed anyway</button>
+        </div>
+
+        <button type="button" id="btn-start-session" class="btn-primary" disabled>Start Session</button>
+
+        <div style="margin-top: 20px; padding: 12px; background: #f0f2f5; border-radius: 8px; font-size: 12px; color: #6b7780;">
+            <strong>Version:</strong> <span id="app-version">field-backup-20260413</span>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MAIN CAPTURE SCREEN ==================== -->
+<div id="screen-main" class="screen" hidden>
+    <div class="main-header">
+        <div class="top-row">
+            <div class="session-title" id="m-session-title">Loading…</div>
+            <button type="button" class="menu-btn" id="btn-open-menu" aria-label="Menu">≡</button>
+        </div>
+        <div class="stats-row">
+            <div class="stat-pill">Sheet <strong id="m-sheet-num">1</strong></div>
+            <div class="stat-pill"><strong id="m-sheet-progress">0</strong>/<span id="m-sheet-total">40</span></div>
+            <div class="stat-pill">Total <strong id="m-total">0</strong></div>
+        </div>
+    </div>
+
+    <div class="wattage-chips" id="m-wattage-chips">
+        <span class="chip-label">Mode:</span>
+        <!-- chips injected by JS -->
+    </div>
+
+    <div class="action-buttons">
+        <button type="button" class="action-btn scan" id="btn-scan">📷 Scan</button>
+        <button type="button" class="action-btn" id="btn-manual">⌨ Manual</button>
+    </div>
+
+    <div class="tally-wrap" id="m-tally-wrap">
+        <table class="tally">
+            <thead>
+                <tr>
+                    <th class="col-num">#</th>
+                    <th>Pallet ID / Label Text</th>
+                    <th class="col-watts">Watts</th>
+                    <th class="col-qty">Qty</th>
+                    <th class="col-notes">Notes</th>
+                </tr>
+            </thead>
+            <tbody id="tally-body">
+                <!-- rows injected by JS -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== SAVED SHEETS SCREEN ==================== -->
+<div id="screen-saved" class="screen" hidden>
+    <div class="header-bar">
+        <h1>Saved Sheets</h1>
+        <div class="subtitle">
+            <span class="pill" id="sv-total-sheets">0 sheets</span>
+            <span class="pill" id="sv-total-rows">0 rows</span>
+        </div>
+    </div>
+    <div class="saved-body">
+        <div class="storage-meter" id="sv-storage-meter">
+            Storage: calculating…
+            <div class="bar"><div class="fill" style="width: 0%;"></div></div>
+        </div>
+        <div id="sv-sheet-list">
+            <div class="empty-saved">No saved sheets yet. Finish a sheet to see it here.</div>
+        </div>
+    </div>
+    <div class="saved-actions">
+        <button type="button" class="btn-export" id="btn-export-all">📤 Export All as CSV</button>
+        <button type="button" class="btn-util" id="btn-copy-all">📋 Copy All CSV to Clipboard</button>
+        <button type="button" class="btn-util" id="btn-sessions">⇆ Manage Sessions</button>
+        <button type="button" class="btn-util" id="btn-back-to-capture">← Back to Capture</button>
+        <button type="button" class="btn-util" id="btn-force-refresh">🔁 Force Refresh App</button>
+        <button type="button" class="btn-danger" id="btn-clear-session">⚠ Clear Entire Session</button>
+    </div>
+</div>
+
+<!-- ==================== SHEET DETAIL SCREEN ==================== -->
+<div id="screen-sheet-detail" class="screen" hidden>
+    <div class="header-bar">
+        <h1 id="sd-title">Sheet</h1>
+        <div class="subtitle">
+            <span class="pill" id="sd-pill-rows">0 rows</span>
+            <span class="pill" id="sd-pill-time"></span>
+        </div>
+    </div>
+    <div class="sheet-detail-body">
+        <div id="sd-photo-container">
+            <!-- populated by JS: either an <img> or a placeholder with Add Photo button -->
+        </div>
+        <div class="sheet-detail-info" id="sd-info-box">
+            <div class="row"><span class="label">Session</span><span class="value" id="sd-session-name">—</span></div>
+            <div class="row"><span class="label">Completed</span><span class="value" id="sd-completed">—</span></div>
+            <div class="row"><span class="label">Pallets</span><span class="value" id="sd-pallet-count">—</span></div>
+        </div>
+        <div class="sheet-detail-scans">
+            <div class="scans-header">Scans in this sheet</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th class="num">#</th>
+                        <th>Pallet ID</th>
+                        <th class="w">W</th>
+                        <th class="q">Qty</th>
+                        <th class="n">Notes</th>
+                    </tr>
+                </thead>
+                <tbody id="sd-scans-body"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="saved-actions">
+        <button type="button" class="btn-export" id="sd-share-both">📤 Share CSV + Photo</button>
+        <button type="button" class="btn-util" id="sd-share-photo">🖼 Share Photo Only</button>
+        <button type="button" class="btn-util" id="sd-share-csv">📄 Share CSV Only</button>
+        <button type="button" class="btn-util" id="sd-back">← Back to Sheets</button>
+    </div>
+</div>
+
+<!-- Hidden input for add-photo-later from sheet detail -->
+<input type="file" id="sd-photo-input" accept="image/*" capture="environment" style="display:none;">
+
+<!-- ==================== SESSIONS SCREEN ==================== -->
+<div id="screen-sessions" class="screen" hidden>
+    <div class="header-bar">
+        <h1>Sessions</h1>
+        <div class="subtitle">Manage your audit sessions</div>
+    </div>
+    <div class="sessions-body">
+        <div id="sessions-list">
+            <!-- injected by JS -->
+        </div>
+    </div>
+    <div class="saved-actions">
+        <button type="button" class="btn-export" id="btn-new-session">➕ New Session</button>
+        <button type="button" class="btn-util" id="btn-back-from-sessions">← Back</button>
+    </div>
+</div>
+
+<!-- ==================== CAMERA OVERLAY ==================== -->
+<div id="camera-overlay" class="camera-overlay" hidden>
+    <div class="cam-header">
+        <span class="cam-title">Scanning</span>
+        <span class="cam-count" id="cam-count">0 captured</span>
+        <button type="button" class="cam-close" id="cam-close" aria-label="Close">×</button>
+    </div>
+    <div class="cam-viewport">
+        <div id="scannerViewport"></div>
+        <div class="scan-flash" id="scan-flash"></div>
+    </div>
+    <div class="cam-footer">
+        <div class="wattage-info">Wattage: <strong id="cam-wattage-mode">690</strong>W</div>
+        <button type="button" class="cam-manual-btn" id="cam-manual-btn">⌨ Manual Entry</button>
+    </div>
+</div>
+
+<!-- ==================== MANUAL ENTRY MODAL ==================== -->
+<div id="modal-manual" class="modal-overlay" hidden>
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="manual-modal-title">Manual Entry</h3>
+            <button type="button" class="close-btn" id="manual-close" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="field">
+                <label for="manual-pallet-id">Pallet ID / Label Text</label>
+                <input type="text" id="manual-pallet-id" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
+            </div>
+            <div class="field">
+                <label>Wattage</label>
+                <div class="wattage-picker" id="manual-wattage-picker"></div>
+            </div>
+            <div class="field">
+                <label for="manual-qty">Quantity</label>
+                <div class="qty-stepper">
+                    <button type="button" id="manual-qty-minus">−</button>
+                    <input type="number" id="manual-qty" min="0" max="500">
+                    <button type="button" id="manual-qty-plus">+</button>
+                </div>
+            </div>
+            <div class="field">
+                <label for="manual-notes">Notes (optional)</label>
+                <input type="text" id="manual-notes" placeholder="e.g. damaged, unreadable, inaccessible">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-cancel" id="manual-cancel">Cancel</button>
+            <button type="button" class="btn-ok" id="manual-save">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== SHEET COMPLETE MODAL ==================== -->
+<div id="modal-sheet-complete" class="modal-overlay" hidden>
+    <div class="modal">
+        <div class="modal-body sheet-complete-body">
+            <div class="sheet-complete-icon">✓</div>
+            <h3 id="sc-title">Sheet Complete!</h3>
+            <p id="sc-subtitle">40 pallets captured.</p>
+            <p style="margin-top: 12px;">Take a reference photo of the physical pallets you just captured for the audit trail.</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-skip" id="sc-skip">Skip for Now</button>
+            <button type="button" class="btn-ok" id="sc-take-photo">📷 Take Photo</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== DUPLICATE PALLET MODAL ==================== -->
+<div id="modal-duplicate" class="modal-overlay" hidden>
+    <div class="modal">
+        <div class="modal-header warn">
+            <h3>⚠ Duplicate Pallet</h3>
+            <button type="button" class="close-btn" id="dup-close" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0;">This label was already captured in this session:</p>
+            <div id="dup-label" class="label-preview"></div>
+            <div id="dup-location" class="location-line"></div>
+            <p style="margin-bottom: 0;">Add it again anyway? If yes, the new row will be tagged with a note referencing the original.</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-cancel" id="dup-skip">Skip Scan</button>
+            <button type="button" class="btn-ok" id="dup-add">Add Anyway</button>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden file input for reference photo capture -->
+<input type="file" id="sheet-photo-input" accept="image/*" capture="environment" style="display:none;">
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ==================== SCRIPTS ==================== -->
+<script src="../vendor/html5-qrcode/html5-qrcode.min.js"></script>
+<script>
+(function () {
+'use strict';
+
+// ============================================
+// Constants
+// ============================================
+const DB_NAME = 'solterra_field_backup';
+const DB_VERSION = 2;
+const STORES = ['settings', 'current_scans', 'saved_sheets', 'snapshots', 'sessions'];
+const BUILD_ID = 'field-backup-20260413-2230';
+const SCAN_DEDUPE_WINDOW_MS = 2500;
+const MODULE_WATTAGE_MIN = 300;
+const MODULE_WATTAGE_MAX = 800;
+const PHOTO_MAX_DIMENSION = 1280;
+const PHOTO_JPEG_QUALITY = 0.7;
+
+// ============================================
+// IndexedDB wrapper
+// ============================================
+let _dbPromise = null;
+let _migrationNeeded = false;
+function openDB() {
+    if (_dbPromise) return _dbPromise;
+    _dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = function (e) {
+            const db = e.target.result;
+            const oldVersion = e.oldVersion || 0;
+            if (!db.objectStoreNames.contains('settings')) {
+                db.createObjectStore('settings', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('current_scans')) {
+                db.createObjectStore('current_scans', { keyPath: 'id', autoIncrement: true });
+            }
+            if (!db.objectStoreNames.contains('saved_sheets')) {
+                db.createObjectStore('saved_sheets', { keyPath: 'id', autoIncrement: true });
+            }
+            if (!db.objectStoreNames.contains('snapshots')) {
+                db.createObjectStore('snapshots', { keyPath: 'id', autoIncrement: true });
+            }
+            // v2: add sessions store
+            if (!db.objectStoreNames.contains('sessions')) {
+                db.createObjectStore('sessions', { keyPath: 'id', autoIncrement: true });
+            }
+            // If we're coming from v1, we need to run the data migration
+            // outside the upgrade transaction (simpler than nested IDB calls
+            // inside onupgradeneeded).
+            if (oldVersion > 0 && oldVersion < 2) {
+                _migrationNeeded = true;
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+    return _dbPromise;
+}
+
+// Runs after DB upgrade if v1 data needs migrating to v2 (multi-session).
+// Idempotent — safe to re-run.
+async function migrateV1ToV2IfNeeded() {
+    if (!_migrationNeeded) return;
+    try {
+        // Read the old single-session settings record
+        const oldSettings = await idb.getLegacySettings();
+        if (!oldSettings) {
+            _migrationNeeded = false;
+            return;
+        }
+        // Check if migration already ran (app_state exists)
+        const existingAppState = await idb.getAppState();
+        if (existingAppState && existingAppState.active_session_id) {
+            _migrationNeeded = false;
+            return;
+        }
+        // Create a session record from the old settings
+        const session = await idb.createSession({
+            name: oldSettings.session_name || 'Recovered Session',
+            auditor_name: oldSettings.auditor_name || '',
+            default_quantity: oldSettings.default_quantity || 31,
+            default_wattages: oldSettings.default_wattages || [690, 695, 700],
+            rows_per_sheet: oldSettings.rows_per_sheet || 40,
+            created_at: oldSettings.started_at || nowIso(),
+        });
+        // Stamp session_id on every existing current_scan and saved_sheet
+        const scans = await idb.getAllCurrentScans();
+        for (const scan of scans) {
+            if (!scan.session_id) {
+                scan.session_id = session.id;
+                await idb.updateCurrentScan(scan);
+            }
+        }
+        const sheets = await idb.getAllSavedSheets();
+        for (const sheet of sheets) {
+            if (!sheet.session_id) {
+                sheet.session_id = session.id;
+                await idb.updateSavedSheet(sheet);
+            }
+        }
+        // Set active session pointer
+        await idb.setAppState({ active_session_id: session.id });
+        _migrationNeeded = false;
+        console.log('Migrated v1 data to v2 session:', session.id);
+    } catch (e) {
+        console.error('Migration failed:', e);
+        // Don't set _migrationNeeded = false so it retries next launch
+    }
+}
+
+function promisify(req) {
+    return new Promise((resolve, reject) => {
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+function storeRW(db, name) {
+    return db.transaction(name, 'readwrite').objectStore(name);
+}
+function storeRO(db, name) {
+    return db.transaction(name, 'readonly').objectStore(name);
+}
+
+const idb = {
+    // Legacy single-session settings (only used during v1→v2 migration)
+    async getLegacySettings() {
+        const db = await openDB();
+        const row = await promisify(storeRO(db, 'settings').get('current'));
+        return row || null;
+    },
+    // App-level state (stored in settings store as a keyed singleton)
+    async getAppState() {
+        const db = await openDB();
+        const row = await promisify(storeRO(db, 'settings').get('app_state'));
+        return row || { id: 'app_state', active_session_id: null };
+    },
+    async setAppState(partial) {
+        const db = await openDB();
+        const existing = await promisify(storeRO(db, 'settings').get('app_state'));
+        const merged = Object.assign({}, existing || {}, partial, { id: 'app_state' });
+        await promisify(storeRW(db, 'settings').put(merged));
+        return merged;
+    },
+    // Sessions CRUD
+    async createSession(params) {
+        const db = await openDB();
+        const rec = Object.assign({
+            created_at: nowIso(),
+            updated_at: nowIso(),
+        }, params);
+        delete rec.id;
+        const id = await promisify(storeRW(db, 'sessions').add(rec));
+        return Object.assign({}, rec, { id });
+    },
+    async getAllSessions() {
+        const db = await openDB();
+        const rows = await promisify(storeRO(db, 'sessions').getAll());
+        rows.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        return rows;
+    },
+    async getSession(id) {
+        const db = await openDB();
+        return promisify(storeRO(db, 'sessions').get(id));
+    },
+    async updateSession(session) {
+        const db = await openDB();
+        session.updated_at = nowIso();
+        await promisify(storeRW(db, 'sessions').put(session));
+        return session;
+    },
+    async deleteSession(sessionId) {
+        const db = await openDB();
+        // Delete the session record itself
+        await promisify(storeRW(db, 'sessions').delete(sessionId));
+        // Delete all current_scans with this session_id
+        const scans = await promisify(storeRO(db, 'current_scans').getAll());
+        for (const s of scans) {
+            if (s.session_id === sessionId) {
+                await promisify(storeRW(db, 'current_scans').delete(s.id));
+            }
+        }
+        // Delete all saved_sheets with this session_id
+        const sheets = await promisify(storeRO(db, 'saved_sheets').getAll());
+        for (const sh of sheets) {
+            if (sh.session_id === sessionId) {
+                await promisify(storeRW(db, 'saved_sheets').delete(sh.id));
+            }
+        }
+        // Delete snapshots
+        const snaps = await promisify(storeRO(db, 'snapshots').getAll());
+        for (const sn of snaps) {
+            if (sn.session_id === sessionId) {
+                await promisify(storeRW(db, 'snapshots').delete(sn.id));
+            }
+        }
+    },
+    async addCurrentScan(scan) {
+        const db = await openDB();
+        const id = await promisify(storeRW(db, 'current_scans').add(scan));
+        return Object.assign({}, scan, { id });
+    },
+    async getAllCurrentScans() {
+        const db = await openDB();
+        const rows = await promisify(storeRO(db, 'current_scans').getAll());
+        rows.sort((a, b) => (a.id || 0) - (b.id || 0));
+        return rows;
+    },
+    async updateCurrentScan(scan) {
+        const db = await openDB();
+        await promisify(storeRW(db, 'current_scans').put(scan));
+    },
+    async deleteCurrentScan(id) {
+        const db = await openDB();
+        await promisify(storeRW(db, 'current_scans').delete(id));
+    },
+    async clearCurrentScans() {
+        const db = await openDB();
+        await promisify(storeRW(db, 'current_scans').clear());
+    },
+    async addSavedSheet(sheet) {
+        const db = await openDB();
+        const id = await promisify(storeRW(db, 'saved_sheets').add(sheet));
+        return Object.assign({}, sheet, { id });
+    },
+    async getAllSavedSheets() {
+        const db = await openDB();
+        const rows = await promisify(storeRO(db, 'saved_sheets').getAll());
+        rows.sort((a, b) => (a.sheet_number || 0) - (b.sheet_number || 0));
+        return rows;
+    },
+    async updateSavedSheet(sheet) {
+        const db = await openDB();
+        await promisify(storeRW(db, 'saved_sheets').put(sheet));
+    },
+    async addSnapshot(snapshot) {
+        const db = await openDB();
+        await promisify(storeRW(db, 'snapshots').add(snapshot));
+    },
+    async clearEverything() {
+        const db = await openDB();
+        for (const name of STORES) {
+            await promisify(storeRW(db, name).clear());
+        }
+    }
+};
+
+// ============================================
+// State + helpers
+// ============================================
+const state = {
+    settings: null,          // alias for activeSession for backward compat
+    activeSessionId: null,   // id of the currently-open session
+    activeSession: null,     // the session record itself
+    currentScans: [],
+    savedSheets: [],
+    currentWattage: 690,
+    isScanning: false,
+    processingLock: false,
+    recentScanCache: new Map(), // rawValue -> timestamp
+    scannerInstance: null,
+    currentSheetNumber: 1,
+    currentSheetDetailId: null, // currently-viewed sheet id in detail screen
+    createNewSessionFlow: false, // true when setup screen is creating a new session (vs editing)
+};
+
+function uuid() {
+    if (crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    // Fallback: RFC4122-ish
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : ((r & 0x3) | 0x8);
+        return v.toString(16);
+    });
+}
+
+function nowIso() { return new Date().toISOString(); }
+
+function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
+function toast(message, kind) {
+    kind = kind || 'info';
+    const container = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.textContent = message;
+    container.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('visible'));
+    setTimeout(() => {
+        el.classList.remove('visible');
+        setTimeout(() => el.remove(), 300);
+    }, 2800);
+}
+
+function haptic() {
+    if (navigator.vibrate) try { navigator.vibrate(30); } catch (e) {}
+}
+
+let _beepCtx = null;
+function beep() {
+    try {
+        if (!_beepCtx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            _beepCtx = new Ctx();
+        }
+        const o = _beepCtx.createOscillator();
+        const g = _beepCtx.createGain();
+        o.type = 'sine';
+        o.frequency.value = 920;
+        g.gain.value = 0.14;
+        o.connect(g); g.connect(_beepCtx.destination);
+        o.start();
+        g.gain.exponentialRampToValueAtTime(0.0001, _beepCtx.currentTime + 0.12);
+        o.stop(_beepCtx.currentTime + 0.13);
+    } catch (e) {}
+}
+
+function isStandalone() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || (window.navigator && window.navigator.standalone === true);
+}
+
+// ============================================
+// Duplicate detection (session-level)
+// ============================================
+// Searches both the in-progress sheet AND all saved sheets for a matching
+// pallet_id / raw_value. Returns the first match with its location, or null.
+function findDuplicateInSession(rawValue) {
+    if (!rawValue) return null;
+    // Check current in-progress scans first
+    for (let i = 0; i < state.currentScans.length; i++) {
+        const s = state.currentScans[i];
+        if (s.pallet_id === rawValue || s.raw_value === rawValue) {
+            return {
+                sheet_number: state.currentSheetNumber,
+                row_number: i + 1,
+                captured_at: s.client_captured_at,
+                in_progress: true,
+            };
+        }
+    }
+    // Check saved sheets
+    for (const sheet of state.savedSheets) {
+        const scans = sheet.scans || [];
+        for (let i = 0; i < scans.length; i++) {
+            const s = scans[i];
+            if (s.pallet_id === rawValue || s.raw_value === rawValue) {
+                return {
+                    sheet_number: sheet.sheet_number,
+                    row_number: i + 1,
+                    captured_at: s.client_captured_at,
+                    in_progress: false,
+                };
+            }
+        }
+    }
+    return null;
+}
+
+// Show the duplicate-detected modal. Returns a Promise that resolves to
+// 'skip' (user dismissed) or 'add' (user confirmed add-anyway).
+let _dupeResolve = null;
+function showDuplicateModal(rawValue, existingLocation) {
+    return new Promise(function (resolve) {
+        _dupeResolve = resolve;
+        document.getElementById('dup-label').textContent = rawValue;
+        const time = existingLocation.captured_at
+            ? new Date(existingLocation.captured_at).toLocaleTimeString()
+            : '';
+        const sheetLabel = existingLocation.in_progress
+            ? 'current sheet (in progress)'
+            : ('Sheet ' + existingLocation.sheet_number);
+        document.getElementById('dup-location').innerHTML =
+            'Previously captured as:<br>' +
+            '<strong>' + sheetLabel + ', row ' + existingLocation.row_number +
+            (time ? ' at ' + time : '') + '</strong>';
+        document.getElementById('modal-duplicate').hidden = false;
+    });
+}
+
+function resolveDupe(choice) {
+    const modal = document.getElementById('modal-duplicate');
+    modal.hidden = true;
+    if (_dupeResolve) {
+        const r = _dupeResolve;
+        _dupeResolve = null;
+        r(choice);
+    }
+}
+
+function buildDupNote(existingLocation) {
+    const loc = existingLocation.in_progress
+        ? 'current'
+        : ('sheet ' + existingLocation.sheet_number);
+    return 'DUP of ' + loc + ' row ' + existingLocation.row_number;
+}
+
+// ============================================
+// Wattage parser (must match portal helper at warehouse_audit_helpers.php:411-417)
+// ============================================
+function parseWattageFromRaw(raw, expectedWattages) {
+    if (!raw) return null;
+    const s = String(raw);
+    // Strategy 1: trailing expected wattage
+    for (const w of expectedWattages) {
+        const re = new RegExp('(?:^|[^0-9])(' + parseInt(w, 10) + ')(?:$|[^0-9])');
+        if (re.test(s)) return parseInt(w, 10);
+    }
+    // Strategy 2: any 3-digit in module range
+    const re2 = /(?:^|[^0-9])(\d{3})(?:$|[^0-9])/g;
+    let m;
+    while ((m = re2.exec(s)) !== null) {
+        const w = parseInt(m[1], 10);
+        if (w >= MODULE_WATTAGE_MIN && w <= MODULE_WATTAGE_MAX) return w;
+    }
+    return null;
+}
+
+// ============================================
+// Screen navigation
+// ============================================
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => { s.hidden = true; });
+    const el = document.getElementById(id);
+    if (el) el.hidden = false;
+}
+
+// ============================================
+// Setup screen logic
+// ============================================
+function updateInstallStatus() {
+    const box = document.getElementById('install-box');
+    const heading = document.getElementById('install-heading');
+    const status = document.getElementById('install-status');
+    const startBtn = document.getElementById('btn-start-session');
+    const manualBtn = document.getElementById('btn-manual-confirm-install');
+    const standalone = isStandalone();
+
+    if (standalone) {
+        box.classList.add('installed');
+        heading.textContent = '✓ Installed to Home Screen';
+        status.textContent = 'Status: Running as standalone PWA — data is durable.';
+        manualBtn.style.display = 'none';
+        startBtn.disabled = false;
+    } else {
+        box.classList.remove('installed');
+        heading.textContent = '⚠ Install to Home Screen';
+        status.textContent = 'Status: Running in browser tab — storage may be evicted.';
+        manualBtn.style.display = '';
+        startBtn.disabled = !state.manualInstallOverride;
+    }
+}
+
+async function loadSettingsIntoForm(forceNew) {
+    // Populate the setup form. If forceNew is true (New Session flow), clear
+    // the session name but keep auditor + defaults as sensible carryovers.
+    const existing = forceNew ? null : state.activeSession;
+    if (!existing) {
+        const dateStr = new Date().toISOString().slice(0, 10);
+        document.getElementById('f-session-name').value = 'Kinston Audit ' + dateStr;
+        document.getElementById('f-auditor').value = state.activeSession ? (state.activeSession.auditor_name || '') : '';
+        document.getElementById('f-default-qty').value = state.activeSession ? (state.activeSession.default_quantity || 31) : 31;
+        document.getElementById('f-wattages').value = state.activeSession
+            ? (state.activeSession.default_wattages || [690, 695, 700]).join(', ')
+            : '690, 695, 700';
+        document.getElementById('f-rows-per-sheet').value = state.activeSession ? (state.activeSession.rows_per_sheet || 40) : 40;
+        return;
+    }
+    document.getElementById('f-session-name').value = existing.name || existing.session_name || '';
+    document.getElementById('f-auditor').value = existing.auditor_name || '';
+    document.getElementById('f-default-qty').value = existing.default_quantity || 31;
+    document.getElementById('f-wattages').value = (existing.default_wattages || [690, 695, 700]).join(', ');
+    document.getElementById('f-rows-per-sheet').value = existing.rows_per_sheet || 40;
+}
+
+async function startSession() {
+    const name = document.getElementById('f-session-name').value.trim() || 'Untitled Session';
+    const auditor_name = document.getElementById('f-auditor').value.trim();
+    const default_quantity = parseInt(document.getElementById('f-default-qty').value, 10) || 31;
+    const wattagesRaw = document.getElementById('f-wattages').value.trim();
+    const default_wattages = wattagesRaw.split(/[,\s]+/).map(w => parseInt(w, 10)).filter(w => w > 0);
+    const rows_per_sheet = parseInt(document.getElementById('f-rows-per-sheet').value, 10) || 40;
+
+    if (default_wattages.length === 0) {
+        toast('Enter at least one wattage', 'error');
+        return;
+    }
+
+    const sessionData = {
+        name: name,
+        auditor_name: auditor_name,
+        default_quantity: default_quantity,
+        default_wattages: default_wattages,
+        rows_per_sheet: rows_per_sheet,
+    };
+
+    if (state.createNewSessionFlow || !state.activeSessionId) {
+        // Creating a brand-new session
+        const session = await idb.createSession(Object.assign({
+            started_at: nowIso(),
+        }, sessionData));
+        state.activeSessionId = session.id;
+        state.activeSession = session;
+        state.settings = session;
+        await idb.setAppState({ active_session_id: session.id });
+        state.createNewSessionFlow = false;
+        toast('Session "' + name + '" created', 'success');
+    } else {
+        // Updating the active session (user edited its setup)
+        const updated = Object.assign({}, state.activeSession, sessionData);
+        await idb.updateSession(updated);
+        state.activeSession = updated;
+        state.settings = updated;
+    }
+
+    state.currentWattage = default_wattages[0];
+
+    await reloadCurrentScansAndSheets();
+    renderMainScreen();
+    showScreen('screen-main');
+}
+
+// ============================================
+// Main capture screen logic
+// ============================================
+async function reloadCurrentScansAndSheets() {
+    const sessionId = state.activeSessionId;
+    const allScans = await idb.getAllCurrentScans();
+    state.currentScans = sessionId
+        ? allScans.filter(s => s.session_id === sessionId)
+        : allScans;
+    state.currentScans.sort((a, b) => (a.id || 0) - (b.id || 0));
+
+    const allSheets = await idb.getAllSavedSheets();
+    state.savedSheets = sessionId
+        ? allSheets.filter(s => s.session_id === sessionId)
+        : allSheets;
+    state.savedSheets.sort((a, b) => (a.sheet_number || 0) - (b.sheet_number || 0));
+
+    state.currentSheetNumber = state.savedSheets.length + 1;
+}
+
+function renderWattageChips() {
+    const container = document.getElementById('m-wattage-chips');
+    // Remove existing chip elements (keep the label)
+    const label = container.querySelector('.chip-label');
+    container.innerHTML = '';
+    container.appendChild(label);
+    for (const w of state.settings.default_wattages) {
+        const btn = document.createElement('button');
+        btn.className = 'wattage-chip' + (w === state.currentWattage ? ' selected' : '');
+        btn.textContent = w + 'W';
+        btn.dataset.wattage = w;
+        btn.addEventListener('click', function () {
+            state.currentWattage = parseInt(btn.dataset.wattage, 10);
+            renderWattageChips();
+            const camWatt = document.getElementById('cam-wattage-mode');
+            if (camWatt) camWatt.textContent = state.currentWattage;
+        });
+        container.appendChild(btn);
+    }
+}
+
+function renderMainScreen() {
+    if (!state.settings) return;
+    document.getElementById('m-session-title').textContent = state.settings.name || state.settings.session_name || 'Session';
+    document.getElementById('m-sheet-num').textContent = state.currentSheetNumber;
+    document.getElementById('m-sheet-progress').textContent = state.currentScans.length;
+    document.getElementById('m-sheet-total').textContent = state.settings.rows_per_sheet;
+
+    const totalRows = state.savedSheets.reduce((sum, s) => sum + (s.scans ? s.scans.length : 0), 0)
+                    + state.currentScans.length;
+    document.getElementById('m-total').textContent = totalRows;
+
+    renderWattageChips();
+    renderTallyBody();
+
+    const camWatt = document.getElementById('cam-wattage-mode');
+    if (camWatt) camWatt.textContent = state.currentWattage;
+}
+
+function renderTallyBody() {
+    const body = document.getElementById('tally-body');
+    const total = state.settings.rows_per_sheet;
+    const scans = state.currentScans;
+    const rowOffset = (state.currentSheetNumber - 1) * total;
+    const rows = [];
+    for (let i = 0; i < total; i++) {
+        const rowNum = rowOffset + i + 1;
+        const scan = scans[i];
+        if (scan) {
+            rows.push(
+                '<tr class="row-filled" data-scan-id="' + scan.id + '">' +
+                    '<td class="cell-num">' + rowNum + '</td>' +
+                    '<td class="cell-id">' + escapeHtml(scan.pallet_id || scan.raw_value) + '</td>' +
+                    '<td class="cell-watts">' + (scan.parsed_wattage || '') + '</td>' +
+                    '<td class="cell-qty">' + (scan.quantity || '') + '</td>' +
+                    '<td class="cell-notes">' + escapeHtml(scan.notes || '') + '</td>' +
+                '</tr>'
+            );
+        } else if (i === scans.length) {
+            rows.push(
+                '<tr class="row-current"><td class="cell-num">' + rowNum + '</td><td colspan="4" style="text-align:center; color:#6b7780; font-size:11px;">← next scan</td></tr>'
+            );
+        } else {
+            rows.push(
+                '<tr class="row-empty"><td class="cell-num">' + rowNum + '</td><td></td><td></td><td></td><td></td></tr>'
+            );
+        }
+    }
+    body.innerHTML = rows.join('');
+
+    // Wire row-click → edit
+    body.querySelectorAll('tr.row-filled').forEach(tr => {
+        tr.addEventListener('click', function () {
+            const scanId = parseInt(tr.dataset.scanId, 10);
+            openEditRow(scanId);
+        });
+    });
+}
+
+// ============================================
+// Scan + capture logic
+// ============================================
+async function recordScan(params) {
+    // params: { scan_method, raw_value, quantity_override, notes_override }
+    const raw = params.raw_value || '';
+    let parsed_wattage = parseWattageFromRaw(raw, state.settings.default_wattages);
+    if (parsed_wattage === null) parsed_wattage = state.currentWattage;
+
+    const scan = {
+        client_uuid: uuid(),
+        session_id: state.activeSessionId,
+        sheet_number: state.currentSheetNumber,
+        row_index_in_sheet: state.currentScans.length + 1,
+        scan_method: params.scan_method,
+        raw_value: raw,
+        pallet_id: raw,
+        parsed_wattage: parsed_wattage,
+        quantity: (params.quantity_override != null ? params.quantity_override : state.settings.default_quantity),
+        notes: params.notes_override || '',
+        client_captured_at: nowIso(),
+    };
+    const saved = await idb.addCurrentScan(scan);
+    state.currentScans.push(saved);
+
+    beep();
+    haptic();
+    flashScanSuccess();
+
+    // Re-render
+    renderMainScreen();
+    updateCamCount();
+
+    // Check for sheet completion
+    if (state.currentScans.length >= state.settings.rows_per_sheet) {
+        await handleSheetComplete();
+    }
+}
+
+function flashScanSuccess() {
+    const flash = document.getElementById('scan-flash');
+    if (!flash) return;
+    flash.classList.add('active');
+    setTimeout(() => flash.classList.remove('active'), 300);
+}
+
+function updateCamCount() {
+    const el = document.getElementById('cam-count');
+    if (el) el.textContent = state.currentScans.length + ' captured';
+}
+
+async function startScanner() {
+    if (state.isScanning) return;
+    const supportIssue = getScannerSupportIssue();
+    if (supportIssue) {
+        toast(supportIssue, 'error');
+        setTimeout(openManualModal, 500);
+        return;
+    }
+    document.getElementById('camera-overlay').hidden = false;
+    updateCamCount();
+
+    try {
+        state.scannerInstance = new window.Html5Qrcode('scannerViewport', { verbose: false });
+    } catch (e) {
+        toast('Scanner init failed: ' + e.message, 'error');
+        stopScanner();
+        setTimeout(openManualModal, 500);
+        return;
+    }
+
+    const config = {
+        fps: 12,
+        qrbox: function (w, h) {
+            const min = Math.min(w, h);
+            return { width: Math.floor(min * 0.75), height: Math.floor(min * 0.55) };
+        },
+        aspectRatio: 1.333,
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+        rememberLastUsedCamera: true,
+        supportedScanTypes: [],
+    };
+
+    // facingMode as bare string — html5-qrcode rejects { ideal: ... }
+    const cameraConstraints = { facingMode: 'environment' };
+
+    try {
+        await state.scannerInstance.start(
+            cameraConstraints,
+            config,
+            onScanSuccess,
+            function () { /* per-frame decode errors are normal */ }
+        );
+        state.isScanning = true;
+    } catch (err) {
+        toast('Camera error: ' + (err && err.message || err) + ' — use manual entry', 'warn');
+        stopScanner();
+        setTimeout(openManualModal, 600);
+    }
+}
+
+function getScannerSupportIssue() {
+    if (typeof window.isSecureContext !== 'undefined' && !window.isSecureContext) {
+        return 'Camera requires HTTPS or localhost';
+    }
+    if (typeof window.Html5Qrcode === 'undefined') return 'Scanner library not loaded';
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        return 'Browser does not support camera access';
+    }
+    return null;
+}
+
+async function onScanSuccess(decodedText, decodedResult) {
+    // Race protection: lock, dedupe, process
+    if (state.processingLock) return;
+    state.processingLock = true;
+    try {
+        // Rapid-fire dedupe: drop if same raw text seen recently.
+        // We refresh the timestamp on EVERY hit (accepted or dedup'd) so
+        // holding the camera steady on a single code for any length of
+        // time still only produces one accepted scan. Only when the code
+        // leaves the frame for at least SCAN_DEDUPE_WINDOW_MS will the
+        // next appearance be considered.
+        const now = Date.now();
+        const last = state.recentScanCache.get(decodedText);
+        state.recentScanCache.set(decodedText, now);
+        if (last && (now - last) < SCAN_DEDUPE_WINDOW_MS) {
+            return;
+        }
+        // Clean old entries
+        if (state.recentScanCache.size > 50) {
+            const cutoff = now - SCAN_DEDUPE_WINDOW_MS;
+            for (const [k, v] of state.recentScanCache.entries()) {
+                if (v < cutoff) state.recentScanCache.delete(k);
+            }
+        }
+
+        const fmt = (decodedResult && decodedResult.result && decodedResult.result.format && decodedResult.result.format.formatName) || '';
+        const method = /qr/i.test(fmt) ? 'qr' : 'barcode';
+
+        // Session-level duplicate check (across current + all saved sheets)
+        const existing = findDuplicateInSession(decodedText);
+        if (existing) {
+            // Pause the scanner while the modal is up so no decodes fire
+            // into the modal's overlay.
+            if (state.scannerInstance && state.isScanning) {
+                try { state.scannerInstance.pause(true); } catch (e) { /* ignore */ }
+            }
+            const choice = await showDuplicateModal(decodedText, existing);
+            // Resume scanner
+            if (state.scannerInstance && state.isScanning) {
+                try { state.scannerInstance.resume(); } catch (e) { /* ignore */ }
+            }
+            if (choice === 'skip') {
+                toast('Duplicate skipped', 'info');
+                // Bump the cache so continued holding doesn't re-prompt
+                state.recentScanCache.set(decodedText, Date.now());
+                return;
+            }
+            // Add Anyway: fall through and record the scan with a duplicate note
+            await recordScan({
+                scan_method: method,
+                raw_value: decodedText,
+                notes_override: buildDupNote(existing),
+            });
+            return;
+        }
+
+        // Not a duplicate — record normally
+        await recordScan({
+            scan_method: method,
+            raw_value: decodedText,
+        });
+    } catch (e) {
+        toast('Scan error: ' + e.message, 'error');
+    } finally {
+        state.processingLock = false;
+    }
+}
+
+async function stopScanner() {
+    document.getElementById('camera-overlay').hidden = true;
+    if (state.scannerInstance && state.isScanning) {
+        try {
+            await state.scannerInstance.stop();
+            state.scannerInstance.clear();
+        } catch (e) { /* ignore */ }
+    }
+    state.scannerInstance = null;
+    state.isScanning = false;
+    state.recentScanCache.clear();
+}
+
+// ============================================
+// Manual entry modal
+// ============================================
+let _editingScanId = null;
+
+function openManualModal() {
+    _editingScanId = null;
+    document.getElementById('manual-modal-title').textContent = 'Manual Entry';
+    document.getElementById('manual-pallet-id').value = '';
+    document.getElementById('manual-qty').value = state.settings.default_quantity;
+    document.getElementById('manual-notes').value = '';
+    renderManualWattagePicker(state.currentWattage);
+    document.getElementById('modal-manual').hidden = false;
+    setTimeout(() => document.getElementById('manual-pallet-id').focus(), 50);
+}
+
+function openEditRow(scanId) {
+    const scan = state.currentScans.find(s => s.id === scanId);
+    if (!scan) return;
+    _editingScanId = scanId;
+    document.getElementById('manual-modal-title').textContent = 'Edit Row';
+    document.getElementById('manual-pallet-id').value = scan.pallet_id || scan.raw_value || '';
+    document.getElementById('manual-qty').value = scan.quantity;
+    document.getElementById('manual-notes').value = scan.notes || '';
+    renderManualWattagePicker(scan.parsed_wattage || state.currentWattage);
+    document.getElementById('modal-manual').hidden = false;
+}
+
+function renderManualWattagePicker(selected) {
+    const container = document.getElementById('manual-wattage-picker');
+    container.innerHTML = '';
+    for (const w of state.settings.default_wattages) {
+        const btn = document.createElement('button');
+        btn.className = 'wattage-chip' + (w === selected ? ' selected' : '');
+        btn.textContent = w + 'W';
+        btn.type = 'button';
+        btn.dataset.wattage = w;
+        btn.addEventListener('click', function () {
+            container.querySelectorAll('button').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+        container.appendChild(btn);
+    }
+}
+
+async function saveManualEntry() {
+    const rawInput = document.getElementById('manual-pallet-id').value.trim();
+    if (!rawInput) {
+        toast('Pallet ID required', 'error');
+        return;
+    }
+    const qty = parseInt(document.getElementById('manual-qty').value, 10) || 0;
+    const notes = document.getElementById('manual-notes').value.trim();
+    const selectedChip = document.querySelector('#manual-wattage-picker .wattage-chip.selected');
+    const chosenWattage = selectedChip ? parseInt(selectedChip.dataset.wattage, 10) : null;
+
+    if (_editingScanId != null) {
+        // Update existing scan
+        const scan = state.currentScans.find(s => s.id === _editingScanId);
+        if (!scan) {
+            document.getElementById('modal-manual').hidden = true;
+            return;
+        }
+        scan.pallet_id = rawInput;
+        scan.raw_value = rawInput;
+        scan.quantity = qty;
+        scan.notes = notes;
+        if (chosenWattage) scan.parsed_wattage = chosenWattage;
+        await idb.updateCurrentScan(scan);
+    } else {
+        // New manual entry — duplicate check against current + saved sheets
+        const existing = findDuplicateInSession(rawInput);
+        if (existing) {
+            // Hide the manual entry modal while the dupe modal is up
+            document.getElementById('modal-manual').hidden = true;
+            const choice = await showDuplicateModal(rawInput, existing);
+            if (choice === 'skip') {
+                toast('Duplicate skipped', 'info');
+                return;
+            }
+            // Add Anyway — append a duplicate note
+            const originalCurrentWattage = state.currentWattage;
+            if (chosenWattage) state.currentWattage = chosenWattage;
+            const dupNote = buildDupNote(existing);
+            await recordScan({
+                scan_method: 'manual',
+                raw_value: rawInput,
+                quantity_override: qty,
+                notes_override: notes ? (notes + ' · ' + dupNote) : dupNote,
+            });
+            state.currentWattage = originalCurrentWattage;
+            renderMainScreen();
+            return;
+        }
+
+        // Not a duplicate — record normally
+        const originalCurrentWattage = state.currentWattage;
+        if (chosenWattage) state.currentWattage = chosenWattage;
+        await recordScan({
+            scan_method: 'manual',
+            raw_value: rawInput,
+            quantity_override: qty,
+            notes_override: notes,
+        });
+        state.currentWattage = originalCurrentWattage;
+    }
+    document.getElementById('modal-manual').hidden = true;
+    renderMainScreen();
+}
+
+// ============================================
+// Sheet completion flow
+// ============================================
+async function handleSheetComplete() {
+    // Pause scanner immediately so no more decodes fire into the modal
+    if (state.scannerInstance && state.isScanning) {
+        try { state.scannerInstance.pause(true); } catch (e) { /* ignore */ }
+    }
+    const sheetNum = state.currentSheetNumber;
+    const start = (sheetNum - 1) * state.settings.rows_per_sheet + 1;
+    const end = sheetNum * state.settings.rows_per_sheet;
+    document.getElementById('sc-title').textContent = 'Sheet ' + sheetNum + ' Complete!';
+    document.getElementById('sc-subtitle').textContent = state.currentScans.length + ' pallets captured (#' + start + '–' + end + ')';
+    document.getElementById('modal-sheet-complete').hidden = false;
+}
+
+async function commitCurrentSheet(photoBlob) {
+    const sheetNum = state.currentSheetNumber;
+    const scans = state.currentScans.slice();
+
+    const sheetRecord = {
+        session_id: state.activeSessionId,
+        sheet_number: sheetNum,
+        scan_count: scans.length,
+        started_at: scans.length > 0 ? scans[0].client_captured_at : nowIso(),
+        completed_at: nowIso(),
+        scans: scans,
+        photo_blob: photoBlob || null,
+        photo_captured_at: photoBlob ? nowIso() : null,
+    };
+    await idb.addSavedSheet(sheetRecord);
+    // Clear only THIS session's current scans, not all of them (multi-session safe)
+    const allScans = await idb.getAllCurrentScans();
+    for (const s of allScans) {
+        if (s.session_id === state.activeSessionId) {
+            await idb.deleteCurrentScan(s.id);
+        }
+    }
+
+    state.currentScans = [];
+    state.savedSheets = await idb.getAllSavedSheets();
+    state.currentSheetNumber = state.savedSheets.length + 1;
+
+    // Auto-snapshot: save a CSV snapshot so we have an eviction-resistant backup
+    try {
+        const csv = buildCsv(state.savedSheets, state.currentScans);
+        await idb.addSnapshot({ created_at: nowIso(), csv_text: csv, sheet_count: state.savedSheets.length, row_count: totalRowCount() });
+    } catch (e) { /* ignore */ }
+
+    renderMainScreen();
+
+    // Resume scanner if it's still open
+    if (state.scannerInstance) {
+        try { state.scannerInstance.resume(); } catch (e) { /* ignore */ }
+    }
+
+    // Offer to share this sheet's CSV
+    await offerShareSheetCsv(sheetRecord);
+}
+
+async function offerShareSheetCsv(sheetRecord) {
+    const csv = buildCsvForSheets([sheetRecord]);
+    const filename = 'audit-sheet-' + sheetRecord.sheet_number + '.csv';
+    try {
+        const file = new File([csv], filename, { type: 'text/csv' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+                files: [file],
+                title: 'Sheet ' + sheetRecord.sheet_number + ' backup',
+                text: (state.settings.session_name || 'Audit session') + ' — Sheet ' + sheetRecord.sheet_number,
+            });
+            toast('Shared sheet ' + sheetRecord.sheet_number, 'success');
+            return;
+        }
+    } catch (e) {
+        // User cancelled the share sheet — that's fine
+        if (e && e.name === 'AbortError') return;
+    }
+    // Silent fallback: no toast if share isn't supported (avoid noise)
+}
+
+// Reference photo pipeline
+function handleSheetPhotoSelected(file) {
+    if (!file) return;
+    compressImage(file, PHOTO_MAX_DIMENSION, PHOTO_JPEG_QUALITY).then(async function (blob) {
+        await commitCurrentSheet(blob);
+        toast('Sheet saved with photo', 'success');
+    }).catch(function (err) {
+        toast('Photo processing failed: ' + err.message, 'error');
+    });
+}
+
+function compressImage(file, maxDim, quality) {
+    return new Promise(function (resolve, reject) {
+        const img = new Image();
+        const reader = new FileReader();
+        reader.onload = function (e) { img.src = e.target.result; };
+        reader.onerror = function () { reject(new Error('Failed to read file')); };
+        img.onload = function () {
+            let { width, height } = img;
+            if (width > maxDim || height > maxDim) {
+                if (width > height) {
+                    height = Math.round(height * (maxDim / width));
+                    width = maxDim;
+                } else {
+                    width = Math.round(width * (maxDim / height));
+                    height = maxDim;
+                }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            canvas.toBlob(function (blob) {
+                if (blob) resolve(blob);
+                else reject(new Error('Canvas toBlob failed'));
+            }, 'image/jpeg', quality);
+        };
+        img.onerror = function () { reject(new Error('Image load failed')); };
+        reader.readAsDataURL(file);
+    });
+}
+
+// ============================================
+// Saved sheets screen
+// ============================================
+function totalRowCount() {
+    return state.savedSheets.reduce((sum, s) => sum + (s.scans ? s.scans.length : 0), 0)
+         + state.currentScans.length;
+}
+
+async function renderSavedScreen() {
+    await reloadCurrentScansAndSheets();
+    document.getElementById('sv-total-sheets').textContent = state.savedSheets.length + ' sheets';
+    document.getElementById('sv-total-rows').textContent = totalRowCount() + ' rows';
+
+    // Storage meter
+    if (navigator.storage && navigator.storage.estimate) {
+        try {
+            const est = await navigator.storage.estimate();
+            const used = est.usage || 0;
+            const quota = est.quota || 1;
+            const pct = Math.round((used / quota) * 100);
+            const usedMb = (used / (1024 * 1024)).toFixed(1);
+            const quotaMb = (quota / (1024 * 1024)).toFixed(0);
+            const meter = document.getElementById('sv-storage-meter');
+            meter.innerHTML =
+                'Storage: ' + usedMb + ' / ' + quotaMb + ' MB (' + pct + '%)' +
+                '<div class="bar"><div class="fill" style="width: ' + Math.min(pct, 100) + '%;"></div></div>';
+            if (pct > 70) meter.classList.add('warn');
+            else meter.classList.remove('warn');
+        } catch (e) { /* ignore */ }
+    }
+
+    const list = document.getElementById('sv-sheet-list');
+    if (state.savedSheets.length === 0 && state.currentScans.length === 0) {
+        list.innerHTML = '<div class="empty-saved">No saved sheets yet. Finish a sheet to see it here.</div>';
+        return;
+    }
+
+    const items = [];
+    for (const sheet of state.savedSheets) {
+        let thumbStyle = '';
+        let thumbContent = '📋';
+        if (sheet.photo_blob) {
+            const url = URL.createObjectURL(sheet.photo_blob);
+            thumbStyle = 'style="background-image:url(' + url + ');"';
+            thumbContent = '';
+        }
+        items.push(
+            '<div class="sheet-card" data-sheet-id="' + sheet.id + '">' +
+                '<div class="thumb ' + (sheet.photo_blob ? 'has-photo' : '') + '" ' + thumbStyle + '>' + thumbContent + '</div>' +
+                '<div class="info">' +
+                    '<div class="title">Sheet ' + sheet.sheet_number + '</div>' +
+                    '<div class="meta">' + (sheet.scan_count || 0) + ' pallets · ' +
+                    (sheet.completed_at ? new Date(sheet.completed_at).toLocaleTimeString() : '') + '</div>' +
+                '</div>' +
+                '<button type="button" class="share-btn" data-sheet-id="' + sheet.id + '">📤</button>' +
+                '<span class="chevron">›</span>' +
+            '</div>'
+        );
+    }
+    // Current in-progress sheet
+    if (state.currentScans.length > 0) {
+        items.push(
+            '<div class="sheet-card" style="border-color:#488C9A; border-style:dashed;">' +
+                '<div class="thumb">⏳</div>' +
+                '<div class="info">' +
+                    '<div class="title">Sheet ' + state.currentSheetNumber + ' (in progress)</div>' +
+                    '<div class="meta">' + state.currentScans.length + ' / ' + state.settings.rows_per_sheet + ' pallets</div>' +
+                '</div>' +
+            '</div>'
+        );
+    }
+    list.innerHTML = items.join('');
+
+    // Wire card clicks → Sheet Detail screen
+    list.querySelectorAll('.sheet-card[data-sheet-id]').forEach(function (card) {
+        card.addEventListener('click', async function () {
+            const sheetId = parseInt(card.getAttribute('data-sheet-id'), 10);
+            await renderSheetDetailScreen(sheetId);
+            showScreen('screen-sheet-detail');
+        });
+    });
+
+    // Wire share buttons (stop propagation so they don't trigger the card click)
+    list.querySelectorAll('.share-btn').forEach(btn => {
+        btn.addEventListener('click', async function (e) {
+            e.stopPropagation();
+            const sheetId = parseInt(btn.dataset.sheetId, 10);
+            const sheet = state.savedSheets.find(s => s.id === sheetId);
+            if (sheet) {
+                // Instead of the inline share flow, push into Sheet Detail where
+                // the user has the full Share CSV+Photo / Photo Only / CSV Only
+                // buttons available.
+                state.currentSheetDetailId = sheetId;
+                await renderSheetDetailScreen(sheetId);
+                showScreen('screen-sheet-detail');
+            }
+        });
+    });
+}
+
+async function shareSingleSheet(sheet) {
+    const csv = buildCsvForSheets([sheet]);
+    const filename = 'audit-sheet-' + sheet.sheet_number + '.csv';
+    try {
+        const files = [new File([csv], filename, { type: 'text/csv' })];
+        if (sheet.photo_blob) {
+            files.push(new File([sheet.photo_blob], 'sheet-' + sheet.sheet_number + '-reference.jpg', { type: 'image/jpeg' }));
+        }
+        if (navigator.canShare && navigator.canShare({ files: files })) {
+            await navigator.share({ files: files, title: 'Sheet ' + sheet.sheet_number });
+            return;
+        }
+    } catch (e) {
+        if (e && e.name === 'AbortError') return;
+    }
+    // Fallback: download CSV via a tag
+    downloadTextFile(csv, filename);
+}
+
+// ============================================
+// CSV export
+// ============================================
+function csvEscape(val) {
+    if (val === null || val === undefined) return '""';
+    const s = String(val);
+    return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function buildCsv(savedSheets, currentScans) {
+    // Include all rows from saved sheets + current in-progress sheet
+    const allSheets = savedSheets.slice();
+    if (currentScans && currentScans.length > 0) {
+        allSheets.push({
+            sheet_number: state.currentSheetNumber,
+            scans: currentScans,
+        });
+    }
+    return buildCsvForSheets(allSheets);
+}
+
+function buildCsvForSheets(sheets) {
+    const lines = [];
+    // Header comment
+    lines.push('# session: ' + (state.settings.name || state.settings.session_name || ''));
+    lines.push('# auditor: ' + (state.settings.auditor_name || ''));
+    lines.push('# generated: ' + nowIso());
+    lines.push('# rows_per_sheet: ' + state.settings.rows_per_sheet);
+    lines.push('# build: ' + BUILD_ID);
+    // Column header
+    lines.push('sheet,row,client_uuid,scan_method,raw_value,pallet_id,parsed_wattage,quantity,notes,client_captured_at');
+    // Rows
+    for (const sheet of sheets) {
+        const scans = sheet.scans || [];
+        scans.forEach(function (scan, idx) {
+            const row = [
+                sheet.sheet_number,
+                (idx + 1),
+                scan.client_uuid || '',
+                scan.scan_method || '',
+                scan.raw_value || '',
+                scan.pallet_id || '',
+                scan.parsed_wattage != null ? scan.parsed_wattage : '',
+                scan.quantity != null ? scan.quantity : '',
+                scan.notes || '',
+                scan.client_captured_at || '',
+            ];
+            lines.push(row.map(csvEscape).join(','));
+        });
+    }
+    return lines.join('\r\n') + '\r\n';
+}
+
+function downloadTextFile(text, filename) {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 100);
+}
+
+async function exportAllCsv() {
+    await reloadCurrentScansAndSheets();
+    const csv = buildCsv(state.savedSheets, state.currentScans);
+    const sessionSafe = (state.settings.name || state.settings.session_name || 'session')
+        .replace(/[^A-Za-z0-9_-]/g, '_');
+    const filename = 'audit-' + sessionSafe + '-all.csv';
+    try {
+        const file = new File([csv], filename, { type: 'text/csv' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Full Audit CSV' });
+            toast('CSV shared', 'success');
+            return;
+        }
+    } catch (e) {
+        if (e && e.name === 'AbortError') return;
+    }
+    downloadTextFile(csv, filename);
+    toast('CSV downloaded', 'success');
+}
+
+async function copyAllCsvToClipboard() {
+    await reloadCurrentScansAndSheets();
+    const csv = buildCsv(state.savedSheets, state.currentScans);
+    try {
+        await navigator.clipboard.writeText(csv);
+        toast('CSV copied to clipboard', 'success');
+    } catch (e) {
+        toast('Clipboard copy failed: ' + e.message, 'error');
+    }
+}
+
+// ============================================
+// Force refresh (SW escape hatch)
+// ============================================
+async function forceRefresh() {
+    if (!confirm('Unregister the service worker, clear its cache, and reload? Your captured data will NOT be deleted.')) return;
+    try {
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (const r of regs) await r.unregister();
+        }
+        if (window.caches && caches.keys) {
+            const names = await caches.keys();
+            for (const n of names) {
+                if (n.indexOf('field-backup') !== -1) await caches.delete(n);
+            }
+        }
+    } catch (e) { /* ignore */ }
+    location.reload();
+}
+
+async function clearEntireSession() {
+    if (!confirm('Clear ALL saved sheets, scans, and settings? This cannot be undone.')) return;
+    if (!confirm('Really delete everything? Last chance.')) return;
+    await idb.clearEverything();
+    state.settings = null;
+    state.currentScans = [];
+    state.savedSheets = [];
+    state.currentSheetNumber = 1;
+    location.reload();
+}
+
+// ============================================
+// Service worker registration
+// ============================================
+async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+        const reg = await navigator.serviceWorker.register('sw.js', { scope: './' });
+        // Listen for updates
+        reg.addEventListener('updatefound', function () {
+            const newWorker = reg.installing;
+            if (newWorker) {
+                newWorker.addEventListener('statechange', function () {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        toast('Update available — restart app', 'info');
+                    }
+                });
+            }
+        });
+    } catch (e) {
+        console.warn('SW registration failed:', e);
+    }
+}
+
+// ============================================
+// Storage persistence request
+// ============================================
+async function requestPersistentStorage() {
+    if (navigator.storage && navigator.storage.persist) {
+        try {
+            const granted = await navigator.storage.persist();
+            console.log('Persistent storage:', granted);
+        } catch (e) { /* ignore */ }
+    }
+}
+
+// ============================================
+// Sheet Detail screen
+// ============================================
+let _sdPhotoUrl = null; // track object URL for cleanup
+
+async function renderSheetDetailScreen(sheetId) {
+    state.currentSheetDetailId = sheetId;
+    await reloadCurrentScansAndSheets();
+    const sheet = state.savedSheets.find(s => s.id === sheetId);
+    if (!sheet) {
+        toast('Sheet not found', 'error');
+        showScreen('screen-saved');
+        return;
+    }
+
+    document.getElementById('sd-title').textContent = 'Sheet ' + sheet.sheet_number;
+    document.getElementById('sd-pill-rows').textContent = (sheet.scan_count || (sheet.scans ? sheet.scans.length : 0)) + ' rows';
+    document.getElementById('sd-pill-time').textContent = sheet.completed_at
+        ? new Date(sheet.completed_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
+    document.getElementById('sd-session-name').textContent = (state.activeSession && (state.activeSession.name || state.activeSession.session_name)) || '—';
+    document.getElementById('sd-completed').textContent = sheet.completed_at
+        ? new Date(sheet.completed_at).toLocaleString()
+        : '—';
+    document.getElementById('sd-pallet-count').textContent = sheet.scan_count || (sheet.scans ? sheet.scans.length : 0);
+
+    // Photo container
+    const photoContainer = document.getElementById('sd-photo-container');
+    if (_sdPhotoUrl) {
+        try { URL.revokeObjectURL(_sdPhotoUrl); } catch (e) {}
+        _sdPhotoUrl = null;
+    }
+    if (sheet.photo_blob) {
+        _sdPhotoUrl = URL.createObjectURL(sheet.photo_blob);
+        photoContainer.innerHTML = '<div class="sheet-detail-photo"><img src="' + _sdPhotoUrl + '" alt="Sheet ' + sheet.sheet_number + ' reference photo"></div>';
+    } else {
+        photoContainer.innerHTML =
+            '<div class="sheet-detail-photo-placeholder">' +
+                'No reference photo attached to this sheet.<br>' +
+                '<button type="button" id="sd-add-photo-btn">📷 Add Photo Now</button>' +
+            '</div>';
+        const btn = document.getElementById('sd-add-photo-btn');
+        if (btn) btn.addEventListener('click', function () { document.getElementById('sd-photo-input').click(); });
+    }
+
+    // Scans table
+    const scansBody = document.getElementById('sd-scans-body');
+    const scans = sheet.scans || [];
+    scansBody.innerHTML = scans.map(function (s, idx) {
+        return '<tr>' +
+            '<td class="num">' + (idx + 1) + '</td>' +
+            '<td class="id">' + escapeHtml(s.pallet_id || s.raw_value || '') + '</td>' +
+            '<td class="w">' + (s.parsed_wattage != null ? s.parsed_wattage : '') + '</td>' +
+            '<td class="q">' + (s.quantity != null ? s.quantity : '') + '</td>' +
+            '<td class="n">' + escapeHtml(s.notes || '') + '</td>' +
+        '</tr>';
+    }).join('');
+}
+
+async function handleAddPhotoToExistingSheet(file) {
+    if (!file) return;
+    const sheetId = state.currentSheetDetailId;
+    if (!sheetId) return;
+    try {
+        const blob = await compressImage(file, PHOTO_MAX_DIMENSION, PHOTO_JPEG_QUALITY);
+        const sheet = state.savedSheets.find(s => s.id === sheetId);
+        if (!sheet) return;
+        sheet.photo_blob = blob;
+        sheet.photo_captured_at = nowIso();
+        await idb.updateSavedSheet(sheet);
+        toast('Photo attached', 'success');
+        await renderSheetDetailScreen(sheetId);
+    } catch (e) {
+        toast('Photo failed: ' + e.message, 'error');
+    }
+}
+
+async function shareSheetCsvOnly() {
+    const sheet = state.savedSheets.find(s => s.id === state.currentSheetDetailId);
+    if (!sheet) return;
+    const csv = buildCsvForSheets([sheet]);
+    const filename = 'audit-sheet-' + sheet.sheet_number + '.csv';
+    try {
+        const file = new File([csv], filename, { type: 'text/csv' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Sheet ' + sheet.sheet_number + ' CSV' });
+            return;
+        }
+    } catch (e) {
+        if (e && e.name === 'AbortError') return;
+    }
+    downloadTextFile(csv, filename);
+}
+
+async function shareSheetPhotoOnly() {
+    const sheet = state.savedSheets.find(s => s.id === state.currentSheetDetailId);
+    if (!sheet) return;
+    if (!sheet.photo_blob) {
+        toast('No photo attached to this sheet', 'warn');
+        return;
+    }
+    const filename = 'audit-sheet-' + sheet.sheet_number + '-photo.jpg';
+    try {
+        const file = new File([sheet.photo_blob], filename, { type: 'image/jpeg' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Sheet ' + sheet.sheet_number + ' photo' });
+            return;
+        }
+    } catch (e) {
+        if (e && e.name === 'AbortError') return;
+    }
+    // Fallback: download
+    const url = URL.createObjectURL(sheet.photo_blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+async function shareSheetCsvAndPhoto() {
+    const sheet = state.savedSheets.find(s => s.id === state.currentSheetDetailId);
+    if (!sheet) return;
+    const csv = buildCsvForSheets([sheet]);
+    const csvFilename = 'audit-sheet-' + sheet.sheet_number + '.csv';
+    const photoFilename = 'audit-sheet-' + sheet.sheet_number + '-photo.jpg';
+    const files = [new File([csv], csvFilename, { type: 'text/csv' })];
+    if (sheet.photo_blob) {
+        files.push(new File([sheet.photo_blob], photoFilename, { type: 'image/jpeg' }));
+    }
+    try {
+        if (navigator.canShare && navigator.canShare({ files: files })) {
+            await navigator.share({ files: files, title: 'Sheet ' + sheet.sheet_number });
+            return;
+        }
+        // If mixed-type share isn't allowed, try CSV then photo separately
+        if (sheet.photo_blob && navigator.canShare) {
+            toast('Sharing CSV first, then photo…', 'info');
+            await navigator.share({ files: [files[0]], title: 'Sheet ' + sheet.sheet_number + ' CSV' });
+            setTimeout(async function () {
+                try {
+                    await navigator.share({ files: [files[1]], title: 'Sheet ' + sheet.sheet_number + ' photo' });
+                } catch (e) { /* ignore abort */ }
+            }, 500);
+            return;
+        }
+    } catch (e) {
+        if (e && e.name === 'AbortError') return;
+    }
+    // Fallback: download both separately
+    downloadTextFile(csv, csvFilename);
+    if (sheet.photo_blob) {
+        const url = URL.createObjectURL(sheet.photo_blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = photoFilename;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    }
+}
+
+// ============================================
+// Sessions screen
+// ============================================
+async function renderSessionsScreen() {
+    const sessions = await idb.getAllSessions();
+    const allScans = await idb.getAllCurrentScans();
+    const allSheets = await idb.getAllSavedSheets();
+    const list = document.getElementById('sessions-list');
+
+    if (sessions.length === 0) {
+        list.innerHTML = '<div class="empty-saved">No sessions yet. Tap "➕ New Session" below to create one.</div>';
+        return;
+    }
+
+    list.innerHTML = sessions.map(function (session) {
+        const sessionSheets = allSheets.filter(sh => sh.session_id === session.id);
+        const sessionScans = allScans.filter(sc => sc.session_id === session.id);
+        const totalRows = sessionSheets.reduce((sum, sh) => sum + (sh.scans ? sh.scans.length : 0), 0) + sessionScans.length;
+        const isActive = session.id === state.activeSessionId;
+        const dateStr = session.created_at ? new Date(session.created_at).toLocaleDateString() : '';
+
+        const actions = isActive
+            ? '<div class="active-indicator">● Active</div>' +
+              '<button type="button" data-action="rename" data-session-id="' + session.id + '">Rename</button>'
+            : '<button type="button" class="btn-open" data-action="open" data-session-id="' + session.id + '">Open</button>' +
+              '<button type="button" data-action="rename" data-session-id="' + session.id + '">Rename</button>' +
+              '<button type="button" class="btn-delete-sess" data-action="delete" data-session-id="' + session.id + '">Delete</button>';
+
+        return '<div class="session-card ' + (isActive ? 'active' : '') + '">' +
+            '<div class="session-title">' + escapeHtml(session.name || '(unnamed)') + '</div>' +
+            '<div class="session-stats">' + sessionSheets.length + ' sheets · ' + totalRows + ' rows · ' + escapeHtml(dateStr) + '</div>' +
+            '<div class="session-actions">' + actions + '</div>' +
+        '</div>';
+    }).join('');
+
+    // Wire action buttons
+    list.querySelectorAll('button[data-action]').forEach(function (btn) {
+        btn.addEventListener('click', async function (e) {
+            e.stopPropagation();
+            const action = btn.getAttribute('data-action');
+            const sessionId = parseInt(btn.getAttribute('data-session-id'), 10);
+            if (action === 'open') await switchToSession(sessionId);
+            else if (action === 'rename') await renameSessionPrompt(sessionId);
+            else if (action === 'delete') await deleteSessionPrompt(sessionId);
+        });
+    });
+}
+
+async function switchToSession(sessionId) {
+    const session = await idb.getSession(sessionId);
+    if (!session) { toast('Session not found', 'error'); return; }
+    state.activeSessionId = session.id;
+    state.activeSession = session;
+    state.settings = session;
+    state.currentWattage = (session.default_wattages && session.default_wattages[0]) || 690;
+    await idb.setAppState({ active_session_id: sessionId });
+    await reloadCurrentScansAndSheets();
+    renderMainScreen();
+    showScreen('screen-main');
+    toast('Switched to "' + (session.name || 'session') + '"', 'success');
+}
+
+async function renameSessionPrompt(sessionId) {
+    const session = await idb.getSession(sessionId);
+    if (!session) return;
+    const current = session.name || '';
+    const newName = prompt('Rename session:', current);
+    if (!newName || newName.trim() === current) return;
+    session.name = newName.trim();
+    await idb.updateSession(session);
+    if (sessionId === state.activeSessionId) {
+        state.activeSession = session;
+        state.settings = session;
+        renderMainScreen();
+    }
+    await renderSessionsScreen();
+    toast('Renamed', 'success');
+}
+
+async function deleteSessionPrompt(sessionId) {
+    const session = await idb.getSession(sessionId);
+    if (!session) return;
+    if (!confirm('Delete session "' + session.name + '" including ALL its scans and photos? This cannot be undone.')) return;
+    if (!confirm('Really delete? Last chance.')) return;
+
+    await idb.deleteSession(sessionId);
+
+    if (sessionId === state.activeSessionId) {
+        // Was the active session — pick another or go back to setup
+        const remaining = await idb.getAllSessions();
+        if (remaining.length > 0) {
+            await switchToSession(remaining[0].id);
+        } else {
+            state.activeSessionId = null;
+            state.activeSession = null;
+            state.settings = null;
+            state.currentScans = [];
+            state.savedSheets = [];
+            await idb.setAppState({ active_session_id: null });
+            await loadSettingsIntoForm(true);
+            updateInstallStatus();
+            showScreen('screen-setup');
+        }
+    } else {
+        await renderSessionsScreen();
+    }
+    toast('Session deleted', 'success');
+}
+
+async function startNewSessionFlow() {
+    state.createNewSessionFlow = true;
+    await loadSettingsIntoForm(true);
+    updateInstallStatus();
+    showScreen('screen-setup');
+}
+
+// ============================================
+// Event wiring + init
+// ============================================
+function wireSetupScreen() {
+    const startBtn = document.getElementById('btn-start-session');
+    const manualBtn = document.getElementById('btn-manual-confirm-install');
+    startBtn.addEventListener('click', startSession);
+    manualBtn.addEventListener('click', function () {
+        state.manualInstallOverride = true;
+        updateInstallStatus();
+    });
+    // Re-check standalone status when visibility changes (user might install mid-flow)
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) updateInstallStatus();
+    });
+    window.addEventListener('appinstalled', updateInstallStatus);
+}
+
+function wireMainScreen() {
+    document.getElementById('btn-scan').addEventListener('click', startScanner);
+    document.getElementById('btn-manual').addEventListener('click', openManualModal);
+    document.getElementById('btn-open-menu').addEventListener('click', async function () {
+        await renderSavedScreen();
+        showScreen('screen-saved');
+    });
+}
+
+function wireCameraOverlay() {
+    document.getElementById('cam-close').addEventListener('click', stopScanner);
+    document.getElementById('cam-manual-btn').addEventListener('click', function () {
+        stopScanner();
+        setTimeout(openManualModal, 300);
+    });
+}
+
+function wireManualModal() {
+    document.getElementById('manual-close').addEventListener('click', function () {
+        document.getElementById('modal-manual').hidden = true;
+    });
+    document.getElementById('manual-cancel').addEventListener('click', function () {
+        document.getElementById('modal-manual').hidden = true;
+    });
+    document.getElementById('manual-save').addEventListener('click', saveManualEntry);
+    document.getElementById('manual-qty-plus').addEventListener('click', function () {
+        const el = document.getElementById('manual-qty');
+        el.value = (parseInt(el.value, 10) || 0) + 1;
+    });
+    document.getElementById('manual-qty-minus').addEventListener('click', function () {
+        const el = document.getElementById('manual-qty');
+        el.value = Math.max(0, (parseInt(el.value, 10) || 0) - 1);
+    });
+}
+
+function wireSheetCompleteModal() {
+    document.getElementById('sc-take-photo').addEventListener('click', function () {
+        document.getElementById('modal-sheet-complete').hidden = true;
+        document.getElementById('sheet-photo-input').click();
+    });
+    document.getElementById('sc-skip').addEventListener('click', async function () {
+        document.getElementById('modal-sheet-complete').hidden = true;
+        await commitCurrentSheet(null);
+        toast('Sheet saved (no photo)', 'success');
+    });
+    document.getElementById('sheet-photo-input').addEventListener('change', function (e) {
+        const file = e.target.files && e.target.files[0];
+        if (file) handleSheetPhotoSelected(file);
+        e.target.value = '';
+    });
+}
+
+function wireDuplicateModal() {
+    document.getElementById('dup-close').addEventListener('click', function () { resolveDupe('skip'); });
+    document.getElementById('dup-skip').addEventListener('click', function () { resolveDupe('skip'); });
+    document.getElementById('dup-add').addEventListener('click', function () { resolveDupe('add'); });
+}
+
+function wireSheetDetailScreen() {
+    document.getElementById('sd-back').addEventListener('click', async function () {
+        if (_sdPhotoUrl) { try { URL.revokeObjectURL(_sdPhotoUrl); } catch (e) {} _sdPhotoUrl = null; }
+        await renderSavedScreen();
+        showScreen('screen-saved');
+    });
+    document.getElementById('sd-share-both').addEventListener('click', shareSheetCsvAndPhoto);
+    document.getElementById('sd-share-photo').addEventListener('click', shareSheetPhotoOnly);
+    document.getElementById('sd-share-csv').addEventListener('click', shareSheetCsvOnly);
+    document.getElementById('sd-photo-input').addEventListener('change', function (e) {
+        const file = e.target.files && e.target.files[0];
+        if (file) handleAddPhotoToExistingSheet(file);
+        e.target.value = '';
+    });
+}
+
+function wireSessionsScreen() {
+    document.getElementById('btn-new-session').addEventListener('click', startNewSessionFlow);
+    document.getElementById('btn-back-from-sessions').addEventListener('click', async function () {
+        if (state.activeSessionId) {
+            await reloadCurrentScansAndSheets();
+            renderMainScreen();
+            showScreen('screen-main');
+        } else {
+            showScreen('screen-setup');
+        }
+    });
+}
+
+function wireSavedScreen() {
+    document.getElementById('btn-back-to-capture').addEventListener('click', function () {
+        showScreen('screen-main');
+        renderMainScreen();
+    });
+    document.getElementById('btn-export-all').addEventListener('click', exportAllCsv);
+    document.getElementById('btn-copy-all').addEventListener('click', copyAllCsvToClipboard);
+    document.getElementById('btn-force-refresh').addEventListener('click', forceRefresh);
+    document.getElementById('btn-clear-session').addEventListener('click', clearEntireSession);
+    document.getElementById('btn-sessions').addEventListener('click', async function () {
+        await renderSessionsScreen();
+        showScreen('screen-sessions');
+    });
+}
+
+async function init() {
+    document.getElementById('app-version').textContent = BUILD_ID;
+
+    wireSetupScreen();
+    wireMainScreen();
+    wireCameraOverlay();
+    wireManualModal();
+    wireSheetCompleteModal();
+    wireDuplicateModal();
+    wireSavedScreen();
+    wireSheetDetailScreen();
+    wireSessionsScreen();
+
+    // Open DB and run v1→v2 migration if needed
+    await openDB();
+    await migrateV1ToV2IfNeeded();
+
+    updateInstallStatus();
+    requestPersistentStorage();
+    registerServiceWorker();
+
+    // Look up the active session from app_state
+    const appState = await idb.getAppState();
+    if (appState && appState.active_session_id) {
+        const session = await idb.getSession(appState.active_session_id);
+        if (session) {
+            state.activeSessionId = session.id;
+            state.activeSession = session;
+            state.settings = session;
+            state.currentWattage = (session.default_wattages && session.default_wattages[0]) || 690;
+            await reloadCurrentScansAndSheets();
+            renderMainScreen();
+            showScreen('screen-main');
+            return;
+        }
+        // Stale pointer — clean up
+        await idb.setAppState({ active_session_id: null });
+    }
+    // No active session — show setup screen
+    await loadSettingsIntoForm();
+}
+
+// Boot when DOM ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
+
+})();
+</script>
+</body>
+</html>

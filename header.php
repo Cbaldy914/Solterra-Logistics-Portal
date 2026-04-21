@@ -253,6 +253,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="add_warehouse" role="menuitem">Add Warehouse</a>
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="warehouse_audit_sessions" role="menuitem">Warehouse Audits</a>
               <a href="admin_warehouse_estimate" role="menuitem">Admin Warehouse Quote</a>
             </div>
           </li>
@@ -346,6 +347,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="add_warehouse" role="menuitem">Add Warehouse</a>
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="warehouse_audit_sessions" role="menuitem">Warehouse Audits</a>
               <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
               <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
               <a href="admin_warehouse_estimate" role="menuitem">Warehouse Quotes</a>
@@ -439,6 +441,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="add_warehouse" role="menuitem">Add Warehouse</a>
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="warehouse_audit_sessions" role="menuitem">Warehouse Audits</a>
               <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
               <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
               <a href="warehouse_estimate" role="menuitem">Warehouse Quotes</a>
