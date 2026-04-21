@@ -934,41 +934,14 @@ $conn->close();
         }
         
         .legend-marker {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             margin-right: 10px;
+            line-height: 0;
+            flex-shrink: 0;
         }
-        
-        .manufacturer-marker { background-color: #3498db; }
-        .warehouse-marker {
-            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            font-size: 11px;
-            font-weight: 700;
-        }
-        .port-marker {
-            background: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            font-size: 12px;
-            font-weight: 700;
-        }
-        .project-marker { background-color: #27ae60; }
-        .container-marker {
-            background: linear-gradient(135deg, #1d4ed8 0%, #0ea5e9 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            font-size: 12px;
-            font-weight: 700;
-        }
+        .legend-marker svg { display: block; }
         
         .movement-summary {
             background-color: #f9f9f9;
@@ -1027,6 +1000,7 @@ $conn->close();
 
         /* --- Flow Cards --- */
         .status-flow-card {
+            position: relative;
             border-radius: 12px;
             border: 2px solid transparent;
             background: #fff;
@@ -1037,18 +1011,28 @@ $conn->close();
             transition: transform 0.2s ease, box-shadow 0.2s ease;
             cursor: pointer;
         }
+        .status-flow-icon {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            line-height: 0;
+            pointer-events: none;
+            filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.18));
+        }
+        .status-flow-icon svg { display: block; }
         .status-flow-card:hover {
             box-shadow: 0 8px 18px rgba(15,23,42,0.14);
         }
         .flow-card-wide {
             min-width: 190px;
-            min-height: 110px;
-            padding: 14px 16px;
+            min-height: 120px;
+            /* Extra top padding reserves space for the corner badge so text never sits under it. */
+            padding: 36px 16px 14px 16px;
         }
         .flow-card-compact {
             min-width: 150px;
             max-width: 210px;
-            padding: 8px 12px;
+            padding: 32px 12px 10px 12px;
         }
         .flow-card-compact .status-flow-title {
             font-size: 0.82em;
@@ -1248,29 +1232,82 @@ $conn->close();
         </div>
 
         <?php if (!empty($movement_data)): ?>
+            <?php
+            // Unified marker set shared by map pins, legend, and flow cards.
+            $flowIconColors = [
+                'manufacturer' => '#3498db',
+                'warehouse'    => '#f39c12',
+                'port'         => '#0f766e',
+                'project'      => '#27ae60',
+                'container'    => '#1d4ed8',
+            ];
+            $flowIconGlyphs = [
+                // viewBox 0 0 40 40. White strokes inside a filled circle centered at (20,20).
+                'manufacturer' =>
+                    '<path d="M10 30h20V17l-6 3v-3l-6 3v-8h-4l-4 3v15z" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>' .
+                    '<path d="M16 25.5v3.5M21 25.5v3.5M26 25.5v3.5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+                'warehouse' =>
+                    '<path d="M10 30V20l10-7 10 7v10" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>' .
+                    '<path d="M14 30v-7h12v7" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>' .
+                    '<path d="M14 25.5h12" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+                'project' =>
+                    '<path d="M12 26l2-10h12l2 10z" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/>' .
+                    '<path d="M14 21h12" stroke="#fff" stroke-width="1.4"/>' .
+                    '<path d="M20 16v10" stroke="#fff" stroke-width="1.4"/>' .
+                    '<path d="M20 26v4M17 30h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+                'port' =>
+                    '<circle cx="20" cy="13" r="2.2" fill="none" stroke="#fff" stroke-width="1.9"/>' .
+                    '<path d="M20 15.5v14" stroke="#fff" stroke-width="2" stroke-linecap="round"/>' .
+                    '<path d="M16 19h8" stroke="#fff" stroke-width="2" stroke-linecap="round"/>' .
+                    '<path d="M12 23a8 8 0 0 0 16 0" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+                'container' =>
+                    '<path d="M8 18h24v8H8z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>' .
+                    '<path d="M12 18v8M16 18v8M20 18v8M24 18v8M28 18v8" stroke="#fff" stroke-width="1.2"/>' .
+                    '<path d="M6 28a5 4 0 0 0 28 0" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+            ];
+            $flowMarkerSvg = function (string $type, int $size = 40, bool $withShadow = false) use ($flowIconColors, $flowIconGlyphs): string {
+                $color = $flowIconColors[$type] ?? '#888';
+                $glyph = $flowIconGlyphs[$type] ?? '';
+                $defs = '';
+                $filterAttr = '';
+                if ($withShadow) {
+                    $fid = 'flow-shadow-' . $type;
+                    $defs = '<defs><filter id="' . $fid . '" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/></filter></defs>';
+                    $filterAttr = ' filter="url(#' . $fid . ')"';
+                }
+                return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="' . $size . '" height="' . $size . '">'
+                     . $defs
+                     . '<circle cx="20" cy="20" r="18" fill="' . $color . '" stroke="#FFFFFF" stroke-width="3"' . $filterAttr . '/>'
+                     . $glyph
+                     . '</svg>';
+            };
+            $flowIconSvg = function (string $type, int $size = 22) use ($flowMarkerSvg): string {
+                return $flowMarkerSvg($type, $size, false);
+            };
+            ?>
             <!-- Map Legend and Status Breakdown Container -->
             <div style="display: flex; gap: 20px; margin-bottom: 20px;">
                 <!-- Map Legend -->
                 <div class="map-legend" style="flex: 1; margin-bottom: 0;">
                     <h3>Map Legend</h3>
                     <div class="legend-item">
-                        <div class="legend-marker manufacturer-marker"></div>
+                        <div class="legend-marker"><?php echo $flowIconSvg('manufacturer', 24); ?></div>
                         <span>Manufacturer (Starting Point)</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-marker warehouse-marker">🏢</div>
+                        <div class="legend-marker"><?php echo $flowIconSvg('warehouse', 24); ?></div>
                         <span>Warehouse (Intermediate Stop)</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-marker port-marker">⚓</div>
+                        <div class="legend-marker"><?php echo $flowIconSvg('port', 24); ?></div>
                         <span>Destination Port</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-marker project-marker"></div>
+                        <div class="legend-marker"><?php echo $flowIconSvg('project', 24); ?></div>
                         <span>Project Site (Final Destination)</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-marker container-marker">⛴</div>
+                        <div class="legend-marker"><?php echo $flowIconSvg('container', 24); ?></div>
                         <span>
                             On Water Container
                             <a href="container_tracking.php<?php echo $selected_project_id ? '?project_id=' . (int)$selected_project_id : ''; ?>" style="color:#2563eb; text-decoration:none; font-weight:600; margin-left:6px;">View Container ETA Tracker</a>
@@ -1452,6 +1489,10 @@ $conn->close();
                     $dag_edges = [];
                     $on_water_by_port = []; // port node key => on-water pallet count
 
+                    // Icon helpers ($flowMarkerSvg, $flowIconSvg) are defined earlier so the map
+                    // legend above can render the same marker set. They are available here via
+                    // PHP's file-level scope — no redefinition needed.
+
                     $registerNode = function(string $key, string $type, string $label, ?int $id = null) use (&$dag_nodes) {
                         if (!isset($dag_nodes[$key])) {
                             $dag_nodes[$key] = [
@@ -1570,32 +1611,66 @@ $conn->close();
                         }
                     }
 
-                    // ── Assign columns ──
-                    $mfgNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'manufacturer');
-                    $portNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'port');
-                    $whNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'warehouse');
-                    $projNodes = array_filter($dag_nodes, fn($n) => $n['type'] === 'project');
+                    // ── Assign columns via topological layering ──
+                    // Each node's column = longest path length from any root, so a linear chain
+                    // like Kinston → Erwin → Project spreads across columns 0/1/2 (rendered with
+                    // arrows) instead of stacking type-mates in one column. Parallel destinations
+                    // that share a source still stack correctly in the same column.
+                    $incomingByNode = [];
+                    foreach ($dag_edges as $edge) {
+                        $incomingByNode[$edge['to']][] = $edge['from'];
+                    }
 
-                    $dag_columns = [];
-                    $colIdx = 0;
-                    if (!empty($mfgNodes)) {
-                        $dag_columns[$colIdx] = array_keys($mfgNodes);
-                        foreach ($mfgNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
-                        $colIdx++;
+                    $columnMemo = [];
+                    $computeColumn = function ($nodeKey) use (&$computeColumn, &$incomingByNode, &$columnMemo) {
+                        if (array_key_exists($nodeKey, $columnMemo)) {
+                            return $columnMemo[$nodeKey];
+                        }
+                        // Temporary sentinel to break any cycles defensively.
+                        $columnMemo[$nodeKey] = 0;
+                        $sources = $incomingByNode[$nodeKey] ?? [];
+                        if (empty($sources)) {
+                            return $columnMemo[$nodeKey] = 0;
+                        }
+                        $max = 0;
+                        foreach ($sources as $src) {
+                            $max = max($max, $computeColumn($src) + 1);
+                        }
+                        return $columnMemo[$nodeKey] = $max;
+                    };
+                    foreach ($dag_nodes as $k => $_) {
+                        $computeColumn($k);
                     }
-                    if (!empty($portNodes)) {
-                        $dag_columns[$colIdx] = array_keys($portNodes);
-                        foreach ($portNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
-                        $colIdx++;
+
+                    // Pin projects to the final column so an isolated project (no edges yet)
+                    // still renders as the terminal stop.
+                    $maxNonProjectCol = 0;
+                    foreach ($dag_nodes as $k => $n) {
+                        if ($n['type'] !== 'project' && $columnMemo[$k] > $maxNonProjectCol) {
+                            $maxNonProjectCol = $columnMemo[$k];
+                        }
                     }
-                    if (!empty($whNodes)) {
-                        $dag_columns[$colIdx] = array_keys($whNodes);
-                        foreach ($whNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
-                        $colIdx++;
+                    $hasNonProject = false;
+                    foreach ($dag_nodes as $n) {
+                        if ($n['type'] !== 'project') { $hasNonProject = true; break; }
                     }
-                    if (!empty($projNodes)) {
-                        $dag_columns[$colIdx] = array_keys($projNodes);
-                        foreach ($projNodes as $k => $_) { $dag_nodes[$k]['column'] = $colIdx; }
+                    foreach ($dag_nodes as $k => $n) {
+                        if ($n['type'] === 'project' && $hasNonProject) {
+                            $columnMemo[$k] = $maxNonProjectCol + 1;
+                        }
+                    }
+
+                    // Bucket nodes by column and reindex so keys are sequential 0,1,2...
+                    $dag_columns_raw = [];
+                    foreach ($dag_nodes as $k => $n) {
+                        $dag_columns_raw[$columnMemo[$k]][] = $k;
+                    }
+                    ksort($dag_columns_raw);
+                    $dag_columns = array_values($dag_columns_raw);
+                    foreach ($dag_columns as $newIdx => $nodeKeys) {
+                        foreach ($nodeKeys as $k) {
+                            $dag_nodes[$k]['column'] = $newIdx;
+                        }
                     }
                     ?>
 
@@ -1612,6 +1687,7 @@ $conn->close();
                                 ?>
                                     <div class="status-flow-card <?php echo $cardClass; ?>"
                                          onclick="showNodeDetail('<?php echo htmlspecialchars($nk); ?>')">
+                                        <span class="status-flow-icon" aria-hidden="true"><?php echo $flowIconSvg($node['type']); ?></span>
                                         <div class="status-flow-title"><?php echo htmlspecialchars($node['label']); ?></div>
                                         <div class="status-flow-pallets"><?php echo number_format($node['pallets']); ?> pallets</div>
                                         <?php if ($isSolo): ?>
@@ -1680,6 +1756,18 @@ const dagNodes = <?php echo json_encode($dag_nodes ?? []); ?>;
 const dagColumns = <?php echo json_encode($dag_columns ?? []); ?>;
 const onWaterContainers = <?php echo json_encode($on_water_containers ?? []); ?>;
 const selectedProjectId = <?php echo json_encode($selected_project_id); ?>;
+
+// Pre-rendered SVG markers built by the same PHP helper that powers the map
+// legend and status breakdown, so every surface reads as the same icon set.
+const FLOW_MARKER_SVGS = <?php
+    $mapMarkerSvgs = [];
+    if (isset($flowMarkerSvg) && is_callable($flowMarkerSvg)) {
+        foreach (['manufacturer', 'warehouse', 'port', 'project'] as $t) {
+            $mapMarkerSvgs[$t] = $flowMarkerSvg($t, 40, true);
+        }
+    }
+    echo json_encode($mapMarkerSvgs);
+?>;
 
 let map;
 let directionsService;
@@ -2228,79 +2316,13 @@ async function createOnWaterContainerMarkers(geocoder, bounds) {
 function createMarker(location) {
     if (!location.position) return;
 
-    let icon;
-    const iconSize = 40; // Larger, more prominent bubble-style markers
-    
-    switch (location.type) {
-        case 'manufacturer':
-            icon = {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
-                    '<defs>' +
-                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
-                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
-                    '</filter>' +
-                    '</defs>' +
-                    '<circle cx="20" cy="20" r="18" fill="#3498db" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
-                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">M</text>' +
-                    '</svg>'
-                ),
-                scaledSize: new google.maps.Size(iconSize, iconSize),
-                anchor: new google.maps.Point(iconSize/2, iconSize/2)
-            };
-            break;
-        case 'warehouse':
-            icon = {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
-                    '<defs>' +
-                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
-                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
-                    '</filter>' +
-                    '</defs>' +
-                    '<circle cx="20" cy="20" r="18" fill="#f39c12" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
-                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">🏢</text>' +
-                    '</svg>'
-                ),
-                scaledSize: new google.maps.Size(iconSize, iconSize),
-                anchor: new google.maps.Point(iconSize/2, iconSize/2)
-            };
-            break;
-        case 'port':
-            icon = {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
-                    '<defs>' +
-                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
-                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
-                    '</filter>' +
-                    '</defs>' +
-                    '<circle cx="20" cy="20" r="18" fill="#0f766e" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
-                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">⚓</text>' +
-                    '</svg>'
-                ),
-                scaledSize: new google.maps.Size(iconSize, iconSize),
-                anchor: new google.maps.Point(iconSize/2, iconSize/2)
-            };
-            break;
-        case 'project':
-            icon = {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
-                    '<defs>' +
-                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
-                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
-                    '</filter>' +
-                    '</defs>' +
-                    '<circle cx="20" cy="20" r="18" fill="#27ae60" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
-                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">P</text>' +
-                    '</svg>'
-                ),
-                scaledSize: new google.maps.Size(iconSize, iconSize),
-                anchor: new google.maps.Point(iconSize/2, iconSize/2)
-            };
-            break;
-    }
+    const iconSize = 40;
+    const markerSvg = FLOW_MARKER_SVGS && FLOW_MARKER_SVGS[location.type];
+    const icon = markerSvg ? {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(markerSvg),
+        scaledSize: new google.maps.Size(iconSize, iconSize),
+        anchor: new google.maps.Point(iconSize / 2, iconSize / 2)
+    } : undefined;
 
     const marker = new google.maps.Marker({
         position: location.position,
