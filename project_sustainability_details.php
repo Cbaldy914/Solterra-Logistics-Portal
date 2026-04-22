@@ -66,9 +66,7 @@ $project_totals = [
     'mws' => 0.0,
     'truckloads' => 0
 ];
-$project_chart_deliveries = [];
-
-$project_delivery_sql = "SELECT status_of_delivery, supplier, quantity, wattage, miles FROM deliveries WHERE project_id = ?";
+$project_delivery_sql = "SELECT status_of_delivery, quantity, wattage, miles FROM deliveries WHERE project_id = ?";
 $stmt_project = $conn->prepare($project_delivery_sql);
 if ($stmt_project) {
     $stmt_project->bind_param('i', $project_id);
@@ -92,14 +90,6 @@ if ($stmt_project) {
         $project_totals['fuel'] += $fuel_consumption;
         $project_totals['emissions'] += $emissions;
         $project_totals['mws'] += $mws_delivered;
-
-        $project_chart_deliveries[] = [
-            'status' => $row['status_of_delivery'] ?? 'Unknown',
-            'supplier' => $row['supplier'] ?? 'Unknown',
-            'emissions' => $emissions,
-            'miles' => $miles_driven,
-            'fuel' => $fuel_consumption
-        ];
     }
     $stmt_project->close();
 }
@@ -339,7 +329,6 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             background: #f8f9fa;
@@ -595,47 +584,6 @@ $conn->close();
 
         .stat-item-truckloads .stat-number {
             color: #7c3aed;
-        }
-
-        /* Charts Section */
-        .charts-section {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            margin-bottom: 32px;
-        }
-
-        .chart-card {
-            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-            border-radius: 20px;
-            padding: 24px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-            border: 1px solid rgba(72, 140, 154, 0.08);
-        }
-
-        .chart-card h3 {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: #293E4C;
-            margin: 0 0 20px 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .chart-card h3 i {
-            color: #488C9A;
-        }
-
-        .chart-container {
-            position: relative;
-            height: 250px;
-        }
-
-        @media (max-width: 992px) {
-            .charts-section {
-                grid-template-columns: 1fr;
-            }
         }
 
         .stat-number {
@@ -1454,24 +1402,6 @@ $conn->close();
         </div>
     </div>
 
-    <!-- Charts Section -->
-    <?php if (!empty($project_chart_deliveries)): ?>
-    <div class="charts-section">
-        <div class="chart-card">
-            <h3><i class="fas fa-chart-pie"></i> Emissions by Status</h3>
-            <div class="chart-container">
-                <canvas id="statusPieChart"></canvas>
-            </div>
-        </div>
-        <div class="chart-card">
-            <h3><i class="fas fa-chart-bar"></i> Miles by Manufacturer</h3>
-            <div class="chart-container">
-                <canvas id="manufacturerBarChart"></canvas>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
-
     <!-- Filter Section -->
     <div class="filter-section">
         <form id="filterForm" method="get">
@@ -1891,128 +1821,6 @@ $conn->close();
         if (fuelEl) fuelEl.textContent = `${formatValue(fuel)} gal`;
         if (mwEl) mwEl.textContent = `${formatValue(mws)} MW`;
     }
-
-    // Initialize sustainability charts
-    function initSustainabilityCharts() {
-        const deliveryData = <?php echo json_encode($project_chart_deliveries); ?>;
-
-        if (!deliveryData || deliveryData.length === 0) return;
-
-        // Aggregate by status
-        const statusData = {};
-        deliveryData.forEach(d => {
-            const status = d.status || 'Unknown';
-            if (!statusData[status]) statusData[status] = 0;
-            statusData[status] += d.emissions;
-        });
-
-        // Aggregate by manufacturer
-        const mfrData = {};
-        deliveryData.forEach(d => {
-            const mfr = d.supplier || 'Unknown';
-            if (!mfrData[mfr]) mfrData[mfr] = { miles: 0, emissions: 0 };
-            mfrData[mfr].miles += d.miles;
-            mfrData[mfr].emissions += d.emissions;
-        });
-
-        const colors = [
-            '#488C9A', '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b',
-            '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
-        ];
-
-        // Status Pie Chart
-        const statusLabels = Object.keys(statusData);
-        const statusValues = Object.values(statusData);
-        const statusCtx = document.getElementById('statusPieChart');
-        if (statusCtx && statusLabels.length > 0) {
-            new Chart(statusCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: statusLabels,
-                    datasets: [{
-                        data: statusValues,
-                        backgroundColor: colors.slice(0, statusLabels.length),
-                        borderWidth: 0
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'right',
-                            labels: {
-                                padding: 12,
-                                usePointStyle: true,
-                                font: { size: 11 }
-                            }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    const value = context.raw;
-                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                    const pct = ((value / total) * 100).toFixed(1);
-                                    return `${context.label}: ${value.toFixed(1)} kg (${pct}%)`;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        // Manufacturer Bar Chart
-        const mfrLabels = Object.keys(mfrData);
-        const mfrMiles = mfrLabels.map(m => mfrData[m].miles);
-        const mfrCtx = document.getElementById('manufacturerBarChart');
-        if (mfrCtx && mfrLabels.length > 0) {
-            new Chart(mfrCtx, {
-                type: 'bar',
-                data: {
-                    labels: mfrLabels,
-                    datasets: [{
-                        label: 'Miles Driven',
-                        data: mfrMiles,
-                        backgroundColor: colors.slice(0, mfrLabels.length),
-                        borderRadius: 6
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: false
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return `${context.raw.toLocaleString()} miles`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: {
-                                callback: function(value) {
-                                    return value.toLocaleString() + ' mi';
-                                }
-                            }
-                        },
-                        x: {
-                            grid: { display: false }
-                        }
-                    }
-                }
-            });
-        }
-    }
-
-    // Call init on page load
-    document.addEventListener('DOMContentLoaded', initSustainabilityCharts);
     </script>
 </main>
 </body>
