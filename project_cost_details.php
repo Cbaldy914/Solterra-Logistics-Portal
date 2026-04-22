@@ -2615,18 +2615,113 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         }
 
         .summary-layout {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            align-items: start;
-            margin-bottom: 20px;
-        }
-
-        .summary-column {
             display: flex;
             flex-direction: column;
             gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        /* Hero Cost Breakdown card */
+        .cost-summary-hero {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 26px 32px 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .cost-summary-hero-header {
+            margin-bottom: 18px;
+        }
+
+        .cost-summary-hero-header h3 {
+            font-size: 1.25em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .cost-summary-hero-header h3 i {
+            color: #488C9A;
+        }
+
+        .cost-summary-hero-body {
+            display: grid;
+            grid-template-columns: minmax(240px, 340px) 1fr;
+            gap: 40px;
+            align-items: center;
+        }
+
+        .cost-summary-hero-chart {
+            position: relative;
+            height: 260px;
+        }
+
+        .cost-breakdown-list {
+            display: flex;
+            flex-direction: column;
             min-width: 0;
+        }
+
+        .breakdown-row {
+            display: grid;
+            grid-template-columns: 14px 1fr auto;
+            gap: 14px;
+            align-items: center;
+            padding: 12px 2px;
+            border-bottom: 1px solid #edf1f3;
+        }
+
+        .breakdown-row:last-child {
+            border-bottom: none;
+        }
+
+        .breakdown-swatch {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        .breakdown-label {
+            color: #435160;
+            font-size: 0.95em;
+            min-width: 0;
+        }
+
+        .breakdown-value {
+            font-weight: 600;
+            color: #293E4C;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .breakdown-row-total {
+            margin-top: 6px;
+            padding-top: 16px;
+            border-top: 2px solid #e2e8ed;
+            border-bottom: none !important;
+        }
+
+        .breakdown-row-total .breakdown-label {
+            color: #293E4C;
+            font-weight: 600;
+            font-size: 1em;
+        }
+
+        .breakdown-row-total .breakdown-value {
+            color: #488C9A;
+            font-size: 1.15em;
+        }
+
+        /* Supplement cards grid (milestones, forecast) */
+        .summary-supplements {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+            gap: 20px;
+            align-items: start;
         }
 
         .summary-card {
@@ -2639,6 +2734,12 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         .summary-card .forecast-chart-container {
             flex: 1;
             min-height: 0;
+        }
+
+        /* Weekly projections card always takes its own row (7 columns need the width) */
+        .summary-weekly-card {
+            height: auto;
+            max-height: 520px;
         }
 
         .summary-milestones-wrap {
@@ -2745,7 +2846,14 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             .logistics-breakdown-grid {
                 grid-template-columns: 1fr;
             }
-            .summary-layout {
+            .cost-summary-hero-body {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            .cost-summary-hero-chart {
+                height: 220px;
+            }
+            .summary-supplements {
                 grid-template-columns: 1fr;
             }
             .summary-card {
@@ -3696,103 +3804,167 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         <button class="tab-btn" onclick="switchTab('pallets')">Pallet Costs</button>
     </div>
 
+    <?php
+    // Buffer the milestone component so we can skip its card entirely when there's no content
+    ob_start();
+    $section_title = 'Module Payment Milestones';
+    $collapsible = false;
+    $compact_batch_header = true;
+    include 'components/milestone_detail_table.php';
+    $milestone_detail_html = trim(ob_get_clean());
+
+    // Close DB connection before rendering the rest of the page
+    $conn->close();
+
+    $show_milestones = $milestone_detail_html !== '';
+    $show_forecast   = $has_forecast_actual_chart_data;
+    $show_weekly     = !empty($weekly_projection_preview);
+    ?>
     <div id="tab-summary" class="tab-content active">
         <div class="summary-layout">
-            <div class="summary-column summary-column-left">
-                <div class="chart-card summary-card" style="margin-top: 0;">
-                    <div class="cashflow-header">
-                        <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
-                    </div>
-                    <div class="chart-container">
+            <!-- Hero: Cost Breakdown -->
+            <div class="cost-summary-hero">
+                <div class="cost-summary-hero-header">
+                    <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
+                </div>
+                <div class="cost-summary-hero-body">
+                    <div class="cost-summary-hero-chart">
                         <canvas id="costBreakdownChart"></canvas>
                     </div>
-                </div>
-
-                <div class="summary-milestones-wrap summary-card">
-                    <?php
-                    // Include the milestone detail table component
-                    $section_title = 'Module Payment Milestones';
-                    $collapsible = false;
-                    $compact_batch_header = true;
-                    include 'components/milestone_detail_table.php';
-
-                    // Close the database connection after milestone component is done
-                    $conn->close();
-                    ?>
+                    <div class="cost-breakdown-list">
+                        <?php if ($project_has_module_cost): ?>
+                        <div class="breakdown-row">
+                            <span class="breakdown-swatch" style="background:#488C9A"></span>
+                            <span class="breakdown-label">Module Cost (Accrued)</span>
+                            <span class="breakdown-value cost-display"
+                                  data-cost="<?php echo $project_total_module_cost; ?>"
+                                  data-per-watt="<?php echo $project_module_cost_per_watt !== null ? $project_module_cost_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_module_cost, 2); ?>
+                            </span>
+                        </div>
+                        <?php endif; ?>
+                        <div class="breakdown-row">
+                            <span class="breakdown-swatch" style="background:#3b82f6"></span>
+                            <span class="breakdown-label">Freight</span>
+                            <span class="breakdown-value cost-display"
+                                  data-cost="<?php echo $project_total_freight_cost; ?>"
+                                  data-per-watt="<?php echo $project_freight_per_watt !== null ? $project_freight_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_freight_cost, 2); ?>
+                            </span>
+                        </div>
+                        <div class="breakdown-row">
+                            <span class="breakdown-swatch" style="background:#8b5cf6"></span>
+                            <span class="breakdown-label">Warehousing</span>
+                            <span class="breakdown-value cost-display"
+                                  data-cost="<?php echo $project_total_warehousing_cost; ?>"
+                                  data-per-watt="<?php echo $project_warehousing_per_watt !== null ? $project_warehousing_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_warehousing_cost, 2); ?>
+                            </span>
+                        </div>
+                        <div class="breakdown-row">
+                            <span class="breakdown-swatch" style="background:#f59e0b"></span>
+                            <span class="breakdown-label">Accessorial</span>
+                            <span class="breakdown-value cost-display"
+                                  data-cost="<?php echo $project_total_accessorial_costs; ?>"
+                                  data-per-watt="<?php echo $project_accessorial_per_watt !== null ? $project_accessorial_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_accessorial_costs, 2); ?>
+                            </span>
+                        </div>
+                        <?php if ($project_total_solterra_fee > 0): ?>
+                        <div class="breakdown-row">
+                            <span class="breakdown-swatch" style="background:#5ba3b1"></span>
+                            <span class="breakdown-label">Solterra Fee</span>
+                            <span class="breakdown-value cost-display"
+                                  data-cost="<?php echo $project_total_solterra_fee; ?>"
+                                  data-per-watt="<?php echo $project_solterra_per_watt !== null ? $project_solterra_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_solterra_fee, 2); ?>
+                            </span>
+                        </div>
+                        <?php endif; ?>
+                        <div class="breakdown-row breakdown-row-total">
+                            <span></span>
+                            <span class="breakdown-label">Total Costs</span>
+                            <span class="breakdown-value cost-display"
+                                  data-cost="<?php echo $project_total_cost; ?>"
+                                  data-per-watt="<?php echo $project_total_cost_per_watt !== null ? $project_total_cost_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_cost, 2); ?>
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="summary-column summary-column-right">
-                <div class="chart-card summary-card" style="margin-top: 0;">
+            <?php if ($show_milestones || $show_forecast): ?>
+            <div class="summary-supplements">
+                <?php if ($show_milestones): ?>
+                <div class="summary-milestones-wrap summary-card">
+                    <?php echo $milestone_detail_html; ?>
+                </div>
+                <?php endif; ?>
+
+                <?php if ($show_forecast): ?>
+                <div class="chart-card summary-card">
                     <div class="cashflow-header">
                         <h3><i class="fas fa-chart-line"></i> Forecasted vs Actual Cost</h3>
                         <a href="<?php echo htmlspecialchars($weekly_projection_view_all_url); ?>" class="view-all-link">View All</a>
                     </div>
                     <p class="chart-subtitle">Cumulative projected cost trend from planned delivery dates vs actual delivery dates.</p>
-                    <?php if ($has_forecast_actual_chart_data): ?>
                     <div class="forecast-chart-container">
                         <canvas id="forecastActualCostChart"></canvas>
                     </div>
-                    <?php else: ?>
-                    <div class="chart-empty-state">
-                        Add anticipated and/or actual delivery dates to view forecasted vs actual trend lines.
-                    </div>
-                    <?php endif; ?>
                 </div>
-
-                <div class="chart-card summary-card" style="margin-top: 0px;">
-                    <div class="cashflow-header">
-                        <h3><i class="fas fa-calendar-week"></i> Weekly Cost Projections</h3>
-                        <a href="<?php echo htmlspecialchars($weekly_projection_view_all_url); ?>" class="view-all-link">View All</a>
-                    </div>
-                    <?php if (!empty($weekly_projection_preview)): ?>
-                    <div class="weekly-table-wrapper">
-                        <table class="weekly-projections-table">
-                            <thead>
-                                <tr>
-                                    <th>Week</th>
-                                    <th>Date Range</th>
-                                    <th>Freight</th>
-                                    <th>Warehousing</th>
-                                    <th>Milestones</th>
-                                    <th>Weekly Total</th>
-                                    <th>Cumulative</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($weekly_projection_preview as $row): ?>
-                                <tr>
-                                    <td><?php echo htmlspecialchars($row['week_label']); ?></td>
-                                    <td><?php echo htmlspecialchars($row['date_range']); ?></td>
-                                    <td>$<?php echo number_format((float)$row['freight'], 2); ?></td>
-                                    <td>$<?php echo number_format((float)$row['warehousing'], 2); ?></td>
-                                    <td>$<?php echo number_format((float)$row['milestones'], 2); ?></td>
-                                    <td style="font-weight: 600;">$<?php echo number_format((float)$row['weekly_total'], 2); ?></td>
-                                    <td style="font-weight: 700; color: #488C9A;">$<?php echo number_format((float)$row['cumulative'], 2); ?></td>
-                                </tr>
-                                <?php endforeach; ?>
-                                <tr class="weekly-totals-row">
-                                    <td><strong>Total</strong></td>
-                                    <td><?php echo htmlspecialchars($weekly_projection_total_range); ?></td>
-                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['freight'], 2); ?></strong></td>
-                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['warehousing'], 2); ?></strong></td>
-                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['milestones'], 2); ?></strong></td>
-                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['weekly_total'], 2); ?></strong></td>
-                                    <td><strong>$<?php echo number_format((float)$weekly_projection_totals['weekly_total'], 2); ?></strong></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <?php if ($has_more_weekly_rows): ?>
-                    <p class="weekly-preview-note">Showing first 5 weeks. Select <strong>View All</strong> for the full weekly projection table.</p>
-                    <?php endif; ?>
-                    <?php else: ?>
-                    <div class="chart-empty-state">
-                        Add dates in project planning to generate weekly cost projections.
-                    </div>
-                    <?php endif; ?>
-                </div>
+                <?php endif; ?>
             </div>
+            <?php endif; ?>
+
+            <?php if ($show_weekly): ?>
+            <div class="chart-card summary-card summary-weekly-card">
+                <div class="cashflow-header">
+                    <h3><i class="fas fa-calendar-week"></i> Weekly Cost Projections</h3>
+                    <a href="<?php echo htmlspecialchars($weekly_projection_view_all_url); ?>" class="view-all-link">View All</a>
+                </div>
+                <div class="weekly-table-wrapper">
+                    <table class="weekly-projections-table">
+                        <thead>
+                            <tr>
+                                <th>Week</th>
+                                <th>Date Range</th>
+                                <th>Freight</th>
+                                <th>Warehousing</th>
+                                <th>Milestones</th>
+                                <th>Weekly Total</th>
+                                <th>Cumulative</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($weekly_projection_preview as $row): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($row['week_label']); ?></td>
+                                <td><?php echo htmlspecialchars($row['date_range']); ?></td>
+                                <td>$<?php echo number_format((float)$row['freight'], 2); ?></td>
+                                <td>$<?php echo number_format((float)$row['warehousing'], 2); ?></td>
+                                <td>$<?php echo number_format((float)$row['milestones'], 2); ?></td>
+                                <td style="font-weight: 600;">$<?php echo number_format((float)$row['weekly_total'], 2); ?></td>
+                                <td style="font-weight: 700; color: #488C9A;">$<?php echo number_format((float)$row['cumulative'], 2); ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                            <tr class="weekly-totals-row">
+                                <td><strong>Total</strong></td>
+                                <td><?php echo htmlspecialchars($weekly_projection_total_range); ?></td>
+                                <td><strong>$<?php echo number_format((float)$weekly_projection_totals['freight'], 2); ?></strong></td>
+                                <td><strong>$<?php echo number_format((float)$weekly_projection_totals['warehousing'], 2); ?></strong></td>
+                                <td><strong>$<?php echo number_format((float)$weekly_projection_totals['milestones'], 2); ?></strong></td>
+                                <td><strong>$<?php echo number_format((float)$weekly_projection_totals['weekly_total'], 2); ?></strong></td>
+                                <td><strong>$<?php echo number_format((float)$weekly_projection_totals['weekly_total'], 2); ?></strong></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <?php if ($has_more_weekly_rows): ?>
+                <p class="weekly-preview-note">Showing first 5 weeks. Select <strong>View All</strong> for the full weekly projection table.</p>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
         </div>
 
     <!-- Logistics Breakdown Modal -->
@@ -4707,49 +4879,62 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
 
         const breakdownCtx = document.getElementById('costBreakdownChart');
         if (breakdownCtx) {
-            const breakdownLabels = ['Module Cost (Accrued)', 'Freight', 'Warehousing', 'Accessorial'];
-            const breakdownData = [
-                chartData.module,
-                chartData.freight,
-                chartData.warehousing,
-                chartData.accessorial
-            ];
-            const breakdownColors = ['#488C9A', '#3b82f6', '#8b5cf6', '#f59e0b'];
+            const isPerWatt = mode === 'per_watt' && chartData.hasWattage;
+            const labels = [];
+            const data = [];
+            const colors = [];
+
+            const pick = (total, perWatt) => isPerWatt ? (perWatt ?? 0) : (total ?? 0);
+
+            if (chartData.hasModuleCost && (chartData.module ?? 0) > 0) {
+                labels.push('Module Cost (Accrued)');
+                data.push(pick(chartData.module, chartData.modulePerWatt));
+                colors.push('#488C9A');
+            }
+            labels.push('Freight', 'Warehousing', 'Accessorial');
+            data.push(
+                pick(chartData.freight, chartData.freightPerWatt),
+                pick(chartData.warehousing, chartData.warehousingPerWatt),
+                pick(chartData.accessorial, chartData.accessorialPerWatt)
+            );
+            colors.push('#3b82f6', '#8b5cf6', '#f59e0b');
+
+            if ((chartData.solterra ?? 0) > 0) {
+                labels.push('Solterra Fee');
+                data.push(pick(chartData.solterra, chartData.solterraPerWatt));
+                colors.push('#5ba3b1');
+            }
 
             costBreakdownChart = new Chart(breakdownCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: breakdownLabels,
+                    labels: labels,
                     datasets: [{
-                        data: breakdownData,
-                        backgroundColor: breakdownColors,
-                        borderWidth: 0
+                        data: data,
+                        backgroundColor: colors,
+                        borderWidth: 0,
+                        hoverOffset: 6
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: {
-                            position: 'right',
-                            labels: {
-                                padding: 15,
-                                usePointStyle: true
-                            }
-                        },
+                        legend: { display: false },
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
                                     const value = context.raw;
                                     const total = context.dataset.data.reduce((a, b) => a + b, 0);
                                     const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
-                                    return `${context.label}: ${formatCurrency(value)} (${pct}%)`;
+                                    const formatted = isPerWatt ? formatPerWatt(value) : formatCurrency(value);
+                                    return `${context.label}: ${formatted} (${pct}%)`;
                                 }
                             }
                         }
                     }
                 },
-                cutout: '55%'
+                cutout: '62%'
             });
         }
         renderForecastActualChart(mode);
