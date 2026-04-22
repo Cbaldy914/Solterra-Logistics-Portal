@@ -15,6 +15,7 @@ $is_global_admin = $role === 'global_admin';
 $account_id = null;
 
 require_once '../config.php';
+require_once 'cost_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -461,13 +462,36 @@ $stmt_unassigned_wattage->fetch();
 $stmt_unassigned_wattage->close();
 $total_unassigned_wattage = $total_unassigned_wattage ?: 0;
 
-// 4) Calculate total monthly storage cost
+// 4) Calculate per-warehouse running cost to date + monthly run rate
+// Uses shared cost_helpers, which handle per_pallet / per_sqft / per_truck / flat.
+$warehouse_cost_summary = []; // keyed by warehouse id
+$total_storage_cost_to_date = 0;
 $total_monthly_storage_cost = 0;
-foreach ($warehouses_with_inventory as $warehouse) {
-    $total_pallets_in_warehouse = ($warehouse['assigned_pallets_stored'] ?? 0) + ($warehouse['unassigned_pallets_stored'] ?? 0);
-    $warehouse_monthly_cost = $total_pallets_in_warehouse * ($warehouse['monthly_storage_fee'] ?? 0);
-    $total_monthly_storage_cost += $warehouse_monthly_cost;
+foreach ($all_warehouses as &$wh_row) {
+    $summary = calculate_warehouse_running_cost((int)$wh_row['id'], $conn);
+    $warehouse_cost_summary[(int)$wh_row['id']] = $summary;
+    // Attach effective values back to the warehouse row so card/table rendering can use them
+    $wh_row['monthly_rate_per_pallet'] = $summary['monthly_rate_per_pallet'];
+    $wh_row['monthly_run_rate']        = $summary['monthly_run_rate'];
+    $wh_row['total_cost_to_date']      = $summary['total'];
+    $wh_row['storage_cost_to_date']    = $summary['storage_cost'];
+    $wh_row['entry_fees_to_date']      = $summary['entry_fees'];
+    $wh_row['exit_fees_to_date']       = $summary['exit_fees'];
+    $total_storage_cost_to_date += $summary['total'];
+    $total_monthly_storage_cost += $summary['monthly_run_rate'];
 }
+unset($wh_row);
+// Mirror summary onto $warehouses_with_inventory (same warehouse ids)
+foreach ($warehouses_with_inventory as &$wh_row) {
+    $id = (int)$wh_row['id'];
+    if (isset($warehouse_cost_summary[$id])) {
+        $s = $warehouse_cost_summary[$id];
+        $wh_row['monthly_rate_per_pallet'] = $s['monthly_rate_per_pallet'];
+        $wh_row['monthly_run_rate']        = $s['monthly_run_rate'];
+        $wh_row['total_cost_to_date']      = $s['total'];
+    }
+}
+unset($wh_row);
 
 // 5) Count projects with modules in storage
 if ($is_global_admin) {
@@ -1463,21 +1487,28 @@ $conn->close();
         <div class="figure" onclick="toggleFigure(this)">
             <i class="fas fa-chevron-down figure-expand-icon"></i>
             <div class="figure-icon"><i class="fas fa-dollar-sign"></i></div>
-            <h3>Monthly Storage Cost</h3>
-            <div class="number">$<?php echo number_format($total_monthly_storage_cost, 0); ?></div>
-            <div class="label">Estimated monthly cost</div>
+            <h3>Total Storage Cost to Date</h3>
+            <div class="number">$<?php echo number_format($total_storage_cost_to_date, 0); ?></div>
+            <div class="label">Accrued across all warehouses &middot; $<?php echo number_format($total_monthly_storage_cost, 0); ?>/mo run rate</div>
             <div class="figure-details">
                 <?php foreach ($warehouses_with_inventory as $wh_cost):
-                    $wh_pallets = ($wh_cost['assigned_pallets_stored'] ?? 0) + ($wh_cost['unassigned_pallets_stored'] ?? 0);
-                    $wh_cost_val = $wh_pallets * ($wh_cost['monthly_storage_fee'] ?? 0);
-                    if ($wh_cost_val > 0):
+                    $wh_total = (float)($wh_cost['total_cost_to_date'] ?? 0);
+                    $wh_monthly = (float)($wh_cost['monthly_run_rate'] ?? 0);
+                    if ($wh_total <= 0 && $wh_monthly <= 0) continue;
                 ?>
                 <div class="detail-row">
                     <span class="detail-label"><?php echo htmlspecialchars($wh_cost['name']); ?></span>
-                    <span class="detail-value">$<?php echo number_format($wh_cost_val, 0); ?></span>
+                    <span class="detail-value">
+                        $<?php echo number_format($wh_total, 0); ?>
+                        <small style="color:#6c757d; font-weight:400;">&middot; $<?php echo number_format($wh_monthly, 0); ?>/mo</small>
+                    </span>
                 </div>
-                <?php endif; endforeach; ?>
+                <?php endforeach; ?>
                 <div class="detail-row" style="border-top: 1px solid rgba(72, 140, 154, 0.15); margin-top: 8px; padding-top: 8px;">
+                    <span class="detail-label"><strong>Monthly Run Rate</strong></span>
+                    <span class="detail-value"><strong>$<?php echo number_format($total_monthly_storage_cost, 0); ?>/mo</strong></span>
+                </div>
+                <div class="detail-row">
                     <span class="detail-label"><strong>Total Pallets Stored</strong></span>
                     <span class="detail-value"><strong><?php
                         $total_pallets = 0;
@@ -1592,7 +1623,8 @@ $conn->close();
                 $transit_mw = $transit_wattage > 0 ? $transit_wattage / 1000000 : 0;
                 $has_inventory = $total_modules > 0 || $total_pallets > 0;
                 $has_transit = $transit_modules > 0 || $transit_pallets > 0;
-                $warehouse_monthly_cost = $total_pallets * ($wh['monthly_storage_fee'] ?? 0);
+                $warehouse_monthly_cost = (float)($wh['monthly_run_rate'] ?? 0);
+                $warehouse_total_cost = (float)($wh['total_cost_to_date'] ?? 0);
                 $warehouse_type = !empty($wh['is_port']) ? 'port' : 'warehouse';
 
                 // Build address
@@ -1677,8 +1709,8 @@ $conn->close();
                                     <p class="stat-label js-unit-label" data-base="In Transit">In Transit Modules</p>
                                 </div>
                                 <div class="wh-overview-stat-item">
-                                    <p class="stat-value">$<?php echo number_format($warehouse_monthly_cost, 0); ?></p>
-                                    <p class="stat-label">Monthly</p>
+                                    <p class="stat-value">$<?php echo number_format($warehouse_total_cost, 0); ?></p>
+                                    <p class="stat-label">Total Cost<br><small style="font-weight:400; color:#6c757d;">$<?php echo number_format($warehouse_monthly_cost, 0); ?>/mo</small></p>
                                 </div>
                             </div>
                         </div>
@@ -1709,7 +1741,7 @@ $conn->close();
                     <th>Status</th>
                     <th>Stored</th>
                     <th>In Transit</th>
-                    <th>Monthly Cost</th>
+                    <th>Total Cost / Monthly</th>
                     <?php if ($can_manage_warehouses): ?><th>Actions</th><?php endif; ?>
                 </tr>
             </thead>
@@ -1726,7 +1758,8 @@ $conn->close();
                         $transit_mw = $transit_wattage > 0 ? $transit_wattage / 1000000 : 0;
                         $has_inventory = $total_modules > 0 || $total_pallets > 0;
                         $has_transit = $transit_modules > 0 || $transit_pallets > 0;
-                        $warehouse_monthly_cost = $total_pallets * ($wh['monthly_storage_fee'] ?? 0);
+                        $warehouse_monthly_cost = (float)($wh['monthly_run_rate'] ?? 0);
+                        $warehouse_total_cost = (float)($wh['total_cost_to_date'] ?? 0);
                         $warehouse_type = !empty($wh['is_port']) ? 'port' : 'warehouse';
 
                         $address_parts = array_filter([
@@ -1777,7 +1810,10 @@ $conn->close();
                                 <?php echo number_format($transit_modules); ?>
                             </span>
                         </td>
-                        <td>$<?php echo number_format($warehouse_monthly_cost, 0); ?></td>
+                        <td>
+                            $<?php echo number_format($warehouse_total_cost, 0); ?>
+                            <br><small style="color:#6c757d;">$<?php echo number_format($warehouse_monthly_cost, 0); ?>/mo</small>
+                        </td>
                         <?php if ($can_manage_warehouses): ?>
                         <td onclick="event.stopPropagation()">
                             <div class="wh-table-actions">

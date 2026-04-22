@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 require_once '../config.php';
+require_once 'cost_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed. Please try again later.");
@@ -304,7 +305,7 @@ try {
         $warehouse_costs = [];
         $warehouse_costs_all = []; // Flat list for modal
         $stmtCosts = $conn->prepare("
-            SELECT label, trigger_event, amount, unit_type
+            SELECT label, trigger_event, amount, unit_type, pallets_per_truck, sqft_per_pallet
             FROM warehouse_cost_items
             WHERE warehouse_id = ? AND is_active = 1
             ORDER BY trigger_event, label
@@ -690,15 +691,8 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $current_storage_cost = 0;
         $departed_pallets_count = 0;
         
-        // Get cost rates from warehouse_cost_items - separate per_pallet vs per_truck
-        $monthly_rate_per_pallet = 0;
-        if (!empty($warehouse_costs['monthly'])) {
-            foreach ($warehouse_costs['monthly'] as $cost) {
-                if (($cost['unit_type'] ?? 'per_pallet') === 'per_pallet' || empty($cost['unit_type'])) {
-                    $monthly_rate_per_pallet += floatval($cost['amount']);
-                }
-            }
-        }
+        // Effective $/pallet/month across all unit types (per_pallet, per_sqft, per_truck, flat)
+        $monthly_rate_per_pallet = get_monthly_rate_per_pallet($warehouse_id, $conn, $warehouse_costs['monthly'] ?? []);
         $daily_rate = $monthly_rate_per_pallet > 0 ? ($monthly_rate_per_pallet / 30) : 0;
 
         $total_inbound_bols = count($inbound_grouped);
@@ -858,7 +852,7 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             // When project_id is set, use the already project-filtered values from the non-admin section
             // Only override with warehouse-wide totals when viewing the full warehouse
             if (!$from_project_id) {
-                $admin_total_storage_cost_monthly_rate = ($admin_total_pallets ?? 0) * $warehouse_fees['monthly'];
+                $admin_total_storage_cost_monthly_rate = ($admin_total_pallets ?? 0) * $monthly_rate_per_pallet;
                 $current_monthly_accrual = $admin_total_storage_cost_monthly_rate;
             }
 
@@ -3036,17 +3030,10 @@ if ($conn) {
                      </thead>
                      <tbody>
                          <?php if (!empty($inventory_pallets)): ?>
-                                                         <?php foreach ($inventory_pallets as $pallet): 
-                                // Calculate costs for this pallet using new cost structure
+                                                         <?php foreach ($inventory_pallets as $pallet):
+                                // Calculate costs for this pallet using shared effective $/pallet/month rate
                                 $days_stored = max(0, intval($pallet['days_stored'] ?? 0));
-                                // Sum ALL monthly fees (supports multiple fees per trigger type)
-                                $monthly_storage_fee = 0;
-                                if (!empty($warehouse_costs['monthly'])) {
-                                    foreach ($warehouse_costs['monthly'] as $cost) {
-                                        $monthly_storage_fee += floatval($cost['amount']);
-                                    }
-                                }
-                                $daily_storage_cost = $monthly_storage_fee / 30; // Approximate daily cost
+                                $daily_storage_cost = $monthly_rate_per_pallet / 30;
                                 $storage_cost = $days_stored * $daily_storage_cost;
                                 
                                 // Add proportional in fee cost (in fee divided by total pallets)

@@ -219,6 +219,221 @@ function get_warehouse_rates($warehouse_id, $conn) {
 }
 
 /**
+ * Compute the effective monthly $/pallet rate for a warehouse, collapsing all
+ * monthly cost items across every unit type (per_pallet, per_sqft, per_truck, flat).
+ *
+ * Pass $monthly_items if you already have them cached; otherwise they're fetched.
+ *
+ * @param int $warehouse_id
+ * @param mysqli $conn
+ * @param array|null $monthly_items Pre-fetched rows with amount/unit_type/sqft_per_pallet/pallets_per_truck
+ * @return float Effective $/pallet/month
+ */
+function get_monthly_rate_per_pallet($warehouse_id, $conn, $monthly_items = null) {
+    if ($monthly_items === null) {
+        if (!$warehouse_id) return 0.0;
+        $stmt = $conn->prepare("
+            SELECT amount, unit_type, pallets_per_truck, sqft_per_pallet
+            FROM warehouse_cost_items
+            WHERE warehouse_id = ? AND trigger_event = 'monthly' AND is_active = 1
+        ");
+        if (!$stmt) return 0.0;
+        $stmt->bind_param("i", $warehouse_id);
+        $stmt->execute();
+        $monthly_items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+    }
+
+    $rate_per_pallet = 0.0;
+    foreach ($monthly_items as $item) {
+        // Reuse calculate_unit_cost for 1 pallet over 30 days = effective monthly per-pallet rate
+        $item_for_calc = $item;
+        $item_for_calc['trigger_event'] = 'monthly';
+        $rate_per_pallet += calculate_unit_cost($item_for_calc, 1, 30);
+    }
+    return $rate_per_pallet;
+}
+
+/**
+ * Calculate running cost to date for a warehouse: actual storage accrued plus
+ * entry/exit fees actually paid, across all pallets currently in and departed
+ * from this warehouse. Optionally scoped to a project.
+ *
+ * Returns:
+ *   'storage_cost' => running storage accrual (days stored × daily rate)
+ *   'entry_fees'   => total entry fees paid
+ *   'exit_fees'    => total exit fees paid
+ *   'total'        => sum of the above
+ *   'monthly_rate_per_pallet' => effective $/pallet/month
+ *   'current_pallets' => pallets currently in warehouse (scoped)
+ *   'monthly_run_rate' => monthly_rate_per_pallet × current_pallets
+ *
+ * @param int $warehouse_id
+ * @param mysqli $conn
+ * @param int|null $project_id
+ * @return array
+ */
+function calculate_warehouse_running_cost($warehouse_id, $conn, $project_id = null) {
+    $out = [
+        'storage_cost' => 0.0,
+        'entry_fees' => 0.0,
+        'exit_fees' => 0.0,
+        'total' => 0.0,
+        'monthly_rate_per_pallet' => 0.0,
+        'current_pallets' => 0,
+        'monthly_run_rate' => 0.0,
+    ];
+    if (!$warehouse_id) return $out;
+
+    // Fetch all cost items once, bucketed by trigger
+    $stmt = $conn->prepare("
+        SELECT label, trigger_event, amount, unit_type, pallets_per_truck, sqft_per_pallet
+        FROM warehouse_cost_items
+        WHERE warehouse_id = ? AND is_active = 1
+    ");
+    if (!$stmt) return $out;
+    $stmt->bind_param("i", $warehouse_id);
+    $stmt->execute();
+    $items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $by_trigger = ['entry' => [], 'exit' => [], 'monthly' => []];
+    foreach ($items as $it) {
+        $trig = $it['trigger_event'] ?? '';
+        if (isset($by_trigger[$trig])) $by_trigger[$trig][] = $it;
+    }
+
+    $monthly_rate_per_pallet = get_monthly_rate_per_pallet($warehouse_id, $conn, $by_trigger['monthly']);
+    $daily_rate = $monthly_rate_per_pallet / 30.0;
+    $out['monthly_rate_per_pallet'] = $monthly_rate_per_pallet;
+
+    // --- Pallet days stored (current) ---
+    $params = [$warehouse_id];
+    $types  = "i";
+    $sql_cur = "SELECT COUNT(*) AS cnt, COALESCE(SUM(GREATEST(DATEDIFF(CURDATE(), arrival_date), 0)), 0) AS total_days
+                FROM inventory_pallets
+                WHERE current_warehouse_id = ? AND status = 'In Warehouse'";
+    if ($project_id) {
+        $sql_cur .= " AND assigned_project_id = ?";
+        $params[] = $project_id; $types .= "i";
+    }
+    $stmt = $conn->prepare($sql_cur);
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $out['current_pallets'] = (int)($row['cnt'] ?? 0);
+        $out['storage_cost']   += (float)($row['total_days'] ?? 0) * $daily_rate;
+    }
+    $out['monthly_run_rate'] = $monthly_rate_per_pallet * $out['current_pallets'];
+
+    // --- Pallet days stored (departed) ---
+    // A pallet may arrive via warehouse_id and depart via origin_type='warehouse' leg
+    $params = [$warehouse_id, $warehouse_id, $warehouse_id, $warehouse_id];
+    $types  = "iiii";
+    $sql_dep = "
+        SELECT dp.inventory_pallet_id AS pallet_id,
+               MIN(CASE WHEN d.warehouse_id = ? THEN d.warehouse_arrival_date END) AS arrival_date,
+               MIN(CASE WHEN d.origin_type = 'warehouse' AND d.origin_id = ? THEN d.left_warehouse_date END) AS departure_date
+        FROM deliveries d
+        JOIN delivery_pallets dp ON d.id = dp.delivery_id
+        WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
+    ";
+    if ($project_id) {
+        $sql_dep .= " AND d.project_id = ?";
+        $params[] = $project_id; $types .= "i";
+    }
+    $sql_dep .= " GROUP BY dp.inventory_pallet_id";
+    $stmt = $conn->prepare($sql_dep);
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($r = $res->fetch_assoc()) {
+            if (!$r['arrival_date'] || !$r['departure_date']) continue;
+            $a = strtotime($r['arrival_date']); $l = strtotime($r['departure_date']);
+            if ($a === false || $l === false || $l < $a) continue;
+            $days = (int)ceil(($l - $a) / 86400);
+            if ($days < 0) $days = 0;
+            $out['storage_cost'] += $days * $daily_rate;
+        }
+        $stmt->close();
+    }
+
+    // --- Entry/Exit fees based on actual BOL / pallet counts ---
+    // Inbound: distinct BOLs arrived + distinct pallets that arrived
+    $params = [$warehouse_id]; $types = "i";
+    $sql_in = "SELECT COUNT(DISTINCT d.bol_number) AS bols,
+                      COUNT(DISTINCT dp.inventory_pallet_id) AS pallets
+               FROM deliveries d
+               LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+               WHERE d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL";
+    if ($project_id) { $sql_in .= " AND d.project_id = ?"; $params[] = $project_id; $types .= "i"; }
+    $stmt = $conn->prepare($sql_in);
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $in_bols    = (int)($row['bols'] ?? 0);
+        $in_pallets = (int)($row['pallets'] ?? 0);
+        foreach ($by_trigger['entry'] as $fee) {
+            $unit = $fee['unit_type'] ?? 'per_pallet';
+            $amt  = (float)($fee['amount'] ?? 0);
+            if ($unit === 'per_truck' || $unit === 'per_bol') {
+                $out['entry_fees'] += $amt * $in_bols;
+            } elseif ($unit === 'per_sqft') {
+                $sqft = (float)($fee['sqft_per_pallet'] ?? 13.33);
+                $out['entry_fees'] += $amt * $sqft * $in_pallets;
+            } elseif ($unit === 'flat') {
+                $out['entry_fees'] += $in_pallets > 0 ? $amt : 0;
+            } else { // per_pallet
+                $out['entry_fees'] += $amt * $in_pallets;
+            }
+        }
+    }
+
+    // Outbound: distinct BOLs departed + distinct pallets that departed
+    $params = [$warehouse_id, $warehouse_id]; $types = "ii";
+    $sql_out = "SELECT COUNT(DISTINCT d.bol_number) AS bols,
+                       COUNT(DISTINCT dp.inventory_pallet_id) AS pallets
+                FROM deliveries d
+                LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                WHERE d.left_warehouse_date IS NOT NULL
+                  AND ((d.origin_type = 'warehouse' AND d.origin_id = ?)
+                       OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL
+                           AND d.left_warehouse_date > d.warehouse_arrival_date))";
+    if ($project_id) { $sql_out .= " AND d.project_id = ?"; $params[] = $project_id; $types .= "i"; }
+    $stmt = $conn->prepare($sql_out);
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $out_bols    = (int)($row['bols'] ?? 0);
+        $out_pallets = (int)($row['pallets'] ?? 0);
+        foreach ($by_trigger['exit'] as $fee) {
+            $unit = $fee['unit_type'] ?? 'per_pallet';
+            $amt  = (float)($fee['amount'] ?? 0);
+            if ($unit === 'per_truck' || $unit === 'per_bol') {
+                $out['exit_fees'] += $amt * $out_bols;
+            } elseif ($unit === 'per_sqft') {
+                $sqft = (float)($fee['sqft_per_pallet'] ?? 13.33);
+                $out['exit_fees'] += $amt * $sqft * $out_pallets;
+            } elseif ($unit === 'flat') {
+                $out['exit_fees'] += $out_pallets > 0 ? $amt : 0;
+            } else {
+                $out['exit_fees'] += $amt * $out_pallets;
+            }
+        }
+    }
+
+    $out['total'] = $out['storage_cost'] + $out['entry_fees'] + $out['exit_fees'];
+    return $out;
+}
+
+/**
  * Calculate the total warehousing cost for a pallet's stay in a warehouse.
  * Updated to support multiple fees per trigger type (sums all entry, exit, monthly fees).
  *
