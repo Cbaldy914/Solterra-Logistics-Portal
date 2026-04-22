@@ -946,15 +946,38 @@ function closeShippingModal() {
 }
 
 // Shipping modals
-function showCustomerShippingModal(status) {
+function showCustomerShippingModal(status, onlyKey) {
     const modal = document.getElementById('customerShippingModal');
     const title = document.getElementById('customerShippingModalTitle');
     const content = document.getElementById('customerShippingModalContent');
-    if (modal && title && content) {
-        title.textContent = status;
-        content.innerHTML = '<div style="padding:20px;text-align:center;"><p>Status: <strong>' + status + '</strong></p></div>';
-        modal.style.display = 'block';
+    if (!modal || !title || !content) return;
+
+    const displayLabel = onlyKey ? onlyKey : status;
+    title.textContent = displayLabel;
+
+    let body = '';
+    if (onlyKey && typeof shippingBreakdown !== 'undefined' && shippingBreakdown[onlyKey]) {
+        const data = shippingBreakdown[onlyKey];
+        body += '<div style="padding:18px;">';
+        body += '<div style="margin-bottom:14px;font-weight:600;color:#293E4C;">' + displayLabel + '</div>';
+        body += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">';
+        body += '<div style="flex:1;min-width:110px;text-align:center;padding:10px;background:#f8fafc;border-radius:8px;"><div style="font-size:1.4rem;font-weight:700;color:#488C9A;">' + Number(data.pallet_count || 0).toLocaleString() + '</div><div style="font-size:0.8rem;color:#6c757d;">Pallets</div></div>';
+        body += '<div style="flex:1;min-width:110px;text-align:center;padding:10px;background:#f8fafc;border-radius:8px;"><div style="font-size:1.4rem;font-weight:700;color:#488C9A;">' + Number(data.total_modules || 0).toLocaleString() + '</div><div style="font-size:0.8rem;color:#6c757d;">Modules</div></div>';
+        body += '</div>';
+        if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
+            body += '<div style="margin-top:10px;"><strong style="font-size:0.9rem;color:#293E4C;">Wattage Breakdown</strong><ul style="list-style:none;padding:0;margin-top:8px;">';
+            for (const w in data.wattage_breakdown) {
+                const d = data.wattage_breakdown[w];
+                body += '<li style="padding:6px 0;border-bottom:1px solid #eee;font-size:0.9rem;">' + w + 'W: ' + d.pallets + ' pallets · ' + Number(d.modules || 0).toLocaleString() + ' modules</li>';
+            }
+            body += '</ul></div>';
+        }
+        body += '</div>';
+    } else {
+        body = '<div style="padding:20px;text-align:center;"><p>Status: <strong>' + displayLabel + '</strong></p></div>';
     }
+    content.innerHTML = body;
+    modal.style.display = 'block';
 }
 
 function closeCustomerShippingModal() {
@@ -1480,19 +1503,19 @@ function loadModuleDocuments() {
 
 // Shipping Breakdown modal
 const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
-function showShippingBreakdown(type){
+function showShippingBreakdown(type, onlyKey){
     const modal = document.getElementById('shippingModal');
     const title = document.getElementById('shippingModalTitle');
     const content = document.getElementById('shippingModalContent');
-    title.textContent = type + ' - Detailed Breakdown';
-    content.innerHTML = generateShippingContent(type);
+    title.textContent = (onlyKey ? onlyKey : type) + ' - Detailed Breakdown';
+    content.innerHTML = generateShippingContent(type, onlyKey);
     modal.style.display = 'block';
 }
 function closeShippingModal(){
     const modal = document.getElementById('shippingModal');
     if(modal) modal.style.display = 'none';
 }
-function generateShippingContent(filter){
+function generateShippingContent(filter, onlyKey){
     let html='<div>';
     let has=false;
     
@@ -1565,6 +1588,7 @@ function generateShippingContent(filter){
     } else {
         // Handle other shipping statuses
         for(const key in shippingBreakdown){
+            if(onlyKey && key !== onlyKey) continue;
             if(key.includes(filter)){
                 has=true;
                 const data=shippingBreakdown[key];
@@ -1623,6 +1647,7 @@ function generateShippingContent(filter){
             // Collect warehouse IDs from breakdown for this status
             const warehouseLinks = [];
             for(const key in shippingBreakdown){
+                if(onlyKey && key !== onlyKey) continue;
                 if(key.includes('In Warehouse') && shippingBreakdown[key].warehouse_id){
                     warehouseLinks.push({name: key, id: shippingBreakdown[key].warehouse_id});
                 }
@@ -2484,18 +2509,18 @@ function saveConversionModal(){
 }
 
 // Customer Shipping Modal functionality
-function showCustomerShippingModal(status) {
+function showCustomerShippingModal(status, onlyKey) {
     const modal = document.getElementById('customerShippingModal');
     const title = document.getElementById('customerShippingModalTitle');
     const content = document.getElementById('customerShippingModalContent');
-    
+
     if (!modal || !title || !content) {
         console.error('Customer shipping modal elements not found');
         return;
     }
-    
-    title.textContent = status + ' - Details';
-    content.innerHTML = generateCustomerShippingContent(status);
+
+    title.textContent = (onlyKey ? onlyKey : status) + ' - Details';
+    content.innerHTML = generateCustomerShippingContent(status, onlyKey);
     modal.style.display = 'block';
 }
 
@@ -2504,7 +2529,7 @@ function closeCustomerShippingModal() {
     if(modal) modal.style.display = 'none';
 }
 
-function generateCustomerShippingContent(status) {
+function generateCustomerShippingContent(status, onlyKey) {
     const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
     let html = '<div>';
     let has = false;
@@ -2607,6 +2632,7 @@ function generateCustomerShippingContent(status) {
     } else {
         // Handle other shipping statuses
         for(const key in shippingBreakdown){
+            if(onlyKey && key !== onlyKey) continue;
             if(key.includes(status)){
                 has = true;
                 const data = shippingBreakdown[key];

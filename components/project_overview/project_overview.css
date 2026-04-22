@@ -2492,6 +2492,31 @@
     font-weight: 500;
 }
 
+/* Per-location split: one shipping-box per warehouse/project instead of an aggregate */
+.shipping-boxes-container .shipping-box.split-location .status-label {
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.15;
+}
+.shipping-boxes-container .shipping-box.split-location .status-prefix {
+    font-size: 10px;
+    font-weight: 500;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+.shipping-boxes-container .shipping-box.split-location .location-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #293E4C;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    line-height: 1.2;
+}
+
 /* Status-specific styling for inline boxes - matching pie chart colors */
 /* Use ::before for gradient top that blends into the box */
 .shipping-boxes-container .shipping-box.at-manufacturer {

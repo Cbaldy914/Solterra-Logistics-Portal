@@ -558,25 +558,83 @@ document.addEventListener('keydown', function(e) {
                             ["key" => "Delivered", "class" => "delivered", "label" => "Delivered"],
                         ];
 
+                        // Statuses whose detailed_breakdown splits by location ("Status - Name")
+                        $split_statuses = ['In Warehouse', 'In Transit to Warehouse', 'In Transit to Project'];
+                        // Short prefixes used when we render one box per location
+                        $split_prefixes = [
+                            'In Warehouse' => 'At',
+                            'In Transit to Warehouse' => 'To',
+                            'In Transit to Project' => 'To',
+                        ];
+                        $avg_watt_for_mw = 0;
+                        if (!empty($wattages)) {
+                            $avg_watt_for_mw = count($wattages) > 0 ? (array_sum($wattages) / count($wattages)) : 0;
+                        }
+                        $mw_from_modules = function ($m) use ($avg_watt_for_mw) {
+                            return ($avg_watt_for_mw > 0 && $m > 0) ? round(($m * $avg_watt_for_mw) / 1000000, 2) : 0;
+                        };
+                        $trucks_from = function ($p, $m) use ($average_pallets_per_truck, $average_modules_per_truck) {
+                            if (!empty($average_pallets_per_truck)) return round($p / $average_pallets_per_truck, 1);
+                            if (!empty($average_modules_per_truck)) return round($m / $average_modules_per_truck, 1);
+                            return null;
+                        };
+
                         foreach ($shipping_statuses_list as $status_info):
                             $status_key = $status_info["key"];
                             $pallets = $status_totals[$status_key]["pallets"] ?? 0;
                             $modules = $status_totals[$status_key]["modules"] ?? 0;
+                            if ($pallets <= 0) continue;
 
-                            if ($pallets > 0):
-                                $truckloads = null;
-                                if (!empty($average_pallets_per_truck)) {
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
-                                } elseif (!empty($average_modules_per_truck)) {
-                                    $truckloads = round($modules / $average_modules_per_truck, 1);
+                            // For multi-location statuses, emit one box per location from detailed_breakdown
+                            $rendered_split = false;
+                            if (in_array($status_key, $split_statuses, true)) {
+                                $prefix = $status_key . ' - ';
+                                $locations = [];
+                                foreach ($detailed_breakdown as $bd_key => $bd) {
+                                    if (strpos($bd_key, $prefix) !== 0) continue;
+                                    $loc_pallets = (int)($bd['pallet_count'] ?? 0);
+                                    if ($loc_pallets <= 0) continue;
+                                    $locations[] = [
+                                        'name' => substr($bd_key, strlen($prefix)),
+                                        'key' => $bd_key,
+                                        'pallets' => $loc_pallets,
+                                        'modules' => (int)($bd['total_modules'] ?? 0),
+                                    ];
                                 }
-                                $mws = 0;
-                                if (!empty($wattages) && $modules > 0) {
-                                    $total_watts = array_sum($wattages);
-                                    $avg_wattage = count($wattages) > 0 ? ($total_watts / count($wattages)) : 0;
-                                    $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                if (!empty($locations)) {
+                                    $rendered_split = true;
+                                    $short = $split_prefixes[$status_key] ?? '';
+                                    foreach ($locations as $loc):
+                                        $loc_trucks = $trucks_from($loc['pallets'], $loc['modules']);
+                                        $loc_mws = $mw_from_modules($loc['modules']);
+                                        $click_key_js = json_encode($loc['key']);
+                                        $click = $isAdmin
+                                            ? "showShippingBreakdown('{$status_key}', {$click_key_js})"
+                                            : "showCustomerShippingModal('{$status_key}', {$click_key_js})";
+                                ?>
+                        <div class="shipping-box <?php echo $status_info["class"]; ?> split-location"
+                             onclick="<?php echo htmlspecialchars($click, ENT_QUOTES); ?>"
+                             data-pallets="<?php echo (int)$loc['pallets']; ?>"
+                             data-modules="<?php echo (int)$loc['modules']; ?>"
+                             data-truckloads="<?php echo ($loc_trucks !== null ? $loc_trucks : ''); ?>"
+                             data-mws="<?php echo $loc_mws; ?>"
+                             title="<?php echo htmlspecialchars($status_info['label'] . ' · ' . $loc['name']); ?>">
+                            <div class="status-label">
+                                <?php if ($short !== ''): ?><span class="status-prefix"><?php echo $short; ?></span><?php endif; ?>
+                                <span class="location-name"><?php echo htmlspecialchars($loc['name']); ?></span>
+                            </div>
+                            <div class="status-count"><?php echo $loc_mws; ?></div>
+                            <div class="status-unit">MWs</div>
+                        </div>
+                        <?php
+                                    endforeach;
                                 }
-                                // Use unified class but with role-based click handler
+                            }
+
+                            // Fallback: aggregate box for non-split statuses, or when no detailed breakdown exists
+                            if (!$rendered_split):
+                                $truckloads = $trucks_from($pallets, $modules);
+                                $mws = $mw_from_modules($modules);
                                 $clickHandler = $isAdmin ? "showShippingBreakdown('{$status_key}')" : "showCustomerShippingModal('{$status_key}')";
                         ?>
                         <div class="shipping-box <?php echo $status_info["class"]; ?>"
