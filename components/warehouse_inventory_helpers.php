@@ -25,21 +25,35 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port, 
             ip.quantity,
             ip.arrival_date,
             m.vendor_name AS origin_vendor,
-            d_received.id AS received_delivery_id,
-            d_received.bol_number AS received_bol,
+            (
+                SELECT d_lookup.id
+                FROM delivery_pallets dp_lookup
+                JOIN deliveries d_lookup ON dp_lookup.delivery_id = d_lookup.id
+                WHERE dp_lookup.inventory_pallet_id = ip.id
+                  AND d_lookup.warehouse_id = ?
+                  AND d_lookup.status_of_delivery != 'Departed Port'
+                ORDER BY COALESCE(d_lookup.warehouse_arrival_date, d_lookup.created_at) DESC, d_lookup.id DESC
+                LIMIT 1
+            ) AS received_delivery_id,
+            (
+                SELECT d_lookup.bol_number
+                FROM delivery_pallets dp_lookup
+                JOIN deliveries d_lookup ON dp_lookup.delivery_id = d_lookup.id
+                WHERE dp_lookup.inventory_pallet_id = ip.id
+                  AND d_lookup.warehouse_id = ?
+                  AND d_lookup.status_of_delivery != 'Departed Port'
+                ORDER BY COALESCE(d_lookup.warehouse_arrival_date, d_lookup.created_at) DESC, d_lookup.id DESC
+                LIMIT 1
+            ) AS received_bol,
             p_assigned.project_name AS assigned_project
         FROM inventory_pallets ip
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-        INNER JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
-        INNER JOIN deliveries d_received ON dp_received.delivery_id = d_received.id
-            AND d_received.warehouse_id = ?
-            AND d_received.status_of_delivery != 'Departed Port'
         LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? AND ip.status = ?
     ";
-    $params = [$warehouse_id, $warehouse_id, $received_status];
-    $types = "iis";
+    $params = [$warehouse_id, $warehouse_id, $warehouse_id, $received_status];
+    $types = "iiis";
 
     if ($project_id) {
         $sql .= " AND ip.assigned_project_id = ?";
@@ -56,8 +70,8 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port, 
     $resultP_Stored = $stmtP_Stored->get_result();
 
     while ($pallet = $resultP_Stored->fetch_assoc()) {
-        $pallets_in_storage[] = $pallet;
         $pallet['assigned_project'] = $pallet['assigned_project'] ?? 'N/A';
+        $pallets_in_storage[] = $pallet;
         $total_pallets++;
     }
     $stmtP_Stored->close();
@@ -450,12 +464,27 @@ function fetchOutboundHistory($conn, $warehouse_id, $project_id = null) {
         SELECT
             d.bol_number,
             d.supplier,
-            d.left_warehouse_date AS departure_date,
+            COALESCE(d.left_warehouse_date, DATE(d.created_at)) AS departure_date,
             d.anticipated_delivery_date,
             d.status_of_delivery,
             COUNT(DISTINCT d.id) AS delivery_count,
             COUNT(DISTINCT dp.inventory_pallet_id) AS total_pallets,
-            (SELECT SUM(d_inner.quantity) FROM deliveries d_inner WHERE d_inner.bol_number = d.bol_number AND d_inner.supplier = d.supplier AND d_inner.left_warehouse_date = d.left_warehouse_date) AS total_modules,
+            (
+                SELECT SUM(d_inner.quantity)
+                FROM deliveries d_inner
+                WHERE d_inner.bol_number <=> d.bol_number
+                  AND d_inner.supplier <=> d.supplier
+                  AND COALESCE(d_inner.left_warehouse_date, DATE(d_inner.created_at)) = COALESCE(d.left_warehouse_date, DATE(d.created_at))
+                  AND (
+                      (d_inner.origin_type = 'warehouse' AND d_inner.origin_id = ?)
+                      OR (
+                          d_inner.warehouse_id = ?
+                          AND d_inner.warehouse_arrival_date IS NOT NULL
+                          AND d_inner.left_warehouse_date IS NOT NULL
+                          AND d_inner.left_warehouse_date > d_inner.warehouse_arrival_date
+                      )
+                  )
+            ) AS total_modules,
             GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
             GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
             GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
@@ -473,14 +502,18 @@ function fetchOutboundHistory($conn, $warehouse_id, $project_id = null) {
         LEFT JOIN warehouses w ON d.warehouse_id = w.id
         JOIN delivery_pallets dp ON d.id = dp.delivery_id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-        WHERE d.left_warehouse_date IS NOT NULL
-        AND (
+        WHERE (
             (d.origin_type = 'warehouse' AND d.origin_id = ?)
-            OR (d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL AND d.left_warehouse_date > d.warehouse_arrival_date)
+            OR (
+                d.warehouse_id = ?
+                AND d.warehouse_arrival_date IS NOT NULL
+                AND d.left_warehouse_date IS NOT NULL
+                AND d.left_warehouse_date > d.warehouse_arrival_date
+            )
         )
     ";
-    $params = [$warehouse_id, $warehouse_id, $warehouse_id];
-    $types = "iii";
+    $params = [$warehouse_id, $warehouse_id, $warehouse_id, $warehouse_id, $warehouse_id];
+    $types = "iiiii";
 
     if ($project_id) {
         $sql .= " AND d.project_id = ?";
@@ -488,8 +521,8 @@ function fetchOutboundHistory($conn, $warehouse_id, $project_id = null) {
         $types .= "i";
     }
 
-    $sql .= " GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.anticipated_delivery_date, d.status_of_delivery
-              ORDER BY d.left_warehouse_date DESC";
+    $sql .= " GROUP BY d.bol_number, d.supplier, COALESCE(d.left_warehouse_date, DATE(d.created_at)), d.anticipated_delivery_date, d.status_of_delivery
+              ORDER BY COALESCE(d.left_warehouse_date, DATE(d.created_at)) DESC";
 
     $stmtOutboundHistory = $conn->prepare($sql);
     if ($stmtOutboundHistory) {
