@@ -367,6 +367,35 @@ function resolveShipmentPallets($conn, $parsedData, $resolutionOptions, &$warnin
         }
     }
 
+    // Direct Solterra/manufacturer ID matches must win over generic placeholder resolution,
+    // regardless of row order in the upload. Otherwise an early unmatched manufacturer ID can
+    // consume a placeholder whose pallet_identifier appears later in the same file.
+    $exactMatchInventoryIds = [];
+    foreach ($parsedData as $row) {
+        $uploadedPalletId = trim((string)($row['pallet_id'] ?? ''));
+        if ($uploadedPalletId === '' || ($inputIdCounts[$uploadedPalletId] ?? 0) > 1) {
+            continue;
+        }
+
+        $candidate = null;
+        $manufacturerMatches = $exactMatches['manufacturer'][$uploadedPalletId] ?? [];
+        if (count($manufacturerMatches) === 1) {
+            $candidate = $manufacturerMatches[0];
+        } elseif (count($manufacturerMatches) === 0) {
+            $palletMatches = $exactMatches['pallet'][$uploadedPalletId] ?? [];
+            if (count($palletMatches) === 1) {
+                $candidate = $palletMatches[0];
+            }
+        }
+
+        if ($candidate && (!$resolutionEnabled || $originMatchesSelection($candidate))) {
+            $candidateId = (int)($candidate['id'] ?? 0);
+            if ($candidateId > 0) {
+                $exactMatchInventoryIds[$candidateId] = true;
+            }
+        }
+    }
+
     $reservedInventoryIds = [];
     $palletsFound = 0;
     $palletsNotFound = 0;
@@ -443,7 +472,9 @@ function resolveShipmentPallets($conn, $parsedData, $resolutionOptions, &$warnin
             } else {
                 foreach (($placeholderCandidates[$rowWattage] ?? []) as $candidate) {
                     $candidateId = (int)($candidate['id'] ?? 0);
-                    if ($candidateId > 0 && !isset($reservedInventoryIds[$candidateId])) {
+                    if ($candidateId > 0
+                        && !isset($reservedInventoryIds[$candidateId])
+                        && !isset($exactMatchInventoryIds[$candidateId])) {
                         $resolvedPallet = $candidate;
                         $matchType = 'resolved_placeholder';
                         break;
