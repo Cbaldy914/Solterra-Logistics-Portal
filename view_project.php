@@ -82,22 +82,22 @@ function deliveryActualDateValue(array $delivery): ?string
     return null;
 }
 
-function deliveryRouteLabel(array $delivery): string
+function deliveryOriginLabel(array $delivery): string
 {
     $origin = trim((string)($delivery['origin_display'] ?? ''));
     if ($origin === '') {
         $origin = trim((string)($delivery['supplier'] ?? ''));
     }
-    if ($origin === '') {
-        $origin = 'Origin';
-    }
+    return ($origin !== '') ? $origin : 'Origin';
+}
 
+function deliveryDestinationLabel(array $delivery): string
+{
     $destination = trim((string)($delivery['destination_display'] ?? ''));
     if ($destination === '') {
         $destination = !empty($delivery['warehouse_id']) ? 'Warehouse' : 'Project';
     }
-
-    return $origin . ' -> ' . $destination;
+    return $destination;
 }
 
 function getAuthorizedDeliveryIds(
@@ -976,8 +976,12 @@ foreach ($bol_groups as $group_key => $group_rows) {
     $master['status_of_delivery'] = (count($status_values) <= 1) ? ($status_values[0] ?? '—') : 'Mixed Status';
     $master['anticipated_display'] = summarizeGroupedDate(array_column($group_rows, 'anticipated_delivery_date'));
     $master['actual_display'] = summarizeGroupedDate(array_map('deliveryActualDateValue', $group_rows));
-    $route_values = array_values(array_unique(array_filter(array_map('deliveryRouteLabel', $group_rows))));
-    $master['route_display'] = (count($route_values) <= 1) ? ($route_values[0] ?? '') : ('Multiple routes (' . count($route_values) . ')');
+    $origin_values = array_values(array_unique(array_filter(array_map('deliveryOriginLabel', $group_rows))));
+    $destination_values = array_values(array_unique(array_filter(array_map('deliveryDestinationLabel', $group_rows))));
+    $master['origin_display'] = (count($origin_values) <= 1) ? ($origin_values[0] ?? '—') : ('Multiple (' . count($origin_values) . ')');
+    $master['destination_display'] = (count($destination_values) <= 1) ? ($destination_values[0] ?? '—') : ('Multiple (' . count($destination_values) . ')');
+    $master['origin_list'] = $origin_values;
+    $master['destination_list'] = $destination_values;
     $pod_delivery_ids = [];
     foreach ($group_rows as $row) {
         if (!empty($row['proof_of_delivery']) || !empty($row['has_pod_in_documents'])) {
@@ -2134,15 +2138,6 @@ if ($can_manage_deliveries) {
             font-weight: 500;
         }
 
-        .route-helper-text {
-            display: block;
-            margin-top: 5px;
-            color: #4b7280;
-            font-size: 0.78em;
-            font-weight: 600;
-            line-height: 1.25;
-        }
-
         .modal-body form {
             padding: 20px;
         }
@@ -2426,6 +2421,14 @@ if ($can_manage_deliveries) {
                                 Carrier
                             </label>
                             <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="origin-column" checked>
+                                Origin
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="destination-column" checked>
+                                Destination
+                            </label>
+                            <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
                                 Wattage Summary
                             </label>
@@ -2487,6 +2490,8 @@ if ($can_manage_deliveries) {
                             <?php endif; ?>
                             <th class="supplier-column">Supplier</th>
                             <th class="carrier-column">Carrier</th>
+                            <th class="origin-column">Origin</th>
+                            <th class="destination-column">Destination</th>
                             <th class="wattage-column">Wattage</th>
                             <th class="status-column">Status</th>
                             <th class="quantity-column">Quantity</th>
@@ -2577,6 +2582,10 @@ if ($can_manage_deliveries) {
                             $actualDisplay = $delivery['is_grouped']
                                 ? (string)$delivery['actual_display']
                                 : ($singleActualDate ? date('m/d/Y', strtotime($singleActualDate)) : '—');
+                            $originDisplay = $delivery['is_grouped'] ? (string)($delivery['origin_display'] ?? '—') : deliveryOriginLabel($delivery);
+                            $destinationDisplay = $delivery['is_grouped'] ? (string)($delivery['destination_display'] ?? '—') : deliveryDestinationLabel($delivery);
+                            $originTitle = $delivery['is_grouped'] ? implode(', ', $delivery['origin_list'] ?? []) : $originDisplay;
+                            $destinationTitle = $delivery['is_grouped'] ? implode(', ', $delivery['destination_list'] ?? []) : $destinationDisplay;
                             ?>
                             <tr class="<?php echo implode(' ', $rowClasses); ?>" data-group-index="<?php echo $groupIndex; ?>" <?php if (!empty($delivery['contains_highlight'])) echo 'id="highlighted-delivery"'; ?> <?php if ($delivery['is_grouped']): ?>onclick="toggleDeliveryDetails(<?php echo $groupIndex; ?>, event)"<?php endif; ?>>
                                 <?php if ($can_manage_deliveries): ?>
@@ -2604,6 +2613,12 @@ if ($can_manage_deliveries) {
                                         —
                                     <?php endif; ?>
                                 </td>
+                                <td class="origin-column" title="<?php echo htmlspecialchars($originTitle); ?>">
+                                    <?php echo htmlspecialchars($originDisplay); ?>
+                                </td>
+                                <td class="destination-column" title="<?php echo htmlspecialchars($destinationTitle); ?>">
+                                    <?php echo htmlspecialchars($destinationDisplay); ?>
+                                </td>
                                 <td class="wattage-column">
                                     <span class="wattage-pill"><?php echo htmlspecialchars((string)$delivery['display_wattage']); ?></span>
                                     <?php if ($delivery['is_grouped']): ?>
@@ -2614,12 +2629,7 @@ if ($can_manage_deliveries) {
                                     <span class="<?php echo $statusClass; ?>"><?php echo htmlspecialchars((string)$statusLabel); ?></span>
                                 </td>
                                 <td class="quantity-column"><?php echo (int)($delivery['is_grouped'] ? $delivery['total_quantity'] : $delivery['quantity']); ?></td>
-                                <td class="bol-column">
-                                    <?php echo htmlspecialchars((string)($delivery['bol_number'] ?: '—')); ?>
-                                    <?php if (!empty($delivery['route_display'])): ?>
-                                    <span class="route-helper-text"><?php echo htmlspecialchars((string)$delivery['route_display']); ?></span>
-                                    <?php endif; ?>
-                                </td>
+                                <td class="bol-column"><?php echo htmlspecialchars((string)($delivery['bol_number'] ?: '—')); ?></td>
                                 <td class="anticipated-column"><?php echo htmlspecialchars((string)($delivery['is_grouped'] ? $delivery['anticipated_display'] : ($delivery['anticipated_delivery_date'] ? date('m/d/Y', strtotime($delivery['anticipated_delivery_date'])) : '—'))); ?></td>
                                 <td class="actual-column"><?php echo htmlspecialchars($actualDisplay); ?></td>
                                 <td class="pallets-column">
@@ -2719,6 +2729,8 @@ if ($can_manage_deliveries) {
                                             —
                                         <?php endif; ?>
                                     </td>
+                                    <td class="origin-column"><?php echo htmlspecialchars(deliveryOriginLabel($detailRow)); ?></td>
+                                    <td class="destination-column"><?php echo htmlspecialchars(deliveryDestinationLabel($detailRow)); ?></td>
                                     <td class="wattage-column">
                                         <?php $detail_wattage = trim((string)($detailRow['wattage'] ?? '')); ?>
                                         <span class="wattage-pill"><?php echo htmlspecialchars($detail_wattage !== '' ? $detail_wattage . 'W' : 'Unknown'); ?> x <?php echo (int)$detailRow['quantity']; ?></span>
