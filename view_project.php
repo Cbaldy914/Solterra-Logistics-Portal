@@ -70,6 +70,36 @@ function summarizeGroupedDate(array $dates): string
     return date('m/d/Y', strtotime($first)) . ' - ' . date('m/d/Y', strtotime($last));
 }
 
+function deliveryActualDateValue(array $delivery): ?string
+{
+    if (!empty($delivery['actual_delivery_date'])) {
+        return (string)$delivery['actual_delivery_date'];
+    }
+    if (!empty($delivery['warehouse_arrival_date'])
+        && (!empty($delivery['warehouse_id']) || stripos((string)($delivery['status_of_delivery'] ?? ''), 'Warehouse') !== false)) {
+        return (string)$delivery['warehouse_arrival_date'];
+    }
+    return null;
+}
+
+function deliveryRouteLabel(array $delivery): string
+{
+    $origin = trim((string)($delivery['origin_display'] ?? ''));
+    if ($origin === '') {
+        $origin = trim((string)($delivery['supplier'] ?? ''));
+    }
+    if ($origin === '') {
+        $origin = 'Origin';
+    }
+
+    $destination = trim((string)($delivery['destination_display'] ?? ''));
+    if ($destination === '') {
+        $destination = !empty($delivery['warehouse_id']) ? 'Warehouse' : 'Project';
+    }
+
+    return $origin . ' -> ' . $destination;
+}
+
 function getAuthorizedDeliveryIds(
     mysqli $conn,
     array $selected_ids,
@@ -279,13 +309,22 @@ $filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
 /* context filters */
 $selectClause = "SELECT d.*, ss.id as appointment_id,
        carr.name AS carrier_name,
+       COALESCE(origin_wh.name, origin_project.project_name, NULLIF(d.supplier, ''), origin_mloc.location_name, origin_mfg.name) AS origin_display,
+       COALESCE(dest_wh.name, dest_project.project_name) AS destination_display,
        (SELECT COUNT(*) FROM project_documents pd
         WHERE pd.delivery_id = d.id
         AND pd.document_type = 'pods'
         AND (pd.document_sub_type = 'Project POD' OR pd.document_sub_type = 'Warehouse POD')
        ) AS has_pod_in_documents
 FROM deliveries d";
-$joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id LEFT JOIN carriers carr ON carr.id = d.carrier_id";
+$joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id
+                  LEFT JOIN carriers carr ON carr.id = d.carrier_id
+                  LEFT JOIN warehouses origin_wh ON d.origin_type = 'warehouse' AND origin_wh.id = d.origin_id
+                  LEFT JOIN projects origin_project ON d.origin_type = 'project' AND origin_project.id = d.origin_id
+                  LEFT JOIN manufacturer_locations origin_mloc ON d.origin_type = 'manufacturer' AND origin_mloc.id = d.origin_id
+                  LEFT JOIN manufacturers origin_mfg ON d.origin_type = 'manufacturer' AND origin_mfg.id = d.origin_id
+                  LEFT JOIN warehouses dest_wh ON dest_wh.id = d.warehouse_id
+                  LEFT JOIN projects dest_project ON dest_project.id = d.project_id";
 if ($project_id) {
     $baseWhere[] = "d.project_id = ?";
     $paramTypes .= "i";
@@ -396,20 +435,30 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Invalid upload request.');
             }
 
-            $delivery_id = isset($_POST['delivery_id']) ? (int)$_POST['delivery_id'] : 0;
-            if ($delivery_id <= 0) {
+            $delivery_ids_raw = trim((string)($_POST['delivery_ids'] ?? ''));
+            $delivery_ids = [];
+            if ($delivery_ids_raw !== '') {
+                $delivery_ids = array_values(array_unique(array_filter(array_map('intval', explode(',', $delivery_ids_raw)), static fn($id) => $id > 0)));
+            }
+            if (empty($delivery_ids) && isset($_POST['delivery_id'])) {
+                $legacy_delivery_id = (int)$_POST['delivery_id'];
+                if ($legacy_delivery_id > 0) {
+                    $delivery_ids = [$legacy_delivery_id];
+                }
+            }
+            if (empty($delivery_ids)) {
                 throw new Exception('Invalid delivery ID.');
             }
 
             $authorized_ids = getAuthorizedDeliveryIds(
                 $conn,
-                [$delivery_id],
+                $delivery_ids,
                 $project_id,
                 $source_vendor_name_for_batch,
                 $is_global_admin,
                 $account_id_for_admin
             );
-            if (empty($authorized_ids)) {
+            if (count($authorized_ids) !== count($delivery_ids)) {
                 throw new Exception('You are not authorized to upload POD for this delivery.');
             }
 
@@ -417,47 +466,56 @@ if ($can_manage_deliveries && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Please select a POD file to upload.');
             }
 
+            $meta_placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
             $stmtDeliveryMeta = $conn->prepare("
-                SELECT project_id, warehouse_id, status_of_delivery
+                SELECT id, project_id, warehouse_id, status_of_delivery
                 FROM deliveries
-                WHERE id = ?
-                LIMIT 1
+                WHERE id IN ($meta_placeholders)
             ");
             if (!$stmtDeliveryMeta) {
                 throw new Exception('Failed to fetch delivery context.');
             }
-            $stmtDeliveryMeta->bind_param("i", $delivery_id);
+            $stmtDeliveryMeta->bind_param(str_repeat('i', count($delivery_ids)), ...$delivery_ids);
             $stmtDeliveryMeta->execute();
-            $stmtDeliveryMeta->bind_result($pod_project_id, $pod_warehouse_id, $pod_delivery_status);
-            if (!$stmtDeliveryMeta->fetch()) {
-                $stmtDeliveryMeta->close();
-                throw new Exception('Delivery not found.');
+            $meta_result = $stmtDeliveryMeta->get_result();
+            $delivery_meta = [];
+            while ($meta_row = $meta_result->fetch_assoc()) {
+                $delivery_meta[(int)$meta_row['id']] = $meta_row;
             }
             $stmtDeliveryMeta->close();
+            if (count($delivery_meta) !== count($delivery_ids)) {
+                throw new Exception('Delivery not found.');
+            }
 
             $processed_file = processDocumentUpload($_FILES['pod_file'], 'pods');
+            $primary_delivery_id = $delivery_ids[0];
+            $primary_meta = $delivery_meta[$primary_delivery_id];
             $pod_sub_type = determineDocumentSubType('pods', [
-                'delivery_status' => $pod_delivery_status,
-                'warehouse_id' => $pod_warehouse_id
+                'delivery_status' => $primary_meta['status_of_delivery'] ?? '',
+                'warehouse_id' => $primary_meta['warehouse_id'] ?? null
             ]);
 
             $doc_result = saveDocumentToProjectDocuments($conn, [
-                'project_id' => $pod_project_id ?: null,
+                'project_id' => !empty($primary_meta['project_id']) ? (int)$primary_meta['project_id'] : null,
                 'document_type' => 'pods',
                 'document_sub_type' => $pod_sub_type,
-                'delivery_id' => $delivery_id,
-                'warehouse_id' => $pod_warehouse_id ?: null,
+                'delivery_id' => $primary_delivery_id,
+                'warehouse_id' => !empty($primary_meta['warehouse_id']) ? (int)$primary_meta['warehouse_id'] : null,
                 'original_name' => $processed_file['original_name'],
                 'file_size' => $processed_file['size'],
                 'mime_type' => $processed_file['mime_type'],
                 'uploaded_by' => $user_id,
                 'tmp_name' => $processed_file['tmp_name'],
-                'entity_context' => "POD uploaded from view_project for delivery ID: {$delivery_id}"
+                'entity_context' => "POD uploaded from view_project for delivery IDs: " . implode(',', $delivery_ids)
             ]);
+            $shared_file_path = $doc_result['file_path'];
 
-            $stmtUpdatePodPath = $conn->prepare("UPDATE deliveries SET proof_of_delivery = ? WHERE id = ?");
+            $update_placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
+            $stmtUpdatePodPath = $conn->prepare("UPDATE deliveries SET proof_of_delivery = ? WHERE id IN ($update_placeholders)");
             if ($stmtUpdatePodPath) {
-                $stmtUpdatePodPath->bind_param("si", $doc_result['file_path'], $delivery_id);
+                $update_types = 's' . str_repeat('i', count($delivery_ids));
+                $update_params = array_merge([$shared_file_path], $delivery_ids);
+                $stmtUpdatePodPath->bind_param($update_types, ...$update_params);
                 $stmtUpdatePodPath->execute();
                 $stmtUpdatePodPath->close();
             }
@@ -917,7 +975,17 @@ foreach ($bol_groups as $group_key => $group_rows) {
     $master['status_values'] = $status_values;
     $master['status_of_delivery'] = (count($status_values) <= 1) ? ($status_values[0] ?? '—') : 'Mixed Status';
     $master['anticipated_display'] = summarizeGroupedDate(array_column($group_rows, 'anticipated_delivery_date'));
-    $master['actual_display'] = summarizeGroupedDate(array_column($group_rows, 'actual_delivery_date'));
+    $master['actual_display'] = summarizeGroupedDate(array_map('deliveryActualDateValue', $group_rows));
+    $route_values = array_values(array_unique(array_filter(array_map('deliveryRouteLabel', $group_rows))));
+    $master['route_display'] = (count($route_values) <= 1) ? ($route_values[0] ?? '') : ('Multiple routes (' . count($route_values) . ')');
+    $pod_delivery_ids = [];
+    foreach ($group_rows as $row) {
+        if (!empty($row['proof_of_delivery']) || !empty($row['has_pod_in_documents'])) {
+            $pod_delivery_ids[] = (int)$row['id'];
+        }
+    }
+    $master['pod_delivery_ids'] = array_values(array_unique(array_filter($pod_delivery_ids)));
+    $master['primary_pod_delivery_id'] = $master['pod_delivery_ids'][0] ?? null;
     $master['contains_highlight'] = $highlight_delivery_id ? in_array($highlight_delivery_id, $group_ids, true) : false;
 
     $grouped_deliveries[] = $master;
@@ -2066,6 +2134,15 @@ if ($can_manage_deliveries) {
             font-weight: 500;
         }
 
+        .route-helper-text {
+            display: block;
+            margin-top: 5px;
+            color: #4b7280;
+            font-size: 0.78em;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+
         .modal-body form {
             padding: 20px;
         }
@@ -2370,7 +2447,7 @@ if ($can_manage_deliveries) {
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="actual-column" checked>
-                                Actual Date
+                                Actual / Arrival Date
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="pallets-column" checked>
@@ -2415,7 +2492,7 @@ if ($can_manage_deliveries) {
                             <th class="quantity-column">Quantity</th>
                             <th class="bol-column">BOL Number</th>
                             <th class="anticipated-column">Anticipated Date</th>
-                            <th class="actual-column">Actual Date</th>
+                            <th class="actual-column">Actual / Arrival Date</th>
                             <th class="pallets-column">Pallets</th>
                             <th class="scheduled-column">Scheduled</th>
                             <th class="pod-column">Proof of Delivery</th>
@@ -2430,7 +2507,12 @@ if ($can_manage_deliveries) {
                         $stmtPallets = null;
                         if ($palletConn && !$palletConn->connect_errno) {
                             $stmtPallets = $palletConn->prepare("
-                                SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity
+                                SELECT ip.id,
+                                       ip.pallet_identifier,
+                                       ip.manufacturer_pallet_id,
+                                       COALESCE(NULLIF(TRIM(ip.manufacturer_pallet_id), ''), ip.pallet_identifier) AS display_identifier,
+                                       ip.wattage,
+                                       ip.quantity
                                 FROM delivery_pallets dp
                                 JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
                                 WHERE dp.delivery_id = ?
@@ -2488,6 +2570,13 @@ if ($can_manage_deliveries) {
                                     break;
                                 }
                             }
+                            $podUploadIds = $delivery['is_grouped'] ? ($delivery['group_delivery_ids'] ?? [(int)$delivery['id']]) : [(int)$delivery['id']];
+                            $podUploadIdsCsv = implode(',', array_map('intval', $podUploadIds));
+                            $primaryPodDeliveryId = $delivery['is_grouped'] ? (int)($delivery['primary_pod_delivery_id'] ?? 0) : (int)$delivery['id'];
+                            $singleActualDate = $delivery['is_grouped'] ? null : deliveryActualDateValue($delivery);
+                            $actualDisplay = $delivery['is_grouped']
+                                ? (string)$delivery['actual_display']
+                                : ($singleActualDate ? date('m/d/Y', strtotime($singleActualDate)) : '—');
                             ?>
                             <tr class="<?php echo implode(' ', $rowClasses); ?>" data-group-index="<?php echo $groupIndex; ?>" <?php if (!empty($delivery['contains_highlight'])) echo 'id="highlighted-delivery"'; ?> <?php if ($delivery['is_grouped']): ?>onclick="toggleDeliveryDetails(<?php echo $groupIndex; ?>, event)"<?php endif; ?>>
                                 <?php if ($can_manage_deliveries): ?>
@@ -2525,9 +2614,14 @@ if ($can_manage_deliveries) {
                                     <span class="<?php echo $statusClass; ?>"><?php echo htmlspecialchars((string)$statusLabel); ?></span>
                                 </td>
                                 <td class="quantity-column"><?php echo (int)($delivery['is_grouped'] ? $delivery['total_quantity'] : $delivery['quantity']); ?></td>
-                                <td class="bol-column"><?php echo htmlspecialchars((string)($delivery['bol_number'] ?: '—')); ?></td>
+                                <td class="bol-column">
+                                    <?php echo htmlspecialchars((string)($delivery['bol_number'] ?: '—')); ?>
+                                    <?php if (!empty($delivery['route_display'])): ?>
+                                    <span class="route-helper-text"><?php echo htmlspecialchars((string)$delivery['route_display']); ?></span>
+                                    <?php endif; ?>
+                                </td>
                                 <td class="anticipated-column"><?php echo htmlspecialchars((string)($delivery['is_grouped'] ? $delivery['anticipated_display'] : ($delivery['anticipated_delivery_date'] ? date('m/d/Y', strtotime($delivery['anticipated_delivery_date'])) : '—'))); ?></td>
-                                <td class="actual-column"><?php echo htmlspecialchars((string)($delivery['is_grouped'] ? $delivery['actual_display'] : ($delivery['actual_delivery_date'] ? date('m/d/Y', strtotime($delivery['actual_delivery_date'])) : '—'))); ?></td>
+                                <td class="actual-column"><?php echo htmlspecialchars($actualDisplay); ?></td>
                                 <td class="pallets-column">
                                     <?php if ($palletCount): ?>
                                     <button type="button" class="action-btn action-btn-primary view-pallets-btn" data-pallets='<?php echo htmlspecialchars($palletData, ENT_QUOTES); ?>'>
@@ -2565,10 +2659,18 @@ if ($can_manage_deliveries) {
                                 </td>
                                 <td class="pod-column">
                                     <?php if ($delivery['is_grouped']): ?>
-                                        <?php if ($hasPodInGroup): ?>
-                                        <span class="status-badge status-delivered">POD available in details</span>
+                                        <?php if ($hasPodInGroup && $primaryPodDeliveryId > 0): ?>
+                                        <a href="view_pod?delivery_id=<?php echo $primaryPodDeliveryId; ?>" target="_blank" class="action-btn action-btn-primary">
+                                            <i class="fas fa-file-pdf"></i>
+                                            View POD
+                                        </a>
+                                        <?php elseif (in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'], true)): ?>
+                                        <button type="button" class="action-btn action-btn-outline" onclick="event.stopPropagation(); openUploadPodModal('<?php echo htmlspecialchars($podUploadIdsCsv, ENT_QUOTES); ?>');">
+                                            <i class="fas fa-upload"></i>
+                                            Upload POD
+                                        </button>
                                         <?php else: ?>
-                                        <span class="group-helper-text">Use detail rows for POD actions</span>
+                                        —
                                         <?php endif; ?>
                                     <?php else: ?>
                                         <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
@@ -2578,7 +2680,7 @@ if ($can_manage_deliveries) {
                                         </a>
                                         <?php else: ?>
                                             <?php if (in_array($_SESSION['role'], ['global_admin', 'admin', 'customer_admin'], true)): ?>
-                                            <button type="button" class="action-btn action-btn-outline" onclick="event.stopPropagation(); openUploadPodModal(<?php echo (int)$delivery['id']; ?>);">
+                                            <button type="button" class="action-btn action-btn-outline" onclick="event.stopPropagation(); openUploadPodModal('<?php echo (int)$delivery['id']; ?>');">
                                                 <i class="fas fa-upload"></i>
                                                 Upload POD
                                             </button>
@@ -2627,7 +2729,8 @@ if ($can_manage_deliveries) {
                                     <td class="quantity-column"><?php echo (int)$detailRow['quantity']; ?></td>
                                     <td class="bol-column">—</td>
                                     <td class="anticipated-column"><?php echo $detailRow['anticipated_delivery_date'] ? date('m/d/Y', strtotime($detailRow['anticipated_delivery_date'])) : '—'; ?></td>
-                                    <td class="actual-column"><?php echo $detailRow['actual_delivery_date'] ? date('m/d/Y', strtotime($detailRow['actual_delivery_date'])) : '—'; ?></td>
+                                    <?php $detailActualDate = deliveryActualDateValue($detailRow); ?>
+                                    <td class="actual-column"><?php echo $detailActualDate ? date('m/d/Y', strtotime($detailActualDate)) : '—'; ?></td>
                                     <td class="pallets-column">—</td>
                                     <td class="scheduled-column">
                                         <?php if ($detailRow['scheduled'] == 1 && !empty($detailRow['project_id']) && !empty($detailRow['appointment_id'])): ?>
@@ -2705,6 +2808,7 @@ if ($can_manage_deliveries) {
                 <form id="uploadPodForm" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="upload_pod">
                     <input type="hidden" name="delivery_id" id="uploadPodDeliveryId">
+                    <input type="hidden" name="delivery_ids" id="uploadPodDeliveryIds">
                     <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                     <div class="modal-form-grid">
                         <div class="modal-form-group" style="grid-column: 1 / -1;">
@@ -2909,7 +3013,7 @@ function showPalletModal(btn) {
         const body = tbl.createTBody();
         pallets.forEach((p) => {
             const r = body.insertRow();
-            r.insertCell().textContent = p.pallet_identifier || `ID: ${p.id}`;
+            r.insertCell().textContent = p.display_identifier || p.manufacturer_pallet_id || p.pallet_identifier || `ID: ${p.id}`;
             r.insertCell().textContent = p.wattage ? `${p.wattage}W` : '—';
             r.insertCell().textContent = p.quantity || '—';
             const act = r.insertCell();
@@ -2934,17 +3038,23 @@ function closeAssociatedPalletModal() {
     }
 }
 
-function openUploadPodModal(deliveryId) {
+function openUploadPodModal(deliveryIds) {
     if (!canManageDeliveries) {
         return;
     }
     uploadPodModal = document.getElementById('uploadPodModal');
     const deliveryInput = document.getElementById('uploadPodDeliveryId');
+    const deliveryIdsInput = document.getElementById('uploadPodDeliveryIds');
     const fileInput = document.getElementById('uploadPodFile');
-    if (!uploadPodModal || !deliveryInput) {
+    if (!uploadPodModal || !deliveryInput || !deliveryIdsInput) {
         return;
     }
-    deliveryInput.value = String(deliveryId || '');
+    const ids = String(deliveryIds || '')
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean);
+    deliveryInput.value = ids[0] || '';
+    deliveryIdsInput.value = ids.join(',');
     if (fileInput) {
         fileInput.value = '';
     }
