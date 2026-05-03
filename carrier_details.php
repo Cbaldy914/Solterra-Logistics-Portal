@@ -107,6 +107,8 @@ function build_params($carrier_types, $carrier_ids, $access_types, $access_param
     return [$types, $params];
 }
 
+$delivered_date_expr = "COALESCE(d.actual_delivery_date, d.warehouse_arrival_date)";
+
 // Get carrier aggregate stats
 $agg_sql = "
     SELECT
@@ -137,18 +139,18 @@ $ontime_sql = "
     SELECT
         COUNT(DISTINCT d.id) as total_completed,
         COUNT(DISTINCT CASE
-            WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
-            AND d.actual_delivery_date <= d.anticipated_delivery_date THEN d.id END) as on_time_count,
+            WHEN $delivered_date_expr IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
+            AND $delivered_date_expr <= d.anticipated_delivery_date THEN d.id END) as on_time_count,
         COUNT(DISTINCT CASE
-            WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
-            AND d.actual_delivery_date > d.anticipated_delivery_date THEN d.id END) as late_count,
+            WHEN $delivered_date_expr IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
+            AND $delivered_date_expr > d.anticipated_delivery_date THEN d.id END) as late_count,
         AVG(CASE
-            WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
-            AND d.actual_delivery_date > d.anticipated_delivery_date
-            THEN DATEDIFF(d.actual_delivery_date, d.anticipated_delivery_date) END) as avg_days_late
+            WHEN $delivered_date_expr IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
+            AND $delivered_date_expr > d.anticipated_delivery_date
+            THEN DATEDIFF($delivered_date_expr, d.anticipated_delivery_date) END) as avg_days_late
     FROM deliveries d
     WHERE $carrier_id_filter
-    AND d.actual_delivery_date IS NOT NULL
+    AND $delivered_date_expr IS NOT NULL
     AND d.project_id IN ($project_access_sql)
 ";
 $stmt_ontime = $conn->prepare($ontime_sql);
@@ -162,11 +164,12 @@ $stmt_ontime->close();
 
 $deliveries_on_time = (int)($ontime['on_time_count'] ?? 0);
 $deliveries_late = (int)($ontime['late_count'] ?? 0);
-$completed_deliveries = $deliveries_on_time + $deliveries_late;
+$completed_deliveries = (int)($ontime['total_completed'] ?? 0);
+$date_tracked_completed_deliveries = $deliveries_on_time + $deliveries_late;
 $avg_days_late = round((float)($ontime['avg_days_late'] ?? 0), 1);
-$on_time_rate = $completed_deliveries > 0 ? round(($deliveries_on_time / $completed_deliveries) * 100) : null;
+$on_time_rate = $date_tracked_completed_deliveries > 0 ? round(($deliveries_on_time / $date_tracked_completed_deliveries) * 100) : null;
 
-if ($completed_deliveries === 0) {
+if ($date_tracked_completed_deliveries === 0) {
     $on_time_label = 'N/A';
     $on_time_class = '';
 } else {
@@ -239,9 +242,10 @@ $proj_sql = "
         COUNT(DISTINCT d.id) as total_deliveries,
         COALESCE(SUM(d.freight_cost), 0) as project_freight_cost,
         COALESCE(SUM(d.miles), 0) as project_miles,
-        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL THEN d.id END) as completed_deliveries,
-        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
-                 AND d.actual_delivery_date <= d.anticipated_delivery_date THEN d.id END) as on_time
+        COUNT(DISTINCT CASE WHEN $delivered_date_expr IS NOT NULL THEN d.id END) as completed_deliveries,
+        COUNT(DISTINCT CASE WHEN $delivered_date_expr IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL THEN d.id END) as date_tracked_deliveries,
+        COUNT(DISTINCT CASE WHEN $delivered_date_expr IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
+                 AND $delivered_date_expr <= d.anticipated_delivery_date THEN d.id END) as on_time
     FROM projects p
     JOIN deliveries d ON d.project_id = p.id
     WHERE $carrier_id_filter
@@ -275,12 +279,12 @@ $timeline_sql = "
     GROUP BY week_ending
     UNION ALL
     SELECT
-        DATE_FORMAT(DATE_SUB(d.actual_delivery_date, INTERVAL (DAYOFWEEK(d.actual_delivery_date) - 1) DAY) + INTERVAL 6 DAY, '%Y-%m-%d') as week_ending,
+        DATE_FORMAT(DATE_SUB($delivered_date_expr, INTERVAL (DAYOFWEEK($delivered_date_expr) - 1) DAY) + INTERVAL 6 DAY, '%Y-%m-%d') as week_ending,
         'actual' as type,
         COUNT(DISTINCT d.id) as delivery_count
     FROM deliveries d
     WHERE $carrier_id_filter
-    AND d.actual_delivery_date IS NOT NULL
+    AND $delivered_date_expr IS NOT NULL
     AND d.project_id IN ($project_access_sql)
     GROUP BY week_ending
     ORDER BY week_ending, type
@@ -374,6 +378,8 @@ $del_sql = "
         d.bol_number,
         d.anticipated_delivery_date,
         d.actual_delivery_date,
+        d.warehouse_arrival_date,
+        $delivered_date_expr AS delivered_date,
         d.freight_cost,
         d.miles,
         d.carrier_reference_number,
@@ -384,7 +390,7 @@ $del_sql = "
     LEFT JOIN projects p ON p.id = d.project_id
     WHERE $carrier_id_filter
     AND d.project_id IN ($project_access_sql)
-    ORDER BY COALESCE(d.actual_delivery_date, d.anticipated_delivery_date) DESC
+    ORDER BY COALESCE($delivered_date_expr, d.anticipated_delivery_date) DESC
 ";
 $stmt_del = $conn->prepare($del_sql);
 list($bind_types, $bind_params) = build_params($carrier_bind_types, $carrier_bind_ids, $access_types, $access_params);
@@ -944,8 +950,9 @@ $compliance_badge = get_compliance_badge_html($carrier);
                 <?php foreach ($projects_for_carrier as $proj):
                     $proj_total_del = (int)$proj['total_deliveries'];
                     $proj_completed_del = (int)$proj['completed_deliveries'];
+                    $proj_date_tracked_del = (int)($proj['date_tracked_deliveries'] ?? 0);
                     $proj_on_time = (int)$proj['on_time'];
-                    $proj_on_time_pct = $proj_completed_del > 0 ? round(($proj_on_time / $proj_completed_del) * 100) : null;
+                    $proj_on_time_pct = $proj_date_tracked_del > 0 ? round(($proj_on_time / $proj_date_tracked_del) * 100) : null;
                     $proj_avg_cpm = $proj['project_miles'] > 0 ? $proj['project_freight_cost'] / $proj['project_miles'] : 0;
                 ?>
                 <div class="project-card" onclick="window.location.href='project_overview?project_id=<?php echo $proj['id']; ?>'">
@@ -1007,7 +1014,7 @@ $compliance_badge = get_compliance_badge_html($carrier);
                             <th>Project</th>
                             <th>Status</th>
                             <th>Anticipated Date</th>
-                            <th>Actual Date</th>
+                            <th>Actual / Arrival Date</th>
                             <th>Freight Cost</th>
                             <th>Miles</th>
                         </tr>
@@ -1017,18 +1024,19 @@ $compliance_badge = get_compliance_badge_html($carrier);
                             $del_status = 'pending';
                             $del_status_label = 'Pending';
                             $del_status_class = 'status-pending';
-                            if (!empty($del['actual_delivery_date']) && !empty($del['anticipated_delivery_date'])) {
-                                if ($del['actual_delivery_date'] <= $del['anticipated_delivery_date']) {
+                            $delivered_date = $del['delivered_date'] ?? null;
+                            if (!empty($delivered_date) && !empty($del['anticipated_delivery_date'])) {
+                                if ($delivered_date <= $del['anticipated_delivery_date']) {
                                     $del_status = 'on-time';
                                     $del_status_label = 'On Time';
                                     $del_status_class = 'status-delivered';
                                 } else {
                                     $del_status = 'late';
-                                    $days_late = (strtotime($del['actual_delivery_date']) - strtotime($del['anticipated_delivery_date'])) / 86400;
+                                    $days_late = (strtotime($delivered_date) - strtotime($del['anticipated_delivery_date'])) / 86400;
                                     $del_status_label = round($days_late) . 'd Late';
                                     $del_status_class = 'late';
                                 }
-                            } elseif (!empty($del['actual_delivery_date'])) {
+                            } elseif (!empty($delivered_date)) {
                                 $del_status_label = 'Delivered';
                                 $del_status_class = 'status-delivered';
                             } elseif (!empty($del['status_of_delivery']) && stripos($del['status_of_delivery'], 'transit') !== false) {
@@ -1045,7 +1053,7 @@ $compliance_badge = get_compliance_badge_html($carrier);
                             </td>
                             <td><span class="status-badge <?php echo $del_status_class; ?>"><?php echo $del_status_label; ?></span></td>
                             <td><?php echo !empty($del['anticipated_delivery_date']) ? date('M j, Y', strtotime($del['anticipated_delivery_date'])) : '—'; ?></td>
-                            <td><?php echo !empty($del['actual_delivery_date']) ? date('M j, Y', strtotime($del['actual_delivery_date'])) : '—'; ?></td>
+                            <td><?php echo !empty($delivered_date) ? date('M j, Y', strtotime($delivered_date)) : '—'; ?></td>
                             <td class="cost-highlight"><?php echo $del['freight_cost'] > 0 ? '$' . number_format($del['freight_cost'], 2) : '—'; ?></td>
                             <td><?php echo $del['miles'] > 0 ? number_format($del['miles'], 0) : '—'; ?></td>
                         </tr>
@@ -1094,8 +1102,8 @@ $compliance_badge = get_compliance_badge_html($carrier);
                     <div class="story-value <?php echo $on_time_class; ?>"><?php echo $on_time_label; ?></div>
                     <div class="story-subtitle">Percentage of deliveries that arrived on or before the anticipated delivery date.</div>
                     <div class="story-subtitle">
-                        <?php if ($completed_deliveries > 0): ?>
-                            <?php echo $deliveries_on_time; ?> of <?php echo $completed_deliveries; ?> deliveries arrived on time.
+                        <?php if ($date_tracked_completed_deliveries > 0): ?>
+                            <?php echo $deliveries_on_time; ?> of <?php echo $date_tracked_completed_deliveries; ?> date-tracked deliveries arrived on time.
                         <?php else: ?>
                             No completed deliveries with date tracking yet.
                         <?php endif; ?>
