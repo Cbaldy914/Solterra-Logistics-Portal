@@ -1218,16 +1218,42 @@ $flow_origin = [
     'manufacturer_names'  => [],
 ];
 
-$stmt_mfr = $conn->prepare("SELECT DISTINCT vendor_name FROM modules WHERE project_id = ? AND vendor_name IS NOT NULL AND vendor_name <> ''");
+// Pull manufacturer names via two paths and dedupe:
+//   (1) inventory_pallets.manufacturer_location_id → manufacturer_locations → manufacturers
+//   (2) modules.vendor_name fallback (legacy text, sometimes "Mfr - Location")
+$mfr_name_set = [];
+$stmt_mfr = $conn->prepare(
+    "SELECT DISTINCT name FROM (
+         SELECT mfg.name AS name
+           FROM modules m
+           JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+           JOIN inventory_pallets ip       ON ip.unassigned_module_item_id = umi.id
+           JOIN manufacturer_locations ml  ON ip.manufacturer_location_id = ml.id
+           JOIN manufacturers mfg          ON ml.manufacturer_id = mfg.id
+          WHERE m.project_id = ?
+         UNION
+         SELECT CASE
+                    WHEN LOCATE(' - ', m.vendor_name) > 0
+                        THEN TRIM(SUBSTRING_INDEX(m.vendor_name, ' - ', 1))
+                    ELSE m.vendor_name
+                END AS name
+           FROM modules m
+          WHERE m.project_id = ?
+            AND m.vendor_name IS NOT NULL
+            AND m.vendor_name <> ''
+     ) sub
+     WHERE name IS NOT NULL AND name <> ''"
+);
 if ($stmt_mfr) {
-    $stmt_mfr->bind_param('i', $project_id);
+    $stmt_mfr->bind_param('ii', $project_id, $project_id);
     $stmt_mfr->execute();
     $rmfr = $stmt_mfr->get_result();
     while ($mr = $rmfr->fetch_assoc()) {
-        $flow_origin['manufacturer_names'][] = $mr['vendor_name'];
+        $mfr_name_set[$mr['name']] = true;
     }
     $stmt_mfr->close();
 }
+$flow_origin['manufacturer_names'] = array_keys($mfr_name_set);
 
 // Stops: every warehouse this project's pallets have ever passed through. We
 // have to consider warehouses that appear either as a delivery destination
@@ -1332,6 +1358,7 @@ foreach ($ordered_wh_ids as $wid) {
         'modules'      => $cur_modules,
         'pallets'      => $cur_pallets,
         'is_empty'     => ($cur_modules === 0 && $cur_pallets === 0),
+        'first_seen'   => $wh_seen_at[$wid] ?? null,
     ];
 }
 
@@ -1351,6 +1378,7 @@ if (!$flow_has_manufacturer_phase) {
 }
 if (!$flow_has_manufacturer_phase && count($flow_stops) > 0) {
     $first_warehouse = array_shift($flow_stops);
+    $preserved_mfr_names = $flow_origin['manufacturer_names'] ?? [];
     $flow_origin = [
         'type'               => 'warehouse',
         'name'               => $first_warehouse['name'],
@@ -1358,9 +1386,12 @@ if (!$flow_has_manufacturer_phase && count($flow_stops) > 0) {
         'modules'            => $first_warehouse['modules'],
         'pallets'            => $first_warehouse['pallets'],
         'is_empty'           => $first_warehouse['is_empty'],
+        'first_seen'         => $first_warehouse['first_seen'] ?? null,
         'on_water_modules'   => 0,
         'customs_modules'    => 0,
-        'manufacturer_names' => [],
+        // Preserve original manufacturer names so the Procurement modal still
+        // surfaces them even when the journey starts at a warehouse.
+        'manufacturer_names' => $preserved_mfr_names,
     ];
 }
 
@@ -1518,6 +1549,230 @@ if ($stmt_recent) {
         $recent_activity[] = $r;
     }
     $stmt_recent->close();
+}
+
+// --------------- Project journey phase bar (Timeline tab) ---------------
+// Four lifecycle phases. Solterra's scope ends at the jobsite, not at
+// installation, so the bar tops out at "Delivered". Shipping is the umbrella
+// for everything between leaving the manufacturer and arriving on site
+// (warehouse stops + in-transit legs); the actual route is shown as a
+// sub-flow underneath the bar.
+$prod_active_modules = ($status_totals['At Manufacturer']['modules']  ?? 0)
+                     + ($status_totals['On Water']['modules']         ?? 0)
+                     + ($status_totals['Customs Hold']['modules']     ?? 0)
+                     + ($status_totals['Cleared Customs']['modules']  ?? 0);
+$shipping_active_modules = ($status_totals['In Transit to Warehouse']['modules'] ?? 0)
+                         + ($status_totals['In Warehouse']['modules']            ?? 0)
+                         + ($status_totals['In Transit to Project']['modules']   ?? 0);
+$delivered_modules_phase = ($status_totals['Delivered to Project']['modules']    ?? 0);
+$any_warehouse_seen      = !empty($flow_stops) || ($flow_origin['type'] === 'warehouse');
+$any_module_in_pipeline  = $flow_total_raw > 0;
+
+$phase_states = [
+    'procurement' => 'done',
+    'production'  => 'pending',
+    'shipping'    => 'pending',
+    'delivered'   => 'pending',
+];
+
+// Production: palletization. The phase represents "modules ordered are now
+// in pallets ready to ship." Done once every expected pallet exists.
+// (Full $expected_pallets / $actual_palletized_count come from queries lower
+// in this file, so we do an inline lookup here.)
+$tl_actual_pallets = 0;
+$stmt_apc = $conn->prepare(
+    "SELECT COUNT(*) AS c
+       FROM inventory_pallets ip
+       LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+       LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
+);
+if ($stmt_apc) {
+    $stmt_apc->bind_param('iii', $project_id, $project_id, $project_id);
+    $stmt_apc->execute();
+    $row = $stmt_apc->get_result()->fetch_assoc();
+    $tl_actual_pallets = (int)($row['c'] ?? 0);
+    $stmt_apc->close();
+}
+
+$tl_expected_pallets = 0;
+$stmt_epc = $conn->prepare(
+    "SELECT COALESCE(NULLIF(m.modules_per_pallet, 0), 30) AS mpp, SUM(umi.quantity) AS qty
+       FROM modules m
+       JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+       WHERE m.project_id = ? AND umi.quantity > 0
+       GROUP BY m.id, m.modules_per_pallet"
+);
+if ($stmt_epc) {
+    $stmt_epc->bind_param('i', $project_id);
+    $stmt_epc->execute();
+    $rep = $stmt_epc->get_result();
+    while ($r = $rep->fetch_assoc()) {
+        $mpp = max(1, (int)$r['mpp']);
+        $qty = (int)$r['qty'];
+        $tl_expected_pallets += (int)ceil($qty / $mpp);
+    }
+    $stmt_epc->close();
+}
+
+$is_fully_palletized = $tl_expected_pallets > 0 && $tl_actual_pallets >= $tl_expected_pallets;
+if ($is_fully_palletized) {
+    $phase_states['production'] = 'done';
+} elseif ($tl_actual_pallets > 0 || $prod_active_modules > 0) {
+    $phase_states['production'] = 'active';
+}
+
+// Shipping: anywhere between leaving the factory and arriving on site —
+// in-transit legs and warehouse staging both count.
+if ($shipping_active_modules > 0) {
+    $phase_states['shipping'] = 'active';
+} elseif ($any_warehouse_seen && $delivered_modules_phase > 0
+          && $delivered_modules_phase >= $flow_total_raw) {
+    $phase_states['shipping'] = 'done';
+}
+
+// Delivered: at the project site.
+if ($any_module_in_pipeline && $delivered_modules_phase >= $flow_total_raw) {
+    $phase_states['delivered'] = 'done';
+} elseif ($delivered_modules_phase > 0) {
+    $phase_states['delivered'] = 'active';
+}
+
+// First / last delivery dates, used by the Delivered phase modal and the
+// destination card in the sub-flow.
+$first_delivered_at = null;
+$last_delivered_at  = null;
+if ($delivered_modules_phase > 0) {
+    $stmt_dd = $conn->prepare(
+        "SELECT MIN(COALESCE(actual_delivery_date, warehouse_arrival_date)) AS first_d,
+                MAX(COALESCE(actual_delivery_date, warehouse_arrival_date)) AS last_d
+           FROM deliveries
+           WHERE project_id = ?
+             AND status_of_delivery = 'Delivered to Project'"
+    );
+    if ($stmt_dd) {
+        $stmt_dd->bind_param('i', $project_id);
+        $stmt_dd->execute();
+        $row = $stmt_dd->get_result()->fetch_assoc();
+        $first_delivered_at = $row['first_d'] ?? null;
+        $last_delivered_at  = $row['last_d']  ?? null;
+        $stmt_dd->close();
+    }
+}
+$flow_destination['first_delivered_at'] = $first_delivered_at;
+$flow_destination['last_delivered_at']  = $last_delivered_at;
+
+// Movement aggregates — one row per (origin → destination) pair for the
+// sub-flow edges. Used to label the connection between each pair of cards
+// and to populate the per-edge detail modal (shipment count, modules,
+// pallets, date range).
+$flow_movements = [];
+$stmt_mv = $conn->prepare(
+    "SELECT
+         d.origin_type,
+         d.origin_id,
+         d.warehouse_id,
+         SUM(d.quantity)        AS total_modules,
+         SUM(IFNULL(pc.cnt, 0)) AS total_pallets,
+         COUNT(*)               AS shipment_count,
+         SUM(CASE WHEN d.warehouse_arrival_date IS NOT NULL OR d.actual_delivery_date IS NOT NULL THEN 1 ELSE 0 END) AS completed_count,
+         SUM(CASE WHEN d.left_warehouse_date IS NOT NULL
+                       AND d.warehouse_arrival_date IS NULL
+                       AND d.actual_delivery_date IS NULL THEN 1 ELSE 0 END) AS in_flight_count,
+         MIN(COALESCE(d.actual_delivery_date, d.warehouse_arrival_date, d.left_warehouse_date)) AS first_date,
+         MAX(COALESCE(d.actual_delivery_date, d.warehouse_arrival_date, d.left_warehouse_date)) AS last_date
+       FROM deliveries d
+       LEFT JOIN (SELECT delivery_id, COUNT(*) AS cnt FROM delivery_pallets GROUP BY delivery_id) pc
+              ON pc.delivery_id = d.id
+       WHERE d.project_id = ?
+         AND (d.actual_delivery_date IS NOT NULL
+              OR d.warehouse_arrival_date IS NOT NULL
+              OR d.left_warehouse_date IS NOT NULL)
+       GROUP BY d.origin_type, d.origin_id, d.warehouse_id"
+);
+if ($stmt_mv) {
+    $stmt_mv->bind_param('i', $project_id);
+    $stmt_mv->execute();
+    $rmv = $stmt_mv->get_result();
+    while ($row = $rmv->fetch_assoc()) {
+        // Key: "<origin_kind:origin_id>=><dest_kind:dest_id>". Origin is
+        // either "manufacturer" or "warehouse:<id>"; dest is "warehouse:<id>"
+        // or "project" if warehouse_id is null (final-leg deliveries).
+        $from_key = $row['origin_type'] === 'warehouse'
+            ? 'warehouse:' . (int)$row['origin_id']
+            : 'manufacturer';
+        $to_key = !empty($row['warehouse_id'])
+            ? 'warehouse:' . (int)$row['warehouse_id']
+            : 'project';
+        $flow_movements[$from_key . '=>' . $to_key] = $row;
+    }
+    $stmt_mv->close();
+}
+
+// --------------- Timeline activity feed ---------------
+// Read-only chronological log of the most recent shipment events for this
+// project. Each delivery becomes one event row showing its most-progressed
+// state (delivered > arrived > departed). Same date+route+type events are
+// rolled up so 10 same-day same-route shipments collapse to one entry with
+// a "10 shipments" pill.
+$timeline_events = [];
+$stmt_tl = $conn->prepare(
+    "SELECT
+        sub.event_date,
+        sub.event_type,
+        sub.status_of_delivery,
+        sub.origin_type,
+        sub.origin_id,
+        sub.dest_warehouse_id,
+        w_dest.name   AS dest_warehouse_name,
+        w_origin.name AS origin_warehouse_name,
+        SUM(sub.qty)            AS qty,
+        SUM(sub.pallet_count)   AS pallet_count,
+        COUNT(*)                AS shipment_count
+       FROM (
+           SELECT
+               d.id,
+               d.status_of_delivery,
+               d.origin_type,
+               d.origin_id,
+               d.warehouse_id AS dest_warehouse_id,
+               d.quantity AS qty,
+               IFNULL(pc.cnt, 0) AS pallet_count,
+               CASE
+                   WHEN d.status_of_delivery = 'Delivered to Project' THEN 'delivered'
+                   WHEN d.warehouse_arrival_date IS NOT NULL THEN 'arrived'
+                   WHEN d.left_warehouse_date IS NOT NULL THEN 'departed'
+                   ELSE 'pending'
+               END AS event_type,
+               DATE(COALESCE(
+                   CASE WHEN d.status_of_delivery = 'Delivered to Project' THEN d.actual_delivery_date END,
+                   d.warehouse_arrival_date,
+                   d.left_warehouse_date
+               )) AS event_date
+           FROM deliveries d
+           LEFT JOIN (SELECT delivery_id, COUNT(*) AS cnt FROM delivery_pallets GROUP BY delivery_id) pc
+                  ON pc.delivery_id = d.id
+           WHERE d.project_id = ?
+             AND (d.actual_delivery_date IS NOT NULL
+                  OR d.warehouse_arrival_date IS NOT NULL
+                  OR d.left_warehouse_date IS NOT NULL)
+       ) sub
+       LEFT JOIN warehouses w_dest   ON sub.dest_warehouse_id = w_dest.id
+       LEFT JOIN warehouses w_origin ON (sub.origin_type = 'warehouse' AND sub.origin_id = w_origin.id)
+       WHERE sub.event_date IS NOT NULL
+       GROUP BY sub.event_date, sub.event_type, sub.status_of_delivery,
+                sub.origin_type, sub.origin_id, sub.dest_warehouse_id
+       ORDER BY sub.event_date DESC
+       LIMIT 100"
+);
+if ($stmt_tl) {
+    $stmt_tl->bind_param('i', $project_id);
+    $stmt_tl->execute();
+    $rt = $stmt_tl->get_result();
+    while ($row = $rt->fetch_assoc()) {
+        $timeline_events[] = $row;
+    }
+    $stmt_tl->close();
 }
 
 // JSON payload the front-end uses for unit conversion on the new flow widgets.

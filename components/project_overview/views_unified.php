@@ -423,6 +423,854 @@ document.addEventListener('keydown', function(e) {
             </div>
         </div>
 
+        <!-- Project Journey — 4-phase progress bar with clickable phases -->
+        <div class="journey-bar-card">
+            <div class="journey-bar-header">
+                <h2>Project Journey</h2>
+                <span class="journey-bar-caption">
+                    <?php echo $project_completion_percentage; ?>% delivered
+                    <?php if (!empty($est_completion_date_formatted)): ?>
+                        · <?php echo htmlspecialchars($project_health_text); ?>
+                    <?php endif; ?>
+                </span>
+            </div>
+            <?php
+            $phases_meta = [
+                ['key' => 'procurement', 'label' => 'Procurement', 'icon' => 'fa-file-signature'],
+                ['key' => 'production',  'label' => 'Production',  'icon' => 'fa-industry'],
+                ['key' => 'shipping',    'label' => 'Shipping',    'icon' => 'fa-truck-moving'],
+                ['key' => 'delivered',   'label' => 'Delivered',   'icon' => 'fa-flag-checkered'],
+            ];
+            ?>
+            <div class="journey-bar">
+                <?php foreach ($phases_meta as $i => $ph): ?>
+                    <?php $state = $phase_states[$ph['key']] ?? 'pending'; ?>
+                    <button type="button"
+                            class="journey-step journey-step-<?php echo $state; ?>"
+                            data-phase="<?php echo htmlspecialchars($ph['key']); ?>"
+                            title="Click for details">
+                        <div class="journey-step-dot">
+                            <i class="fas <?php echo $ph['icon']; ?>"></i>
+                        </div>
+                        <div class="journey-step-label"><?php echo htmlspecialchars($ph['label']); ?></div>
+                    </button>
+                    <?php if ($i < count($phases_meta) - 1): ?>
+                        <?php
+                        $next_state = $phase_states[$phases_meta[$i + 1]['key']] ?? 'pending';
+                        $connector_filled = ($state === 'done' && in_array($next_state, ['done', 'active'], true));
+                        ?>
+                        <div class="journey-connector<?php echo $connector_filled ? ' is-filled' : ''; ?>"></div>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </div>
+
+            <!-- Sub-flow: actual route the modules took / are taking. Cards
+                 are clickable for stop detail; edges between cards are
+                 clickable for movement detail (matches the journey-plan UI on
+                 anticipated_deliveries.php but for actuals). -->
+            <?php if ($flow_total_raw > 0): ?>
+            <?php
+            // Build an ordered list of route nodes: origin → stops → destination.
+            $route_nodes = [];
+
+            $origin_is_wh = ($flow_origin['type'] ?? 'manufacturer') === 'warehouse';
+            $origin_label = '';
+            if ($origin_is_wh) {
+                $origin_label = $flow_origin['name'] ?? 'Warehouse';
+            } else {
+                $mfr_names_label = $flow_origin['manufacturer_names'] ?? [];
+                if (count($mfr_names_label) === 0)      $origin_label = 'Manufacturer';
+                elseif (count($mfr_names_label) === 1)  $origin_label = $mfr_names_label[0];
+                elseif (count($mfr_names_label) <= 3)   $origin_label = implode(', ', $mfr_names_label);
+                else                                    $origin_label = count($mfr_names_label) . ' manufacturers';
+            }
+            $route_nodes[] = [
+                'idx'         => 0,
+                'kind'        => $origin_is_wh ? 'warehouse' : 'manufacturer',
+                'pos'         => 'origin',
+                'label'       => $origin_label,
+                'modules'     => (int)($flow_origin['modules'] ?? 0),
+                'pallets'     => (int)($flow_origin['pallets'] ?? 0),
+                'is_empty'    => !empty($flow_origin['is_empty']),
+                'first_seen'  => $flow_origin['first_seen'] ?? null,
+                'movement_key'=> $origin_is_wh ? ('warehouse:' . (int)($flow_origin['warehouse_id'] ?? 0)) : 'manufacturer',
+            ];
+
+            foreach ($flow_stops as $stop) {
+                $route_nodes[] = [
+                    'idx'         => count($route_nodes),
+                    'kind'        => 'warehouse',
+                    'pos'         => 'stop',
+                    'label'       => $stop['name'],
+                    'modules'     => $stop['modules'],
+                    'pallets'     => $stop['pallets'],
+                    'is_empty'    => !empty($stop['is_empty']),
+                    'first_seen'  => $stop['first_seen'] ?? null,
+                    'movement_key'=> 'warehouse:' . (int)$stop['warehouse_id'],
+                ];
+            }
+
+            $route_nodes[] = [
+                'idx'         => count($route_nodes),
+                'kind'        => 'project',
+                'pos'         => 'destination',
+                'label'       => $flow_destination['project_name'] ?? 'Project Site',
+                'modules'     => (int)$flow_destination['modules'],
+                'pallets'     => (int)$flow_destination['pallets'],
+                'is_empty'    => ((int)$flow_destination['modules'] === 0),
+                'first_seen'  => $flow_destination['first_delivered_at'] ?? null,
+                'movement_key'=> 'project',
+            ];
+
+            $kind_icons = [
+                'manufacturer' => 'fa-industry',
+                'warehouse'    => 'fa-warehouse',
+                'project'      => 'fa-flag-checkered',
+            ];
+            ?>
+            <div class="subflow">
+                <div class="subflow-header">
+                    <i class="fas fa-route"></i> Shipping Flow
+                    <span class="subflow-header-hint">Click a stop or arrow for details</span>
+                </div>
+                <div class="subflow-row">
+                    <?php foreach ($route_nodes as $node):
+                        $kind = $node['kind'];
+                        $icon = $kind_icons[$kind] ?? 'fa-circle';
+                        $cls_state = $node['is_empty'] ? 'subflow-stop-empty' : 'subflow-stop-active';
+                        if ($kind === 'project' && $node['modules'] === 0) $cls_state = 'subflow-stop-pending';
+                        $col_label = $node['pos'] === 'origin' ? 'Origin'
+                                   : ($node['pos'] === 'destination' ? 'Destination' : 'Stop');
+                        $first_seen_iso = $node['first_seen'] ?? '';
+                    ?>
+                        <button type="button"
+                                class="subflow-stop subflow-stop-<?php echo $kind; ?> <?php echo $cls_state; ?>"
+                                data-stop-idx="<?php echo (int)$node['idx']; ?>"
+                                data-stop-name="<?php echo htmlspecialchars($node['label']); ?>"
+                                data-stop-kind="<?php echo $kind; ?>"
+                                data-stop-pos="<?php echo $node['pos']; ?>"
+                                data-stop-modules="<?php echo (int)$node['modules']; ?>"
+                                data-stop-pallets="<?php echo (int)$node['pallets']; ?>"
+                                data-stop-empty="<?php echo $node['is_empty'] ? '1' : '0'; ?>"
+                                data-stop-since="<?php echo htmlspecialchars($first_seen_iso); ?>">
+                            <div class="subflow-stop-header">
+                                <span class="subflow-stop-icon"><i class="fas <?php echo $icon; ?>"></i></span>
+                                <span class="subflow-stop-col-label"><?php echo $col_label; ?></span>
+                            </div>
+                            <div class="subflow-stop-name"><?php echo htmlspecialchars($node['label']); ?></div>
+                            <div class="subflow-stop-meta">
+                                <?php if ($node['modules'] > 0): ?>
+                                    <span class="subflow-stop-count" data-flow-raw="<?php echo (int)$node['modules']; ?>">—</span>
+                                    <span data-flow-unit-suffix></span>
+                                <?php elseif ($node['is_empty'] && $kind === 'warehouse'): ?>
+                                    <span class="subflow-stop-empty-tag">passed through</span>
+                                <?php elseif ($kind === 'project'): ?>
+                                    <span class="subflow-stop-empty-tag">pending</span>
+                                <?php else: ?>
+                                    <span class="subflow-stop-empty-tag">—</span>
+                                <?php endif; ?>
+                                <?php if (!empty($first_seen_iso)): ?>
+                                    <span class="subflow-stop-meta-sep">·</span>
+                                    <span class="subflow-stop-since">since <?php echo (new DateTime($first_seen_iso))->format('M j'); ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </button>
+
+                        <?php
+                        // Edge after this node, if there's another node.
+                        if ($node['idx'] < count($route_nodes) - 1):
+                            $next_node = $route_nodes[$node['idx'] + 1];
+                            $edge_lookup = $node['movement_key'] . '=>' . $next_node['movement_key'];
+                            $edge_data = $flow_movements[$edge_lookup] ?? null;
+                            $edge_active = $edge_data && (int)$edge_data['shipment_count'] > 0;
+                            $edge_modules = (int)($edge_data['total_modules'] ?? 0);
+                            $edge_pallets = (int)($edge_data['total_pallets'] ?? 0);
+                            $edge_ship_count = (int)($edge_data['shipment_count'] ?? 0);
+                            $edge_completed = (int)($edge_data['completed_count'] ?? 0);
+                            $edge_in_flight = (int)($edge_data['in_flight_count'] ?? 0);
+                            $edge_first = $edge_data['first_date'] ?? '';
+                            $edge_last  = $edge_data['last_date']  ?? '';
+                            $edge_label = $edge_active
+                                ? ($edge_ship_count . ' shipment' . ($edge_ship_count === 1 ? '' : 's'))
+                                : 'pending';
+                            $edge_sublabel = '';
+                            if ($edge_active && $edge_first) {
+                                $f = new DateTime($edge_first);
+                                if ($edge_last && $edge_last !== $edge_first) {
+                                    $l = new DateTime($edge_last);
+                                    $edge_sublabel = $f->format('M j') . '–' . $l->format('M j');
+                                } else {
+                                    $edge_sublabel = $f->format('M j');
+                                }
+                            }
+                        ?>
+                            <button type="button"
+                                    class="subflow-edge<?php echo $edge_active ? ' subflow-edge-active' : ' subflow-edge-disabled'; ?>"
+                                    data-edge-from="<?php echo htmlspecialchars($node['label']); ?>"
+                                    data-edge-to="<?php echo htmlspecialchars($next_node['label']); ?>"
+                                    data-edge-modules="<?php echo $edge_modules; ?>"
+                                    data-edge-pallets="<?php echo $edge_pallets; ?>"
+                                    data-edge-shipments="<?php echo $edge_ship_count; ?>"
+                                    data-edge-completed="<?php echo $edge_completed; ?>"
+                                    data-edge-in-flight="<?php echo $edge_in_flight; ?>"
+                                    data-edge-first="<?php echo htmlspecialchars($edge_first); ?>"
+                                    data-edge-last="<?php echo htmlspecialchars($edge_last); ?>"
+                                    <?php echo $edge_active ? '' : 'disabled'; ?>>
+                                <div class="subflow-edge-line"></div>
+                                <div class="subflow-edge-pill">
+                                    <div class="subflow-edge-label"><?php echo htmlspecialchars($edge_label); ?></div>
+                                    <?php if ($edge_sublabel): ?>
+                                        <div class="subflow-edge-sublabel"><?php echo htmlspecialchars($edge_sublabel); ?></div>
+                                    <?php endif; ?>
+                                </div>
+                            </button>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
+            <!-- Shared modal for stop / edge detail -->
+            <div id="subflowModal" class="warehouse-selection-modal phase-modal" style="display:none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 id="subflowModalTitle"><i class="fas fa-warehouse"></i> <span id="subflowModalTitleText"></span></h3>
+                        <span class="close-modal" onclick="closeSubflowModal()">&times;</span>
+                    </div>
+                    <div class="modal-body" id="subflowModalBody"></div>
+                </div>
+            </div>
+
+            <script>
+            (function() {
+                var modal     = document.getElementById('subflowModal');
+                var titleIcon = document.querySelector('#subflowModalTitle i');
+                var titleText = document.getElementById('subflowModalTitleText');
+                var body      = document.getElementById('subflowModalBody');
+                if (!modal) return;
+
+                function openSubflowModal(html, title, iconClass) {
+                    body.innerHTML = html;
+                    titleText.textContent = title;
+                    titleIcon.className = 'fas ' + iconClass;
+                    modal.style.display = 'block';
+                    document.body.style.overflow = 'hidden';
+                    // Re-run unit conversion on the freshly injected content.
+                    if (typeof updateFlowWidgets === 'function') {
+                        var unit = document.querySelector('#tab-timeline .filter-chip.active');
+                        updateFlowWidgets(unit ? unit.dataset.unit : 'mws');
+                    }
+                }
+                window.closeSubflowModal = function() {
+                    modal.style.display = 'none';
+                    body.innerHTML = '';
+                    document.body.style.overflow = '';
+                };
+                modal.addEventListener('click', function(e) {
+                    if (e.target === modal) window.closeSubflowModal();
+                });
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape' && modal.style.display === 'block') window.closeSubflowModal();
+                });
+
+                function fmtDate(iso) {
+                    if (!iso) return '';
+                    var d = new Date(iso + 'T00:00:00');
+                    if (isNaN(d.getTime())) return iso;
+                    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                }
+
+                document.querySelectorAll('.subflow-stop[data-stop-idx]').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var name    = btn.dataset.stopName;
+                        var kind    = btn.dataset.stopKind;
+                        var pos     = btn.dataset.stopPos;
+                        var mods    = parseInt(btn.dataset.stopModules || '0', 10);
+                        var pallets = parseInt(btn.dataset.stopPallets || '0', 10);
+                        var empty   = btn.dataset.stopEmpty === '1';
+                        var since   = btn.dataset.stopSince;
+
+                        var posLabel = pos === 'origin' ? 'Origin' : (pos === 'destination' ? 'Destination' : 'Stop');
+                        var iconCls  = kind === 'manufacturer' ? 'fa-industry'
+                                      : kind === 'project' ? 'fa-flag-checkered'
+                                      : 'fa-warehouse';
+
+                        var stateRow = '';
+                        if (mods > 0) {
+                            stateRow = '<div class="phase-modal-stat-value">'
+                                     + '<span data-flow-raw="' + mods + '">—</span> '
+                                     + '<span class="phase-modal-stat-unit" data-flow-unit-suffix></span>'
+                                     + '</div>';
+                        } else if (empty && kind === 'warehouse') {
+                            stateRow = '<div class="phase-modal-stat-value phase-modal-muted">passed through</div>';
+                        } else if (kind === 'project') {
+                            stateRow = '<div class="phase-modal-stat-value phase-modal-muted">pending — no deliveries yet</div>';
+                        } else {
+                            stateRow = '<div class="phase-modal-stat-value phase-modal-muted">—</div>';
+                        }
+
+                        var html = '<div class="phase-modal-grid">'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">' + posLabel + '</div>'
+                                 + '    <div class="phase-modal-stat-value">' + name + '</div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Currently here</div>'
+                                 + stateRow
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Pallets</div>'
+                                 + '    <div class="phase-modal-stat-value">' + pallets.toLocaleString() + '</div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">' + (kind === 'project' ? 'First Delivery' : 'First Seen') + '</div>'
+                                 + '    <div class="phase-modal-stat-value">' + (since ? fmtDate(since) : '—') + '</div>'
+                                 + '  </div>'
+                                 + '</div>';
+
+                        openSubflowModal(html, name, iconCls);
+                    });
+                });
+
+                document.querySelectorAll('.subflow-edge:not([disabled])').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var from   = btn.dataset.edgeFrom;
+                        var to     = btn.dataset.edgeTo;
+                        var ships  = parseInt(btn.dataset.edgeShipments || '0', 10);
+                        var done   = parseInt(btn.dataset.edgeCompleted || '0', 10);
+                        var flying = parseInt(btn.dataset.edgeInFlight  || '0', 10);
+                        var mods   = parseInt(btn.dataset.edgeModules   || '0', 10);
+                        var plts   = parseInt(btn.dataset.edgePallets   || '0', 10);
+                        var first  = btn.dataset.edgeFirst;
+                        var last   = btn.dataset.edgeLast;
+
+                        var dateRange = first ? fmtDate(first) : '';
+                        if (last && last !== first) dateRange += ' – ' + fmtDate(last);
+
+                        var html = '<div class="phase-modal-grid">'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Total Shipments</div>'
+                                 + '    <div class="phase-modal-stat-value">' + ships.toLocaleString() + '</div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Modules Moved</div>'
+                                 + '    <div class="phase-modal-stat-value">'
+                                 + '      <span data-flow-raw="' + mods + '">—</span> '
+                                 + '      <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>'
+                                 + '    </div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Pallets Moved</div>'
+                                 + '    <div class="phase-modal-stat-value">' + plts.toLocaleString() + '</div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Date Range</div>'
+                                 + '    <div class="phase-modal-stat-value">' + (dateRange || '—') + '</div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">Completed</div>'
+                                 + '    <div class="phase-modal-stat-value">' + done.toLocaleString() + '</div>'
+                                 + '  </div>'
+                                 + '  <div class="phase-modal-stat">'
+                                 + '    <div class="phase-modal-stat-label">In Transit</div>'
+                                 + '    <div class="phase-modal-stat-value">' + flying.toLocaleString() + '</div>'
+                                 + '  </div>'
+                                 + '</div>';
+
+                        openSubflowModal(html, from + ' → ' + to, 'fa-truck-moving');
+                    });
+                });
+            })();
+            </script>
+            <?php endif; ?>
+
+            <?php if (!empty($est_completion_date_formatted) && !$step5_completed): ?>
+                <div class="journey-health-row health-<?php echo $project_health; ?>">
+                    <?php if ($project_health === 'at_risk'): ?>
+                        <span class="journey-health-icon">⚠️</span>
+                        <span class="journey-health-label">At Risk</span>
+                    <?php elseif ($project_health === 'behind'): ?>
+                        <span class="journey-health-icon">🚨</span>
+                        <span class="journey-health-label">Behind Schedule</span>
+                    <?php else: ?>
+                        <span class="journey-health-icon">📅</span>
+                        <span class="journey-health-label">Target: <?php echo $est_completion_date_formatted; ?></span>
+                        <?php if ($days_remaining !== null && $days_remaining > 0): ?>
+                            <span class="journey-health-days">(<?php echo $days_remaining; ?> days)</span>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                    <?php if (!empty($project_health_reason)): ?>
+                        <span class="journey-health-reason"><?php echo htmlspecialchars($project_health_reason); ?></span>
+                    <?php endif; ?>
+                </div>
+            <?php elseif ($step5_completed): ?>
+                <div class="journey-health-row health-completed">
+                    <span class="journey-health-icon">✅</span>
+                    <span class="journey-health-label">Project Complete</span>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Activity Feed -->
+        <div class="activity-feed-card">
+            <div class="activity-feed-header">
+                <h2>Activity</h2>
+                <a href="module_movements.php?project_id=<?php echo $project_id; ?>" class="view-all-link">Supply Chain Map</a>
+            </div>
+
+            <?php if (empty($timeline_events) && empty($project['created_at'])): ?>
+                <div class="activity-feed-empty">
+                    <i class="fas fa-stream"></i>
+                    <p>No shipment activity yet on this project.</p>
+                </div>
+            <?php else: ?>
+                <ul class="activity-feed-list" id="activityFeedList">
+                    <?php
+                    $today_dt = $today_dt ?? new DateTime('today');
+                    $event_meta = [
+                        'delivered' => ['icon' => 'fa-flag-checkered', 'verb' => 'Delivered to', 'cls' => 'event-delivered'],
+                        'arrived'   => ['icon' => 'fa-warehouse',      'verb' => 'Arrived at',   'cls' => 'event-arrived'],
+                        'departed'  => ['icon' => 'fa-truck-moving',   'verb' => 'Departed for', 'cls' => 'event-departed'],
+                    ];
+                    foreach ($timeline_events as $idx => $ev):
+                        $type = $ev['event_type'] ?? 'arrived';
+                        $meta = $event_meta[$type] ?? $event_meta['arrived'];
+                        $is_final = ($type === 'delivered');
+                        $dest_name = $is_final
+                            ? ($flow_destination['project_name'] ?? 'Project Site')
+                            : ($ev['dest_warehouse_name'] ?: 'Warehouse');
+                        $origin_name = ($ev['origin_type'] === 'warehouse' && $ev['origin_warehouse_name'])
+                            ? $ev['origin_warehouse_name']
+                            : 'Manufacturer';
+                        $event_date = new DateTime($ev['event_date']);
+                        $diff = (int)$event_date->diff($today_dt)->format('%r%a');
+                        if ($diff <= 0)      $rel = 'today';
+                        elseif ($diff === 1) $rel = 'yesterday';
+                        elseif ($diff < 7)   $rel = $diff . ' days ago';
+                        elseif ($diff < 30)  $rel = floor($diff/7) . 'w ago';
+                        else                 $rel = $event_date->format('M j');
+                        $qty_raw      = (int)($ev['qty'] ?? 0);
+                        $pallet_count = (int)($ev['pallet_count'] ?? 0);
+                        $ship_count   = (int)($ev['shipment_count'] ?? 1);
+                        $is_hidden = $idx >= 20;
+                    ?>
+                        <li class="activity-feed-row <?php echo $meta['cls']; ?>"<?php echo $is_hidden ? ' style="display:none;" data-feed-extra="1"' : ''; ?>>
+                            <div class="activity-feed-icon"><i class="fas <?php echo $meta['icon']; ?>"></i></div>
+                            <div class="activity-feed-body">
+                                <div class="activity-feed-headline">
+                                    <span class="activity-feed-verb"><?php echo $meta['verb']; ?></span>
+                                    <span class="activity-feed-where"><?php echo htmlspecialchars($dest_name); ?></span>
+                                    <span class="activity-feed-from">from <?php echo htmlspecialchars($origin_name); ?></span>
+                                    <?php if ($ship_count > 1): ?>
+                                        <span class="activity-pill activity-pill-count"><?php echo $ship_count; ?> shipments</span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="activity-feed-meta">
+                                    <span class="activity-qty">
+                                        <span data-flow-raw="<?php echo $qty_raw; ?>">—</span>
+                                        <span data-flow-unit-suffix></span>
+                                    </span>
+                                    <?php if ($pallet_count > 0): ?>
+                                        <span class="activity-meta-sep">·</span>
+                                        <span class="activity-pallets"><?php echo number_format($pallet_count); ?> pallet<?php echo $pallet_count===1?'':'s'; ?></span>
+                                    <?php endif; ?>
+                                    <span class="activity-when"><?php echo $event_date->format('M j, Y'); ?> · <?php echo $rel; ?></span>
+                                </div>
+                            </div>
+                        </li>
+                    <?php endforeach; ?>
+
+                    <!-- Project created anchor at the end -->
+                    <?php if (!empty($project['created_at'])):
+                        $created = new DateTime($project['created_at']);
+                        $diff = (int)$created->diff($today_dt)->format('%r%a');
+                        if ($diff < 7)        $rel = $diff . ' days ago';
+                        elseif ($diff < 30)   $rel = floor($diff/7) . 'w ago';
+                        elseif ($diff < 365)  $rel = floor($diff/30) . ' months ago';
+                        else                  $rel = floor($diff/365) . 'y ago';
+                        $is_anchor_hidden = count($timeline_events) >= 20;
+                    ?>
+                        <li class="activity-feed-row event-created"<?php echo $is_anchor_hidden ? ' style="display:none;" data-feed-extra="1"' : ''; ?>>
+                            <div class="activity-feed-icon"><i class="fas fa-flag"></i></div>
+                            <div class="activity-feed-body">
+                                <div class="activity-feed-headline">
+                                    <span class="activity-feed-verb">Project created</span>
+                                </div>
+                                <div class="activity-feed-meta">
+                                    <span class="activity-when"><?php echo $created->format('M j, Y'); ?> · <?php echo $rel; ?></span>
+                                </div>
+                            </div>
+                        </li>
+                    <?php endif; ?>
+                </ul>
+
+                <?php if (count($timeline_events) > 20): ?>
+                    <button type="button" class="activity-feed-loadmore" id="activityFeedLoadMore">
+                        Load more events
+                        <span class="activity-feed-loadmore-count">(+<?php echo count($timeline_events) - 20; ?>)</span>
+                    </button>
+                    <script>
+                    (function() {
+                        var btn = document.getElementById('activityFeedLoadMore');
+                        if (!btn) return;
+                        btn.addEventListener('click', function() {
+                            document.querySelectorAll('#activityFeedList [data-feed-extra]').forEach(function(el) {
+                                el.style.display = '';
+                            });
+                            btn.style.display = 'none';
+                        });
+                    })();
+                    </script>
+                <?php endif; ?>
+            <?php endif; ?>
+        </div>
+
+        <!-- Phase detail modals — opened by clicking a phase tile in the journey bar -->
+        <?php
+        $phase_modal_meta = [
+            'procurement' => [
+                'title' => 'Procurement',
+                'icon'  => 'fa-file-signature',
+            ],
+            'production' => [
+                'title' => 'Production',
+                'icon'  => 'fa-industry',
+            ],
+            'shipping' => [
+                'title' => 'Shipping',
+                'icon'  => 'fa-truck-moving',
+            ],
+            'delivered' => [
+                'title' => 'Delivered',
+                'icon'  => 'fa-flag-checkered',
+            ],
+        ];
+        ?>
+
+        <!-- Procurement modal -->
+        <div id="phaseModal-procurement" class="warehouse-selection-modal phase-modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-file-signature"></i> Procurement</h3>
+                    <span class="close-modal" onclick="closePhaseModal('procurement')">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div class="phase-modal-grid">
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Project</div>
+                            <div class="phase-modal-stat-value"><?php echo htmlspecialchars($project['project_name'] ?? '—'); ?></div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Project Size</div>
+                            <div class="phase-modal-stat-value"><?php echo number_format($project_size_mw, 2); ?> MW</div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Total Modules Ordered</div>
+                            <div class="phase-modal-stat-value"><?php echo number_format($total_raw_modules); ?></div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Project Created</div>
+                            <div class="phase-modal-stat-value"><?php echo !empty($project['created_at']) ? (new DateTime($project['created_at']))->format('M j, Y') : '—'; ?></div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Target Completion</div>
+                            <div class="phase-modal-stat-value"><?php echo !empty($est_completion_date_formatted) ? htmlspecialchars($est_completion_date_formatted) : 'Not set'; ?></div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Manufacturer<?php echo (count($flow_origin['manufacturer_names'] ?? []) === 1) ? '' : 's'; ?></div>
+                            <div class="phase-modal-stat-value">
+                                <?php
+                                $mfr_list = $flow_origin['manufacturer_names'] ?? [];
+                                if (empty($mfr_list)) echo '<span class="phase-modal-muted">Not specified</span>';
+                                else echo htmlspecialchars(implode(', ', $mfr_list));
+                                ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Production modal -->
+        <div id="phaseModal-production" class="warehouse-selection-modal phase-modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-industry"></i> Production</h3>
+                    <span class="close-modal" onclick="closePhaseModal('production')">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div class="phase-modal-grid">
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Modules Ordered</div>
+                            <div class="phase-modal-stat-value"><?php echo number_format($total_raw_modules); ?></div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Modules Palletized</div>
+                            <div class="phase-modal-stat-value">
+                                <?php echo number_format($flow_total_raw); ?>
+                                <?php if ($total_raw_modules > 0): ?>
+                                    <span class="phase-modal-stat-unit"><?php echo number_format(($flow_total_raw / $total_raw_modules) * 100, 0); ?>%</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Pallets Built</div>
+                            <div class="phase-modal-stat-value">
+                                <?php echo number_format($tl_actual_pallets); ?>
+                                <?php if ($tl_expected_pallets > 0): ?>
+                                    <span class="phase-modal-stat-unit">of <?php echo number_format($tl_expected_pallets); ?> expected</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">Manufacturer<?php echo (count($flow_origin['manufacturer_names'] ?? []) === 1) ? '' : 's'; ?></div>
+                            <div class="phase-modal-stat-value">
+                                <?php
+                                $mfr_list = $flow_origin['manufacturer_names'] ?? [];
+                                if (empty($mfr_list)) echo '<span class="phase-modal-muted">Not specified</span>';
+                                else echo htmlspecialchars(implode(', ', $mfr_list));
+                                ?>
+                            </div>
+                        </div>
+                        <?php
+                        // Surface upstream-of-warehouse counts only when they
+                        // actually exist (Solterra-tracked-from-manufacturer projects).
+                        $upstream_visible = false;
+                        foreach (['At Manufacturer', 'On Water', 'Customs Hold', 'Cleared Customs'] as $k) {
+                            if (($status_totals[$k]['modules'] ?? 0) > 0) { $upstream_visible = true; break; }
+                        }
+                        ?>
+                        <?php if ($upstream_visible): ?>
+                            <?php if (($status_totals['At Manufacturer']['modules'] ?? 0) > 0): ?>
+                                <div class="phase-modal-stat">
+                                    <div class="phase-modal-stat-label">At Manufacturer</div>
+                                    <div class="phase-modal-stat-value">
+                                        <span data-flow-raw="<?php echo (int)$status_totals['At Manufacturer']['modules']; ?>">—</span>
+                                        <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                            <?php if (($status_totals['On Water']['modules'] ?? 0) > 0): ?>
+                                <div class="phase-modal-stat">
+                                    <div class="phase-modal-stat-label">On Water</div>
+                                    <div class="phase-modal-stat-value">
+                                        <span data-flow-raw="<?php echo (int)$status_totals['On Water']['modules']; ?>">—</span>
+                                        <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                            <?php $customs_total = ($status_totals['Customs Hold']['modules'] ?? 0) + ($status_totals['Cleared Customs']['modules'] ?? 0); ?>
+                            <?php if ($customs_total > 0): ?>
+                                <div class="phase-modal-stat">
+                                    <div class="phase-modal-stat-label">In Customs</div>
+                                    <div class="phase-modal-stat-value">
+                                        <span data-flow-raw="<?php echo (int)$customs_total; ?>">—</span>
+                                        <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shipping modal -->
+        <div id="phaseModal-shipping" class="warehouse-selection-modal phase-modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-truck-moving"></i> Shipping</h3>
+                    <span class="close-modal" onclick="closePhaseModal('shipping')">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div class="phase-modal-grid">
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">In Transit Between Warehouses</div>
+                            <div class="phase-modal-stat-value">
+                                <span data-flow-raw="<?php echo (int)($status_totals['In Transit to Warehouse']['modules'] ?? 0); ?>">—</span>
+                                <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                            </div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">At Warehouses</div>
+                            <div class="phase-modal-stat-value">
+                                <span data-flow-raw="<?php echo (int)($status_totals['In Warehouse']['modules'] ?? 0); ?>">—</span>
+                                <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                            </div>
+                        </div>
+                        <div class="phase-modal-stat">
+                            <div class="phase-modal-stat-label">In Transit to Site</div>
+                            <div class="phase-modal-stat-value">
+                                <span data-flow-raw="<?php echo (int)($status_totals['In Transit to Project']['modules'] ?? 0); ?>">—</span>
+                                <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <?php if (!empty($flow_stops) || ($flow_origin['type'] ?? '') === 'warehouse'): ?>
+                        <h4 class="phase-modal-section-title">Warehouse Stops</h4>
+                        <ul class="phase-modal-list">
+                            <?php
+                            $modal_stops = [];
+                            if (($flow_origin['type'] ?? '') === 'warehouse') {
+                                $modal_stops[] = [
+                                    'name'       => $flow_origin['name'],
+                                    'modules'    => (int)$flow_origin['modules'],
+                                    'pallets'    => (int)$flow_origin['pallets'],
+                                    'is_empty'   => !empty($flow_origin['is_empty']),
+                                    'first_seen' => $flow_origin['first_seen'] ?? null,
+                                ];
+                            }
+                            foreach ($flow_stops as $stop) {
+                                $modal_stops[] = [
+                                    'name'       => $stop['name'],
+                                    'modules'    => $stop['modules'],
+                                    'pallets'    => $stop['pallets'],
+                                    'is_empty'   => !empty($stop['is_empty']),
+                                    'first_seen' => $stop['first_seen'] ?? null,
+                                ];
+                            }
+                            foreach ($modal_stops as $ms):
+                            ?>
+                                <li class="phase-modal-list-row">
+                                    <i class="fas fa-warehouse phase-modal-list-icon"></i>
+                                    <div class="phase-modal-list-text">
+                                        <div class="phase-modal-list-primary"><?php echo htmlspecialchars($ms['name']); ?></div>
+                                        <div class="phase-modal-list-secondary">
+                                            <?php if (!empty($ms['first_seen'])): ?>since <?php echo (new DateTime($ms['first_seen']))->format('M j, Y'); ?><?php endif; ?>
+                                        </div>
+                                    </div>
+                                    <div class="phase-modal-list-counts">
+                                        <?php if ($ms['is_empty']): ?>
+                                            <span class="phase-modal-list-empty">passed through</span>
+                                        <?php else: ?>
+                                            <span class="phase-modal-list-modules">
+                                                <span data-flow-raw="<?php echo (int)$ms['modules']; ?>">—</span>
+                                                <span data-flow-unit-suffix></span>
+                                            </span>
+                                            <span class="phase-modal-list-pallets"><?php echo number_format($ms['pallets']); ?> pallets</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endif; ?>
+
+                    <?php if (!empty($flow_wh_to_wh_moves)): ?>
+                        <h4 class="phase-modal-section-title">Active Transfers</h4>
+                        <ul class="phase-modal-list">
+                            <?php foreach ($flow_wh_to_wh_moves as $mv): ?>
+                                <li class="phase-modal-list-row">
+                                    <i class="fas fa-truck-moving phase-modal-list-icon" style="color:#9370DB;"></i>
+                                    <div class="phase-modal-list-text">
+                                        <div class="phase-modal-list-primary"><?php echo htmlspecialchars($mv['from_name']); ?> → <?php echo htmlspecialchars($mv['to_name']); ?></div>
+                                        <div class="phase-modal-list-secondary">in transit</div>
+                                    </div>
+                                    <div class="phase-modal-list-counts">
+                                        <span class="phase-modal-list-modules">
+                                            <span data-flow-raw="<?php echo (int)$mv['modules']; ?>">—</span>
+                                            <span data-flow-unit-suffix></span>
+                                        </span>
+                                        <span class="phase-modal-list-pallets"><?php echo number_format($mv['pallets']); ?> pallets</span>
+                                    </div>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endif; ?>
+
+                    <div class="phase-modal-footer">
+                        <a href="module_movements.php?project_id=<?php echo $project_id; ?>" class="phase-modal-link">
+                            <i class="fas fa-map-marked-alt"></i> Open Supply Chain Map
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delivered modal -->
+        <div id="phaseModal-delivered" class="warehouse-selection-modal phase-modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3><i class="fas fa-flag-checkered"></i> Delivered to Site</h3>
+                    <span class="close-modal" onclick="closePhaseModal('delivered')">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <?php if ($delivered_modules_phase <= 0): ?>
+                        <div class="phase-modal-empty">
+                            <i class="fas fa-flag-checkered"></i>
+                            <p>No modules have arrived at <?php echo htmlspecialchars($flow_destination['project_name'] ?? 'the project site'); ?> yet.</p>
+                        </div>
+                    <?php else: ?>
+                        <div class="phase-modal-grid">
+                            <div class="phase-modal-stat">
+                                <div class="phase-modal-stat-label">Delivered to Site</div>
+                                <div class="phase-modal-stat-value">
+                                    <span data-flow-raw="<?php echo (int)$delivered_modules_phase; ?>">—</span>
+                                    <span class="phase-modal-stat-unit" data-flow-unit-suffix></span>
+                                </div>
+                            </div>
+                            <div class="phase-modal-stat">
+                                <div class="phase-modal-stat-label">% Complete</div>
+                                <div class="phase-modal-stat-value"><?php echo $project_completion_percentage; ?>%</div>
+                            </div>
+                            <div class="phase-modal-stat">
+                                <div class="phase-modal-stat-label">First Delivery</div>
+                                <div class="phase-modal-stat-value"><?php echo !empty($flow_destination['first_delivered_at']) ? (new DateTime($flow_destination['first_delivered_at']))->format('M j, Y') : '—'; ?></div>
+                            </div>
+                            <div class="phase-modal-stat">
+                                <div class="phase-modal-stat-label">Most Recent Delivery</div>
+                                <div class="phase-modal-stat-value"><?php echo !empty($flow_destination['last_delivered_at']) ? (new DateTime($flow_destination['last_delivered_at']))->format('M j, Y') : '—'; ?></div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        (function() {
+            function openPhaseModal(phaseKey) {
+                var modal = document.getElementById('phaseModal-' + phaseKey);
+                if (!modal) return;
+                modal.style.display = 'block';
+                document.body.style.overflow = 'hidden';
+            }
+            window.closePhaseModal = function(phaseKey) {
+                var modal = document.getElementById('phaseModal-' + phaseKey);
+                if (modal) modal.style.display = 'none';
+                document.body.style.overflow = '';
+            };
+            document.querySelectorAll('.journey-step[data-phase]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    openPhaseModal(this.dataset.phase);
+                });
+            });
+            document.querySelectorAll('.phase-modal').forEach(function(modal) {
+                modal.addEventListener('click', function(e) {
+                    if (e.target === modal) {
+                        modal.style.display = 'none';
+                        document.body.style.overflow = '';
+                    }
+                });
+            });
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    document.querySelectorAll('.phase-modal').forEach(function(m) {
+                        if (m.style.display === 'block') {
+                            m.style.display = 'none';
+                            document.body.style.overflow = '';
+                        }
+                    });
+                }
+            });
+        })();
+        </script>
+
+        <?php
+        // Legacy 5-step timeline kept inert below to avoid breaking inbound
+        // hash links; visually replaced by the journey bar + activity feed
+        // above. Removed in favor of the redesigned event-driven layout.
+        if (false):
+        ?>
         <div class="timeline-container">
             <ul class="timeline<?php echo ($current_step >= 4) ? ' progress-past-planning' : ''; ?>" style="--progress-width: <?php echo $progress_percentage; ?>%">
 
@@ -762,6 +1610,7 @@ document.addEventListener('keydown', function(e) {
                 </li>
             </ul>
         </div>
+        <?php endif; // legacy 5-step timeline ?>
     </div>
 
 <!-- Site Tab -->
