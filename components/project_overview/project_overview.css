@@ -5754,6 +5754,7 @@
     flex-shrink: 0;
     min-width: 72px;
     text-align: center;
+    position: relative;
 }
 
 .journey-step-dot {
@@ -6003,11 +6004,56 @@ button.journey-step:hover .journey-step-dot {
     box-shadow: 0 6px 16px rgba(72,140,154,0.18);
 }
 
+/* Connector that visually anchors the Shipping Flow as a sub-section
+   branching off the Shipping tile in the journey bar. */
+.journey-bar-card { overflow: visible; }
+.journey-bar     { overflow: visible; }
+.journey-step    { overflow: visible; }
+
+.journey-step[data-phase="shipping"]::after {
+    content: '';
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 22px;
+    background: #cbd5e0;
+    border-radius: 1px;
+    pointer-events: none;
+}
+
+.journey-step[data-phase="shipping"].journey-step-active::after,
+.journey-step[data-phase="shipping"].journey-step-done::after {
+    background: linear-gradient(180deg, #488C9A 0%, #9bbac3 100%);
+}
+
+.journey-step[data-phase="shipping"]::before {
+    content: '';
+    position: absolute;
+    top: calc(100% + 26px);
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border: 2px solid #cbd5e0;
+    border-radius: 50%;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.journey-step[data-phase="shipping"].journey-step-active::before,
+.journey-step[data-phase="shipping"].journey-step-done::before {
+    border-color: #488C9A;
+}
+
 /* Sub-flow showing actual route below the journey bar — clickable journey-plan style */
 .subflow {
     margin-top: 22px;
     padding-top: 18px;
-    border-top: 1px dashed #e9ecef;
+    border-top: 2px solid #e9ecef;
+    position: relative;
 }
 
 .subflow-header {
@@ -6358,6 +6404,9 @@ button.subflow-edge:not([disabled]):hover .subflow-edge-pill {
     .journey-step { min-width: 60px; }
     .journey-step-label { font-size: 0.7rem; }
     .journey-connector { display: none; }
+    .journey-step[data-phase="shipping"]::before,
+    .journey-step[data-phase="shipping"]::after { display: none; }
+    .subflow { border-top-style: dashed; border-top-width: 1px; }
     .journey-bar-card { padding: 16px; }
     .activity-feed-card { padding: 16px; }
     .subflow-row { flex-direction: column; }
