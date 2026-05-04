@@ -77,7 +77,10 @@
       "Bash(node --check \"C:/Users/New User/AppData/Local/Temp/fbinline.js\")",
       "Bash(\"C:/xampp/mysql/bin/mysql.exe\" -u root --host=127.0.0.1 -e \"SHOW DATABASES;\")",
       "Bash(\"C:/xampp/mysql/bin/mysql.exe\" -u root -e \"SHOW DATABASES;\")",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" \"http://localhost/Solterra-Solutions/Solterra-Logistics-Portal/project_overview.php?project_id=174&tab=deliveries\")",
+      "Bash(curl -s \"http://localhost/Solterra-Solutions/Solterra-Logistics-Portal/project_overview.php?project_id=174&tab=deliveries\")",
+      "Bash(tasklist)"
     ],
     "deny": [],
     "ask": []

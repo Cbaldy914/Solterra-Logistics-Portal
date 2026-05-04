@@ -1116,18 +1116,6 @@ foreach ($status_totals as $status => $data) {
     }
 }
 
-$pieChartData = [
-    'Delivered to Project'    => 0,
-    'At Manufacturer'         => 0,
-    'On Water'                => 0,
-    'Customs Hold'            => 0,
-    'Cleared Customs'         => 0,
-    'In Transit to Warehouse' => 0,
-    'In Transit to Project'   => 0,
-    'In Warehouse'            => 0,
-    'Exceptions'              => 0,
-];
-
 $sub_rows        = [];
 $sub_rows_status = [];
 
@@ -1210,32 +1198,332 @@ foreach ($sub_rows_status as $srs) {
     $in_transit_to_project_combined += ($srs['in_transit_to_project'] ?? 0);
 }
 
-// Calculate pieChartData using the correct combined values
-$pieChartData['Delivered to Project']    = $delivered_combined;
-$pieChartData['At Manufacturer']         = $at_manufacturer_combined;
-$pieChartData['On Water']                = $on_water_combined;
-$pieChartData['Customs Hold']            = $customs_hold_combined;
-$pieChartData['Cleared Customs']         = $cleared_customs_combined;
-$pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
-$pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
-$pieChartData['In Warehouse']            = $in_warehouse_combined;
-$pieChartData['Exceptions']              = $exceptions_combined;
+// --------------- Module Flow data (redesigned Deliveries tab) ---------------
+// 3-column flow: Origin (manufacturer + on-water + customs)
+//                Stops  (warehouses currently holding pallets, plus active WH→WH transfers)
+//                Destination (project site, delivered)
 
-// Filter out statuses with 0 values (except always-visible ones)
-$filteredPieChartData = [];
-$alwaysVisible = ['At Manufacturer', 'Delivered to Project'];
-foreach ($pieChartData as $k => $v) {
-    if ($v > 0 || in_array($k, $alwaysVisible)) {
-        $filteredPieChartData[$k] = $v;
+$flow_origin = [
+    'modules' => ($status_totals['At Manufacturer']['modules']  ?? 0)
+               + ($status_totals['On Water']['modules']         ?? 0)
+               + ($status_totals['Customs Hold']['modules']     ?? 0)
+               + ($status_totals['Cleared Customs']['modules']  ?? 0),
+    'pallets' => ($status_totals['At Manufacturer']['pallets']  ?? 0)
+               + ($status_totals['On Water']['pallets']         ?? 0)
+               + ($status_totals['Customs Hold']['pallets']     ?? 0)
+               + ($status_totals['Cleared Customs']['pallets']  ?? 0),
+    'on_water_modules'    => $status_totals['On Water']['modules'] ?? 0,
+    'customs_modules'     => ($status_totals['Customs Hold']['modules'] ?? 0)
+                           + ($status_totals['Cleared Customs']['modules'] ?? 0),
+    'manufacturer_names'  => [],
+];
+
+$stmt_mfr = $conn->prepare("SELECT DISTINCT vendor_name FROM modules WHERE project_id = ? AND vendor_name IS NOT NULL AND vendor_name <> ''");
+if ($stmt_mfr) {
+    $stmt_mfr->bind_param('i', $project_id);
+    $stmt_mfr->execute();
+    $rmfr = $stmt_mfr->get_result();
+    while ($mr = $rmfr->fetch_assoc()) {
+        $flow_origin['manufacturer_names'][] = $mr['vendor_name'];
+    }
+    $stmt_mfr->close();
+}
+
+// Stops: every warehouse this project's pallets have ever passed through. We
+// have to consider warehouses that appear either as a delivery destination
+// (warehouse_id) or as a delivery origin (origin_type='warehouse'), because a
+// project Solterra picked up mid-flight may have a "starting" warehouse with no
+// inbound delivery on record. The list is then topologically sorted along
+// origin→destination edges so Kinston comes before Erwin even when both share
+// the same first-seen date.
+$flow_stops = [];
+$wh_nodes = [];   // wh_id => wh_name
+$wh_edges = [];   // wh_id => [next_wh_id, ...]
+$wh_seen_at = []; // wh_id => earliest event timestamp (for tiebreaks)
+
+$stmt_nodes = $conn->prepare(
+    "SELECT w.id, w.name,
+            MIN(COALESCE(d.warehouse_arrival_date, d.left_warehouse_date)) AS seen_at
+       FROM warehouses w
+       JOIN deliveries d ON (d.warehouse_id = w.id
+                             OR (d.origin_type = 'warehouse' AND d.origin_id = w.id))
+       WHERE d.project_id = ?
+         AND (d.warehouse_arrival_date IS NOT NULL OR d.left_warehouse_date IS NOT NULL)
+       GROUP BY w.id, w.name"
+);
+if ($stmt_nodes) {
+    $stmt_nodes->bind_param('i', $project_id);
+    $stmt_nodes->execute();
+    $rn = $stmt_nodes->get_result();
+    while ($row = $rn->fetch_assoc()) {
+        $wid = (int)$row['id'];
+        $wh_nodes[$wid] = $row['name'];
+        $wh_seen_at[$wid] = $row['seen_at'];
+        $wh_edges[$wid] = [];
+    }
+    $stmt_nodes->close();
+}
+
+$stmt_edges = $conn->prepare(
+    "SELECT DISTINCT d.origin_id AS from_id, d.warehouse_id AS to_id
+       FROM deliveries d
+       WHERE d.project_id = ?
+         AND d.origin_type = 'warehouse'
+         AND d.origin_id IS NOT NULL
+         AND d.warehouse_id IS NOT NULL
+         AND d.origin_id <> d.warehouse_id"
+);
+if ($stmt_edges) {
+    $stmt_edges->bind_param('i', $project_id);
+    $stmt_edges->execute();
+    $re = $stmt_edges->get_result();
+    while ($row = $re->fetch_assoc()) {
+        $f = (int)$row['from_id'];
+        $t = (int)$row['to_id'];
+        if (isset($wh_nodes[$f]) && isset($wh_nodes[$t])) {
+            $wh_edges[$f][] = $t;
+        }
+    }
+    $stmt_edges->close();
+}
+
+// Kahn's algorithm for topological sort, with tiebreak by first-seen date then name.
+$in_degree = array_fill_keys(array_keys($wh_nodes), 0);
+foreach ($wh_edges as $from => $tos) {
+    foreach ($tos as $to) {
+        $in_degree[$to] = ($in_degree[$to] ?? 0) + 1;
+    }
+}
+$ordered_wh_ids = [];
+while (!empty($in_degree)) {
+    $ready = array_keys(array_filter($in_degree, function($d) { return $d === 0; }));
+    if (empty($ready)) {
+        // Cycle (shouldn't happen for warehouse moves, but bail safely).
+        $ordered_wh_ids = array_merge($ordered_wh_ids, array_keys($in_degree));
+        break;
+    }
+    usort($ready, function($a, $b) use ($wh_seen_at, $wh_nodes) {
+        $sa = $wh_seen_at[$a] ?? '9999-12-31';
+        $sb = $wh_seen_at[$b] ?? '9999-12-31';
+        if ($sa !== $sb) return strcmp($sa, $sb);
+        return strcmp($wh_nodes[$a] ?? '', $wh_nodes[$b] ?? '');
+    });
+    foreach ($ready as $wid) {
+        $ordered_wh_ids[] = $wid;
+        unset($in_degree[$wid]);
+        foreach ($wh_edges[$wid] ?? [] as $next) {
+            if (isset($in_degree[$next])) $in_degree[$next]--;
+        }
     }
 }
 
-$total_pie = array_sum($filteredPieChartData);
-$pieChartPercentages = [];
-foreach ($filteredPieChartData as $k => $v) {
-    $perc = ($total_pie>0)?(($v/$total_pie)*100):0;
-    $pieChartPercentages[$k] = $perc;
+foreach ($ordered_wh_ids as $wid) {
+    $wh_name = $wh_nodes[$wid];
+    $cur_modules = 0;
+    $cur_pallets = 0;
+    if (isset($detailed_breakdown['In Warehouse - ' . $wh_name])) {
+        $info = $detailed_breakdown['In Warehouse - ' . $wh_name];
+        $cur_modules = (int)$info['total_modules'];
+        $cur_pallets = (int)$info['pallet_count'];
+    }
+    $flow_stops[] = [
+        'warehouse_id' => $wid,
+        'name'         => $wh_name,
+        'modules'      => $cur_modules,
+        'pallets'      => $cur_pallets,
+        'is_empty'     => ($cur_modules === 0 && $cur_pallets === 0),
+    ];
 }
+
+// If Solterra picked up the project mid-flight (i.e., no manufacturer phase
+// ever recorded), promote the first warehouse to be the Origin so the journey
+// reads "Kinston → Erwin → Site" instead of falsely starting at the factory.
+$flow_origin['type'] = 'manufacturer';
+$flow_has_manufacturer_phase = ($flow_origin['modules'] > 0) || ($flow_origin['pallets'] > 0);
+if (!$flow_has_manufacturer_phase) {
+    $stmt_check = $conn->prepare("SELECT 1 FROM deliveries WHERE project_id = ? AND origin_type = 'manufacturer' LIMIT 1");
+    if ($stmt_check) {
+        $stmt_check->bind_param('i', $project_id);
+        $stmt_check->execute();
+        $flow_has_manufacturer_phase = $stmt_check->get_result()->num_rows > 0;
+        $stmt_check->close();
+    }
+}
+if (!$flow_has_manufacturer_phase && count($flow_stops) > 0) {
+    $first_warehouse = array_shift($flow_stops);
+    $flow_origin = [
+        'type'               => 'warehouse',
+        'name'               => $first_warehouse['name'],
+        'warehouse_id'       => $first_warehouse['warehouse_id'] ?? null,
+        'modules'            => $first_warehouse['modules'],
+        'pallets'            => $first_warehouse['pallets'],
+        'is_empty'           => $first_warehouse['is_empty'],
+        'on_water_modules'   => 0,
+        'customs_modules'    => 0,
+        'manufacturer_names' => [],
+    ];
+}
+
+$flow_stops_total_count = count($flow_stops);
+$flow_stops_visible = array_slice($flow_stops, 0, 3);
+$flow_stops_overflow = max(0, $flow_stops_total_count - 3);
+$flow_stops_overflow_modules = 0;
+$flow_stops_overflow_pallets = 0;
+for ($i = 3; $i < $flow_stops_total_count; $i++) {
+    $flow_stops_overflow_modules += $flow_stops[$i]['modules'];
+    $flow_stops_overflow_pallets += $flow_stops[$i]['pallets'];
+}
+
+// Destination: project site, modules already arrived.
+$flow_destination = [
+    'project_name' => $project['project_name'] ?? 'Project Site',
+    'modules'      => $status_totals['Delivered to Project']['modules'] ?? 0,
+    'pallets'      => $status_totals['Delivered to Project']['pallets'] ?? 0,
+];
+
+// Active WH→WH transfers (modules currently moving between two warehouses).
+$flow_wh_to_wh_moves = [];
+$stmt_w2w = $conn->prepare(
+    "SELECT d.origin_id      AS from_warehouse_id,
+            w_from.name      AS from_name,
+            d.warehouse_id   AS to_warehouse_id,
+            w_to.name        AS to_name,
+            COUNT(DISTINCT dp.inventory_pallet_id) AS pallets,
+            SUM(ip.quantity) AS modules
+       FROM deliveries d
+       JOIN delivery_pallets dp ON dp.delivery_id = d.id
+       JOIN inventory_pallets ip ON ip.id = dp.inventory_pallet_id
+       LEFT JOIN warehouses w_from ON w_from.id = d.origin_id
+       LEFT JOIN warehouses w_to   ON w_to.id   = d.warehouse_id
+       WHERE d.project_id = ?
+         AND d.origin_type = 'warehouse'
+         AND d.warehouse_id IS NOT NULL
+         AND d.left_warehouse_date IS NOT NULL
+         AND d.warehouse_arrival_date IS NULL
+         AND ip.status = 'In Transit to Warehouse'
+       GROUP BY d.origin_id, d.warehouse_id"
+);
+if ($stmt_w2w) {
+    $stmt_w2w->bind_param('i', $project_id);
+    $stmt_w2w->execute();
+    $r2w = $stmt_w2w->get_result();
+    while ($mv = $r2w->fetch_assoc()) {
+        $flow_wh_to_wh_moves[] = [
+            'from_warehouse_id' => (int)$mv['from_warehouse_id'],
+            'from_name'         => $mv['from_name'] ?: 'Warehouse',
+            'to_warehouse_id'   => (int)$mv['to_warehouse_id'],
+            'to_name'           => $mv['to_name'] ?: 'Warehouse',
+            'modules'           => (int)$mv['modules'],
+            'pallets'           => (int)$mv['pallets'],
+        ];
+    }
+    $stmt_w2w->close();
+}
+$flow_wh_to_wh_total_modules = 0;
+foreach ($flow_wh_to_wh_moves as $mv) { $flow_wh_to_wh_total_modules += $mv['modules']; }
+
+// Connectors between columns (modules currently in flight on each leg).
+$flow_in_transit_to_warehouse_modules = max(
+    0,
+    ($status_totals['In Transit to Warehouse']['modules'] ?? 0) - $flow_wh_to_wh_total_modules
+);
+$flow_in_transit_to_warehouse_pallets = max(
+    0,
+    ($status_totals['In Transit to Warehouse']['pallets'] ?? 0)
+);
+$flow_in_transit_to_project_modules = $status_totals['In Transit to Project']['modules'] ?? 0;
+$flow_in_transit_to_project_pallets = $status_totals['In Transit to Project']['pallets'] ?? 0;
+
+// Headline totals for the caption above the flow.
+$flow_total_raw = $flow_origin['modules']
+                + ($status_totals['In Transit to Warehouse']['modules'] ?? 0)
+                + array_sum(array_column($flow_stops, 'modules'))
+                + ($status_totals['In Transit to Project']['modules'] ?? 0)
+                + $flow_destination['modules'];
+$flow_pct_delivered = $flow_total_raw > 0
+    ? ($flow_destination['modules'] / $flow_total_raw) * 100
+    : 0;
+
+// Next 3 upcoming scheduled deliveries — grouped by date+route so 10 trucks
+// arriving on the same day from the same origin show as one row, not ten.
+// Pallet counts come from a pre-aggregated subquery to avoid the JOIN
+// multiplication bug that inflates SUM(d.quantity) by pallet count.
+$next_deliveries = [];
+$stmt_next = $conn->prepare(
+    "SELECT MIN(d.anticipated_delivery_date) AS anticipated_delivery_date,
+            d.status_of_delivery,
+            d.origin_type,
+            d.origin_id,
+            d.warehouse_id AS dest_warehouse_id,
+            w_dest.name   AS dest_warehouse_name,
+            w_origin.name AS origin_warehouse_name,
+            SUM(d.quantity)        AS qty,
+            SUM(IFNULL(pc.cnt, 0)) AS pallet_count,
+            COUNT(*)               AS shipment_count
+       FROM deliveries d
+       LEFT JOIN (SELECT delivery_id, COUNT(*) AS cnt FROM delivery_pallets GROUP BY delivery_id) pc
+              ON pc.delivery_id = d.id
+       LEFT JOIN warehouses w_dest   ON d.warehouse_id = w_dest.id
+       LEFT JOIN warehouses w_origin ON (d.origin_type = 'warehouse' AND d.origin_id = w_origin.id)
+       WHERE d.project_id = ?
+         AND d.anticipated_delivery_date IS NOT NULL
+         AND d.anticipated_delivery_date >= CURDATE()
+         AND (d.status_of_delivery IS NULL OR d.status_of_delivery NOT IN ('Delivered to Project', 'Cancelled'))
+       GROUP BY DATE(d.anticipated_delivery_date),
+                d.status_of_delivery, d.origin_type, d.origin_id, d.warehouse_id
+       ORDER BY anticipated_delivery_date ASC
+       LIMIT 3"
+);
+if ($stmt_next) {
+    $stmt_next->bind_param('i', $project_id);
+    $stmt_next->execute();
+    $res_next = $stmt_next->get_result();
+    while ($r = $res_next->fetch_assoc()) {
+        $next_deliveries[] = $r;
+    }
+    $stmt_next->close();
+}
+
+// Recent activity: last 5 completed delivery events, also grouped by date+route
+// (same JOIN multiplication fix as next_deliveries).
+$recent_activity = [];
+$stmt_recent = $conn->prepare(
+    "SELECT MAX(COALESCE(d.actual_delivery_date, d.warehouse_arrival_date)) AS event_date,
+            d.status_of_delivery,
+            d.origin_type,
+            d.origin_id,
+            d.warehouse_id AS dest_warehouse_id,
+            w_dest.name   AS dest_warehouse_name,
+            w_origin.name AS origin_warehouse_name,
+            SUM(d.quantity)        AS qty,
+            SUM(IFNULL(pc.cnt, 0)) AS pallet_count,
+            COUNT(*)               AS shipment_count
+       FROM deliveries d
+       LEFT JOIN (SELECT delivery_id, COUNT(*) AS cnt FROM delivery_pallets GROUP BY delivery_id) pc
+              ON pc.delivery_id = d.id
+       LEFT JOIN warehouses w_dest   ON d.warehouse_id = w_dest.id
+       LEFT JOIN warehouses w_origin ON (d.origin_type = 'warehouse' AND d.origin_id = w_origin.id)
+       WHERE d.project_id = ?
+         AND (d.warehouse_arrival_date IS NOT NULL OR d.actual_delivery_date IS NOT NULL)
+       GROUP BY DATE(COALESCE(d.actual_delivery_date, d.warehouse_arrival_date)),
+                d.status_of_delivery, d.origin_type, d.origin_id, d.warehouse_id
+       ORDER BY event_date DESC
+       LIMIT 5"
+);
+if ($stmt_recent) {
+    $stmt_recent->bind_param('i', $project_id);
+    $stmt_recent->execute();
+    $rr = $stmt_recent->get_result();
+    while ($r = $rr->fetch_assoc()) {
+        $recent_activity[] = $r;
+    }
+    $stmt_recent->close();
+}
+
+// JSON payload the front-end uses for unit conversion on the new flow widgets.
+$flow_data_for_js = [
+    'avg_wattage' => $avg_wattage ?? 0,
+];
 
 // Next 5 weeks
 $today2 = new DateTime();

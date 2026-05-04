@@ -1164,153 +1164,326 @@ document.addEventListener('keydown', function(e) {
         </div>
         <?php endif; ?>
 
-        <div class="tables-and-charts">
-                <div class="left-side">
-                    <div class="cashflow-header">
-                        <h2>Next 5 Weeks of Deliveries</h2>
-                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
+        <!-- Module Flow — 3-column journey -->
+        <div class="flow-card">
+            <div class="flow-header">
+                <h2>Module Flow</h2>
+                <span class="flow-caption">
+                    <?php echo number_format($flow_total_raw); ?> modules tracked
+                    <?php if ($flow_total_raw > 0): ?>
+                        · <span class="flow-caption-pct"><?php echo number_format($flow_pct_delivered, 1); ?>% delivered to site</span>
+                    <?php endif; ?>
+                </span>
+            </div>
+
+            <?php if ($flow_total_raw <= 0): ?>
+                <div class="flow-empty">
+                    <i class="fas fa-boxes"></i>
+                    <p>No module flow data yet for this project.</p>
+                </div>
+            <?php else: ?>
+            <div class="flow-3col">
+                <!-- ORIGIN COLUMN -->
+                <?php $origin_is_warehouse = ($flow_origin['type'] ?? 'manufacturer') === 'warehouse'; ?>
+                <div class="flow-col flow-col-origin">
+                    <div class="flow-col-header">
+                        <i class="fas <?php echo $origin_is_warehouse ? 'fa-warehouse' : 'fa-industry'; ?>"></i>
+                        Origin
                     </div>
-                    <div class="table-responsive">
-                        <table id="table1">
-                            <thead>
-                                <tr>
-                                    <th data-full="Module Type"><span class="th-short">Type</span></th>
-                                    <th data-full="Total Order"><span class="th-short">Order</span></th>
-                                    <th data-full="Delivered"><span class="th-short">Deliv.</span></th>
-                                    <?php foreach($weeks as $wk): ?>
-                                        <th><?php echo $wk['end']->format('n/j'); ?></th>
-                                    <?php endforeach; ?>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr onclick="toggleSubRows('delivery-row')">
-                                    <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php foreach($anticipated_quantities_combined as $qq): ?>
-                                        <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
-                                    <?php endforeach;?>
-                                </tr>
-                                <?php foreach($sub_rows as $lbl=>$sr): ?>
-                                    <tr class="delivery-row" style="display:none;">
-                                        <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
-                                        <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
-                                        <?php foreach($sr['anticipated_quantities'] as $val): ?>
-                                            <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
-                                        <?php endforeach;?>
-                                    </tr>
-                                <?php endforeach;?>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="cashflow-header">
-                        <h2>Anticipated vs Actual Deliveries</h2>
-                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
-                    </div>
-                    <div class="chart-wrapper">
-                        <canvas id="lineChart"></canvas>
-                        <div class="chart-no-data" id="lineChartNoData" style="display:none;">
-                            <i class="fas fa-chart-line"></i>
-                            <p>No delivery data available yet</p>
+                    <div class="flow-node origin-node<?php echo ($origin_is_warehouse && !empty($flow_origin['is_empty'])) ? ' stop-passed-through' : ''; ?>">
+                        <?php if ($origin_is_warehouse): ?>
+                            <div class="flow-node-title"><?php echo htmlspecialchars($flow_origin['name']); ?></div>
+                            <div class="flow-node-subtitle">First Tracked</div>
+                        <?php else: ?>
+                            <div class="flow-node-title">
+                                <?php
+                                $mfr_names = $flow_origin['manufacturer_names'] ?? [];
+                                if (count($mfr_names) === 0)      echo 'Manufacturer';
+                                elseif (count($mfr_names) === 1)  echo htmlspecialchars($mfr_names[0]);
+                                elseif (count($mfr_names) <= 3)   echo htmlspecialchars(implode(', ', $mfr_names));
+                                else                              echo htmlspecialchars(count($mfr_names) . ' manufacturers');
+                                ?>
+                            </div>
+                        <?php endif; ?>
+                        <div class="flow-node-stats">
+                            <div class="flow-stat-primary">
+                                <span class="flow-stat-value" data-flow-raw="<?php echo (int)$flow_origin['modules']; ?>">—</span>
+                                <span class="flow-stat-unit" data-flow-unit-suffix></span>
+                            </div>
+                            <div class="flow-stat-pallets"><?php echo number_format($flow_origin['pallets']); ?> pallets</div>
                         </div>
+                        <?php if (!$origin_is_warehouse && (($flow_origin['on_water_modules'] ?? 0) > 0 || ($flow_origin['customs_modules'] ?? 0) > 0)): ?>
+                            <div class="flow-node-tags">
+                                <?php if (($flow_origin['on_water_modules'] ?? 0) > 0): ?>
+                                    <span class="flow-tag tag-water"><i class="fas fa-ship"></i> <span data-flow-raw="<?php echo (int)$flow_origin['on_water_modules']; ?>">—</span> on water</span>
+                                <?php endif; ?>
+                                <?php if (($flow_origin['customs_modules'] ?? 0) > 0): ?>
+                                    <span class="flow-tag tag-customs"><i class="fas fa-flag"></i> <span data-flow-raw="<?php echo (int)$flow_origin['customs_modules']; ?>">—</span> in customs</span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
 
-                <div class="right-side">
-                    <h2>Module Delivery Status</h2>
-                    <div class="table-responsive">
-                        <table id="table2">
-                            <thead>
-                                <tr>
-                                    <th data-full="Module Type"><span class="th-short">Type</span></th>
-                                    <th data-full="Total Order"><span class="th-short">Order</span></th>
-                                    <th data-full="At Manufacturer"><span class="th-short">At Mfr.</span></th>
-                                    <?php if ($on_water_combined > 0): ?>
-                                    <th data-full="On Water"><span class="th-short">Water</span></th>
+                <!-- ORIGIN → STOPS CONNECTOR -->
+                <div class="flow-arrow flow-arrow-h<?php echo $flow_in_transit_to_warehouse_modules > 0 ? ' flow-arrow-active' : ''; ?>">
+                    <div class="flow-arrow-line"></div>
+                    <?php if ($flow_in_transit_to_warehouse_modules > 0): ?>
+                        <span class="flow-arrow-label">
+                            <i class="fas fa-truck-moving"></i>
+                            <span data-flow-raw="<?php echo (int)$flow_in_transit_to_warehouse_modules; ?>">—</span>
+                            in transit
+                        </span>
+                    <?php endif; ?>
+                </div>
+
+                <!-- STOPS COLUMN -->
+                <div class="flow-col flow-col-stops">
+                    <div class="flow-col-header"><i class="fas fa-warehouse"></i> Stops</div>
+                    <?php if (empty($flow_stops_visible) && empty($flow_wh_to_wh_moves)): ?>
+                        <div class="flow-node flow-node-empty stop-node">
+                            <div class="flow-node-title-muted">No active warehouse stops</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="flow-stops-list">
+                            <?php foreach ($flow_stops_visible as $idx => $stop): ?>
+                                <?php
+                                $is_last_visible = ($idx === count($flow_stops_visible) - 1);
+                                $next_stop_id = $is_last_visible ? null : $flow_stops_visible[$idx + 1]['warehouse_id'];
+                                $w2w_to_next = null;
+                                if (!$is_last_visible) {
+                                    foreach ($flow_wh_to_wh_moves as $mv) {
+                                        if ((int)$mv['from_warehouse_id'] === (int)$stop['warehouse_id']
+                                            && (int)$mv['to_warehouse_id'] === (int)$next_stop_id) {
+                                            $w2w_to_next = $mv;
+                                            break;
+                                        }
+                                    }
+                                }
+                                ?>
+                                <div class="flow-node stop-node<?php echo !empty($stop['is_empty']) ? ' stop-passed-through' : ''; ?>" data-warehouse-id="<?php echo (int)$stop['warehouse_id']; ?>">
+                                    <div class="flow-node-title"><?php echo htmlspecialchars($stop['name']); ?></div>
+                                    <?php if (!empty($stop['is_empty'])): ?>
+                                        <div class="flow-node-subtitle">Passed through</div>
                                     <?php endif; ?>
-                                    <?php if ($customs_hold_combined > 0): ?>
-                                    <th data-full="Customs Hold"><span class="th-short">Hold</span></th>
-                                    <?php endif; ?>
-                                    <?php if ($cleared_customs_combined > 0): ?>
-                                    <th data-full="Cleared Customs"><span class="th-short">Customs</span></th>
-                                    <?php endif; ?>
-                                    <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                    <th data-full="In Transit to Warehouse" title="In Transit to Warehouse"><span class="th-short">Transit-Whse</span></th>
-                                    <?php endif; ?>
-                                    <?php if ($in_warehouse_combined > 0): ?>
-                                    <th data-full="In Warehouse"><span class="th-short">Whse</span></th>
-                                    <?php endif; ?>
-                                    <?php if ($in_transit_to_project_combined > 0): ?>
-                                    <th data-full="In Transit to Project" title="In Transit to Project"><span class="th-short">Transit-Proj</span></th>
-                                    <?php endif; ?>
-                                    <th data-full="Delivered to Project"><span class="th-short">Delivered</span></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr onclick="toggleSubRows('status-row')">
-                                    <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($at_manufacturer_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php if ($on_water_combined > 0): ?>
-                                    <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php endif; ?>
-                                    <?php if ($customs_hold_combined > 0): ?>
-                                    <td><?php echo number_format($customs_hold_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php endif; ?>
-                                    <?php if ($cleared_customs_combined > 0): ?>
-                                    <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php endif; ?>
-                                    <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                    <td><?php echo number_format($in_transit_to_warehouse_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php endif; ?>
-                                    <?php if ($in_warehouse_combined > 0): ?>
-                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php endif; ?>
-                                    <?php if ($in_transit_to_project_combined > 0): ?>
-                                    <td><?php echo number_format($in_transit_to_project_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php endif; ?>
-                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                </tr>
-                                <?php foreach($sub_rows_status as $lbl=>$srs): ?>
-                                    <tr class="status-row" style="display:none;">
-                                        <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
-                                        <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format(($srs['at_manufacturer'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php if ($on_water_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['on_water'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <?php if ($customs_hold_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['customs_hold'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <?php if ($cleared_customs_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['cleared_customs'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['in_transit_to_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <?php if ($in_warehouse_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['in_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <?php if ($in_transit_to_project_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['in_transit_to_project'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
-                                    </tr>
-                                <?php endforeach;?>
-                            </tbody>
-                        </table>
-                    </div>
-                    <h2>Delivery Overview</h2>
-                    <div class="chart-container">
-                        <canvas id="pieChart"></canvas>
-                        <div class="chart-no-data" id="pieChartNoData" style="display:none;">
-                            <i class="fas fa-chart-pie"></i>
-                            <p>No delivery status data yet</p>
+                                    <div class="flow-node-stats">
+                                        <div class="flow-stat-primary">
+                                            <span class="flow-stat-value" data-flow-raw="<?php echo (int)$stop['modules']; ?>">—</span>
+                                            <span class="flow-stat-unit" data-flow-unit-suffix></span>
+                                        </div>
+                                        <div class="flow-stat-pallets"><?php echo number_format($stop['pallets']); ?> pallets</div>
+                                    </div>
+                                </div>
+                                <?php if ($w2w_to_next): ?>
+                                    <div class="flow-stop-connector">
+                                        <i class="fas fa-arrow-down"></i>
+                                        <span class="flow-stop-connector-text">
+                                            <span data-flow-raw="<?php echo (int)$w2w_to_next['modules']; ?>">—</span>
+                                            moving to <?php echo htmlspecialchars($w2w_to_next['to_name']); ?>
+                                        </span>
+                                    </div>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+
+                            <?php if ($flow_stops_overflow > 0): ?>
+                                <a class="flow-stops-overflow" href="module_movements.php?project_id=<?php echo $project_id; ?>" title="View all warehouses on the movements page">
+                                    +<?php echo (int)$flow_stops_overflow; ?> more warehouse<?php echo $flow_stops_overflow === 1 ? '' : 's'; ?>
+                                    · <span data-flow-raw="<?php echo (int)$flow_stops_overflow_modules; ?>">—</span>
+                                </a>
+                            <?php endif; ?>
+
+                            <?php
+                            // Surface any WH→WH transfers that aren't already drawn between adjacent visible stops.
+                            $rendered_w2w = [];
+                            foreach ($flow_stops_visible as $idx => $stop) {
+                                if ($idx === count($flow_stops_visible) - 1) break;
+                                $next_id = $flow_stops_visible[$idx + 1]['warehouse_id'];
+                                foreach ($flow_wh_to_wh_moves as $mv) {
+                                    if ((int)$mv['from_warehouse_id'] === (int)$stop['warehouse_id']
+                                        && (int)$mv['to_warehouse_id'] === (int)$next_id) {
+                                        $rendered_w2w[] = $mv['from_warehouse_id'] . '->' . $mv['to_warehouse_id'];
+                                    }
+                                }
+                            }
+                            $extra_moves = array_filter($flow_wh_to_wh_moves, function($mv) use ($rendered_w2w) {
+                                return !in_array($mv['from_warehouse_id'] . '->' . $mv['to_warehouse_id'], $rendered_w2w, true);
+                            });
+                            ?>
+                            <?php foreach ($extra_moves as $mv): ?>
+                                <div class="flow-stop-connector flow-stop-connector-extra">
+                                    <i class="fas fa-truck-moving"></i>
+                                    <span class="flow-stop-connector-text">
+                                        <span data-flow-raw="<?php echo (int)$mv['modules']; ?>">—</span>
+                                        moving <?php echo htmlspecialchars($mv['from_name']); ?> → <?php echo htmlspecialchars($mv['to_name']); ?>
+                                    </span>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- STOPS → DESTINATION CONNECTOR -->
+                <div class="flow-arrow flow-arrow-h<?php echo $flow_in_transit_to_project_modules > 0 ? ' flow-arrow-active' : ''; ?>">
+                    <div class="flow-arrow-line"></div>
+                    <?php if ($flow_in_transit_to_project_modules > 0): ?>
+                        <span class="flow-arrow-label">
+                            <i class="fas fa-truck"></i>
+                            <span data-flow-raw="<?php echo (int)$flow_in_transit_to_project_modules; ?>">—</span>
+                            in transit
+                        </span>
+                    <?php endif; ?>
+                </div>
+
+                <!-- DESTINATION COLUMN -->
+                <div class="flow-col flow-col-destination">
+                    <div class="flow-col-header"><i class="fas fa-flag-checkered"></i> Destination</div>
+                    <div class="flow-node destination-node">
+                        <div class="flow-node-title"><?php echo htmlspecialchars($flow_destination['project_name']); ?></div>
+                        <div class="flow-node-subtitle">Project Site</div>
+                        <div class="flow-node-stats">
+                            <div class="flow-stat-primary">
+                                <span class="flow-stat-value" data-flow-raw="<?php echo (int)$flow_destination['modules']; ?>">—</span>
+                                <span class="flow-stat-unit" data-flow-unit-suffix></span>
+                            </div>
+                            <div class="flow-stat-pallets"><?php echo number_format($flow_destination['pallets']); ?> pallets</div>
                         </div>
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
+
+            <div class="flow-card-footer">
+                <a href="module_movements.php?project_id=<?php echo $project_id; ?>" class="flow-card-footer-link">
+                    <i class="fas fa-map-marked-alt"></i> View on map
+                </a>
+            </div>
+        </div>
+
+        <div class="deliveries-grid">
+            <!-- LEFT: Delivery forecast chart + Next Up -->
+            <div class="deliveries-card forecast-card">
+                <div class="cashflow-header">
+                    <h2>Delivery Forecast</h2>
+                    <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>" class="view-all-link" title="Data from Project Planning"><?php echo $has_projection ? 'View Plan' : 'Add Plan'; ?></a>
+                </div>
+                <div class="forecast-chart-wrapper">
+                    <canvas id="lineChart"></canvas>
+                    <div class="chart-no-data" id="lineChartNoData" style="display:none;">
+                        <i class="fas fa-chart-line"></i>
+                        <p>No delivery data available yet</p>
+                    </div>
+                </div>
+
+                <h3 class="activity-list-title"><i class="fas fa-arrow-right"></i> Next Up</h3>
+                <?php if (empty($next_deliveries)): ?>
+                    <div class="activity-list-empty">No scheduled deliveries on the books.</div>
+                <?php else: ?>
+                    <ul class="activity-list">
+                        <?php
+                        $today_dt = new DateTime('today');
+                        foreach ($next_deliveries as $nd):
+                            $dest = $nd['dest_warehouse_name'] ?: 'Project Site';
+                            $origin = ($nd['origin_type'] === 'warehouse' && $nd['origin_warehouse_name'])
+                                      ? $nd['origin_warehouse_name']
+                                      : 'Manufacturer';
+                            $eta = new DateTime($nd['anticipated_delivery_date']);
+                            $diff = (int)$today_dt->diff($eta)->format('%r%a');
+                            if ($diff < 0)       $rel = abs($diff) . ' day' . (abs($diff)===1?'':'s') . ' overdue';
+                            elseif ($diff === 0) $rel = 'today';
+                            elseif ($diff === 1) $rel = 'tomorrow';
+                            else                 $rel = 'in ' . $diff . ' days';
+                            $qty_raw = (int)($nd['qty'] ?? 0);
+                            $pallet_count = (int)($nd['pallet_count'] ?? 0);
+                        ?>
+                            <?php $ship_count = (int)($nd['shipment_count'] ?? 1); ?>
+                            <li class="activity-row">
+                                <div class="activity-route">
+                                    <span class="route-origin"><?php echo htmlspecialchars($origin); ?></span>
+                                    <i class="fas fa-arrow-right route-arrow"></i>
+                                    <span class="route-dest"><?php echo htmlspecialchars($dest); ?></span>
+                                    <?php if ($ship_count > 1): ?>
+                                        <span class="activity-pill activity-pill-count"><?php echo $ship_count; ?> shipments</span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="activity-meta">
+                                    <span class="activity-qty">
+                                        <span data-flow-raw="<?php echo $qty_raw; ?>">—</span>
+                                        <span data-flow-unit-suffix></span>
+                                    </span>
+                                    <?php if ($pallet_count > 0): ?>
+                                        <span class="activity-meta-sep">·</span>
+                                        <span class="activity-pallets"><?php echo number_format($pallet_count); ?> pallet<?php echo $pallet_count===1?'':'s'; ?></span>
+                                    <?php endif; ?>
+                                    <span class="activity-when"><?php echo $eta->format('M j'); ?> · <?php echo $rel; ?></span>
+                                </div>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+
+            <!-- RIGHT: Recent Activity (last 5 completed events) -->
+            <div class="deliveries-card recent-card">
+                <div class="cashflow-header">
+                    <h2>Recent Activity</h2>
+                    <a href="project_overview.php?project_id=<?php echo $project_id; ?>#tab-timeline" class="view-all-link">View Timeline</a>
+                </div>
+                <?php if (empty($recent_activity)): ?>
+                    <div class="activity-list-empty" style="padding-top: 24px;">No completed shipments yet.</div>
+                <?php else: ?>
+                    <ul class="activity-list">
+                        <?php
+                        $today_dt = $today_dt ?? new DateTime('today');
+                        foreach ($recent_activity as $rev):
+                            $is_final = ($rev['status_of_delivery'] === 'Delivered to Project');
+                            $dest_name = $is_final
+                                ? ($flow_destination['project_name'] ?? 'Project Site')
+                                : ($rev['dest_warehouse_name'] ?: 'Warehouse');
+                            $origin_name = ($rev['origin_type'] === 'warehouse' && $rev['origin_warehouse_name'])
+                                ? $rev['origin_warehouse_name']
+                                : 'Manufacturer';
+                            $event_date = new DateTime($rev['event_date']);
+                            $diff = (int)$event_date->diff($today_dt)->format('%r%a');
+                            if ($diff <= 0)      $rel = 'today';
+                            elseif ($diff === 1) $rel = 'yesterday';
+                            elseif ($diff < 7)   $rel = $diff . ' days ago';
+                            elseif ($diff < 30)  $rel = floor($diff/7) . 'w ago';
+                            else                 $rel = $event_date->format('M j');
+                            $qty_raw = (int)($rev['qty'] ?? 0);
+                            $pallet_count = (int)($rev['pallet_count'] ?? 0);
+                        ?>
+                            <?php $ship_count = (int)($rev['shipment_count'] ?? 1); ?>
+                            <li class="activity-row activity-row-completed<?php echo $is_final ? ' activity-row-final' : ''; ?>">
+                                <div class="activity-route">
+                                    <span class="route-origin"><?php echo htmlspecialchars($origin_name); ?></span>
+                                    <i class="fas fa-arrow-right route-arrow"></i>
+                                    <span class="route-dest"><?php echo htmlspecialchars($dest_name); ?></span>
+                                    <?php if ($ship_count > 1): ?>
+                                        <span class="activity-pill activity-pill-count"><?php echo $ship_count; ?> shipments</span>
+                                    <?php endif; ?>
+                                    <?php if ($is_final): ?>
+                                        <span class="activity-pill"><i class="fas fa-flag-checkered"></i> Delivered</span>
+                                    <?php else: ?>
+                                        <span class="activity-pill activity-pill-arrived"><i class="fas fa-check"></i> Arrived</span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="activity-meta">
+                                    <span class="activity-qty">
+                                        <span data-flow-raw="<?php echo $qty_raw; ?>">—</span>
+                                        <span data-flow-unit-suffix></span>
+                                    </span>
+                                    <?php if ($pallet_count > 0): ?>
+                                        <span class="activity-meta-sep">·</span>
+                                        <span class="activity-pallets"><?php echo number_format($pallet_count); ?> pallet<?php echo $pallet_count===1?'':'s'; ?></span>
+                                    <?php endif; ?>
+                                    <span class="activity-when"><?php echo $event_date->format('M j'); ?> · <?php echo $rel; ?></span>
+                                </div>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 
 <?php if (false): ?>

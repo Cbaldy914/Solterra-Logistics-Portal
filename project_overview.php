@@ -659,7 +659,7 @@ function syncUnitFilters(unit) {
         chip.classList.toggle('active', chip.dataset.unit === unit);
     });
     updateShippingBoxes(unit);
-    updateAnalyticsTables(unit);
+    updateFlowWidgets(unit);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -675,6 +675,10 @@ document.addEventListener('DOMContentLoaded', function() {
             syncUnitFilters(this.dataset.unit);
         });
     });
+    // Render the flow widgets in the default unit on first load.
+    if (typeof updateFlowWidgets === 'function') {
+        updateFlowWidgets('mws');
+    }
 });
 
 function updateShippingBoxes(unit) {
@@ -694,24 +698,7 @@ function updateShippingBoxes(unit) {
     });
 }
 
-// Analytics tables data and conversion factors
-var analyticsTableData = <?php echo json_encode([
-    'sub_rows' => $sub_rows ?? [],
-    'sub_rows_status' => $sub_rows_status ?? [],
-    'combined' => [
-        'total_order' => $total_order_combined ?? 0,
-        'delivered' => $delivered_combined ?? 0,
-        'at_manufacturer' => $at_manufacturer_combined ?? 0,
-        'on_water' => $on_water_combined ?? 0,
-        'customs_hold' => $customs_hold_combined ?? 0,
-        'cleared_customs' => $cleared_customs_combined ?? 0,
-        'in_transit_to_warehouse' => $in_transit_to_warehouse_combined ?? 0,
-        'in_warehouse' => $in_warehouse_combined ?? 0,
-        'in_transit_to_project' => $in_transit_to_project_combined ?? 0,
-        'anticipated_quantities' => $anticipated_quantities_combined ?? []
-    ],
-    'module_type_combined' => $module_type_combined ?? 'N/A'
-], JSON_UNESCAPED_UNICODE) ?: '{}'; ?>;
+var flowData = <?php echo json_encode($flow_data_for_js ?? ['total_raw'=>0,'buckets_raw'=>[],'segments_raw'=>[],'avg_wattage'=>0], JSON_UNESCAPED_UNICODE) ?: '{"total_raw":0,"buckets_raw":{},"segments_raw":{},"avg_wattage":0}'; ?>;
 
 var conversionFactors = {
     avgWattage: <?php echo $avg_wattage ?? 0; ?>,
@@ -719,164 +706,49 @@ var conversionFactors = {
     palletsPerTruck: <?php echo $average_pallets_per_truck ?? 24; ?>
 };
 
-function convertValue(mwValue, unit, wattage) {
-    if (!mwValue || mwValue === 0) return 0;
-    var w = wattage || conversionFactors.avgWattage || 1;
+// Convert a raw module count into the chosen unit and format for display.
+function flowConvertRaw(rawModules, unit) {
+    var n = Number(rawModules) || 0;
+    if (n === 0) return unit === 'mws' ? '0.00' : (unit === 'truckloads' ? '0.0' : '0');
+    var w = conversionFactors.avgWattage || flowData.avg_wattage || 1;
     if (w === 0) w = 1;
-
-    // MW value is already in MW, convert to modules first
-    var modules = (mwValue * 1000000) / w;
-
-    switch(unit) {
-        case 'modules': return Math.round(modules);
-        case 'pallets': return Math.round(modules / conversionFactors.modulesPerPallet);
-        case 'truckloads':
-            var pallets = modules / conversionFactors.modulesPerPallet;
-            return pallets / conversionFactors.palletsPerTruck;
-        default: return mwValue; // MWs
+    switch (unit) {
+        case 'modules':    return Math.round(n).toLocaleString();
+        case 'pallets':    return Math.round(n / conversionFactors.modulesPerPallet).toLocaleString();
+        case 'truckloads': return ((n / conversionFactors.modulesPerPallet) / conversionFactors.palletsPerTruck).toFixed(1);
+        default:           return ((n * w) / 1000000).toFixed(2);
     }
 }
 
-function formatValue(value, unit) {
-    if (unit === 'mws') return value.toFixed(2);
-    if (unit === 'truckloads') return value.toFixed(1);
-    return Math.round(value).toLocaleString();
+function flowUnitLabel(unit) {
+    switch (unit) {
+        case 'modules':    return 'modules';
+        case 'pallets':    return 'pallets';
+        case 'truckloads': return 'trucks';
+        default:           return 'MW';
+    }
 }
 
-function updateAnalyticsTables(unit) {
-    var table1 = document.getElementById('table1');
-    var table2 = document.getElementById('table2');
-    if (!table1 && !table2) return;
-
-    var data = analyticsTableData;
-    if (!data || !data.combined) return;
-
-    var subRowKeys = Object.keys(data.sub_rows);
-    var subRowStatusKeys = Object.keys(data.sub_rows_status);
-
-    // Calculate combined values by summing converted sub-row values (more accurate than converting combined MW)
-    function calcCombinedFromSubRows(subRows, keys, field) {
-        var total = 0;
-        keys.forEach(function(key) {
-            var sr = subRows[key];
-            var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
-            var value = sr[field] || 0;
-            total += convertValue(value, unit, wattage);
-        });
-        return total;
-    }
-
-    // Update Table 1 (Next 5 Weeks of Deliveries)
-    if (table1) {
-        var tbody1 = table1.querySelector('tbody');
-        if (tbody1) {
-            var allRows = tbody1.querySelectorAll('tr');
-
-            // Calculate combined values from sub-rows
-            var combinedTotalOrder = calcCombinedFromSubRows(data.sub_rows, subRowKeys, 'total_order');
-            var combinedDelivered = calcCombinedFromSubRows(data.sub_rows, subRowKeys, 'delivered');
-
-            // Calculate combined anticipated quantities for each week
-            var numWeeks = (data.combined.anticipated_quantities || []).length;
-            var combinedAnticipated = [];
-            for (var w = 0; w < numWeeks; w++) {
-                var weekTotal = 0;
-                subRowKeys.forEach(function(key) {
-                    var sr = data.sub_rows[key];
-                    var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
-                    var value = (sr.anticipated_quantities && sr.anticipated_quantities[w]) || 0;
-                    weekTotal += convertValue(value, unit, wattage);
-                });
-                combinedAnticipated.push(weekTotal);
-            }
-
-            // Main combined row (first row - not a sub-row)
-            if (allRows[0] && !allRows[0].classList.contains('delivery-row')) {
-                var cells = allRows[0].querySelectorAll('td');
-                if (cells.length >= 3) {
-                    cells[1].textContent = formatValue(combinedTotalOrder, unit);
-                    cells[2].textContent = formatValue(combinedDelivered, unit);
-                    // Week columns
-                    for (var i = 0; i < combinedAnticipated.length && i + 3 < cells.length; i++) {
-                        cells[i + 3].textContent = formatValue(combinedAnticipated[i], unit);
-                    }
-                }
-            }
-
-            // Get all sub-rows with class 'delivery-row'
-            var deliverySubRows = tbody1.querySelectorAll('tr.delivery-row');
-
-            deliverySubRows.forEach(function(subRow, index) {
-                if (index < subRowKeys.length) {
-                    var sr = data.sub_rows[subRowKeys[index]];
-                    var cells = subRow.querySelectorAll('td');
-                    var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
-                    if (cells.length >= 3) {
-                        cells[1].textContent = formatValue(convertValue(sr.total_order, unit, wattage), unit);
-                        cells[2].textContent = formatValue(convertValue(sr.delivered, unit, wattage), unit);
-                        for (var i = 0; i < (sr.anticipated_quantities || []).length && i + 3 < cells.length; i++) {
-                            cells[i + 3].textContent = formatValue(convertValue(sr.anticipated_quantities[i], unit, wattage), unit);
-                        }
-                    }
-                }
-            });
+function updateFlowWidgets(unit) {
+    document.querySelectorAll('[data-flow-raw]').forEach(function(el) {
+        var raw = parseInt(el.getAttribute('data-flow-raw') || '0', 10);
+        el.textContent = flowConvertRaw(raw, unit);
+    });
+    var label = flowUnitLabel(unit);
+    document.querySelectorAll('[data-flow-unit-suffix]').forEach(function(el) {
+        el.textContent = label;
+    });
+    var redundant = (unit === 'pallets' || unit === 'truckloads');
+    document.querySelectorAll('.flow-stat-pallets').forEach(function(el) {
+        el.style.display = redundant ? 'none' : '';
+    });
+    document.querySelectorAll('.activity-pallets').forEach(function(el) {
+        el.style.display = redundant ? 'none' : '';
+        var sep = el.previousElementSibling;
+        if (sep && sep.classList.contains('activity-meta-sep')) {
+            sep.style.display = redundant ? 'none' : '';
         }
-    }
-
-    // Update Table 2 (Module Delivery Status)
-    if (table2) {
-        var tbody2 = table2.querySelector('tbody');
-        if (tbody2) {
-            var allRows = tbody2.querySelectorAll('tr');
-
-            // Calculate combined values from sub-rows for status table
-            var combinedStatusTotalOrder = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'total_order');
-            var combinedStatusAtMfr = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'at_manufacturer');
-            var combinedStatusOnWater = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'on_water');
-            var combinedStatusCustomsHold = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'customs_hold');
-            var combinedStatusCleared = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'cleared_customs');
-            var combinedStatusToWarehouse = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_transit_to_warehouse');
-            var combinedStatusInWarehouse = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_warehouse');
-            var combinedStatusToProject = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_transit_to_project');
-            var combinedStatusDelivered = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'delivered');
-
-            // Main combined row (first row - not a sub-row)
-            if (allRows[0] && !allRows[0].classList.contains('status-row')) {
-                var cells = allRows[0].querySelectorAll('td');
-                var cellIndex = 1;
-                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusTotalOrder, unit);
-                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusAtMfr, unit);
-                if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusOnWater, unit);
-                if (data.combined.customs_hold > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusCustomsHold, unit);
-                if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusCleared, unit);
-                if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusToWarehouse, unit);
-                if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusInWarehouse, unit);
-                if (data.combined.in_transit_to_project > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusToProject, unit);
-                if (cells[cellIndex]) cells[cellIndex].textContent = formatValue(combinedStatusDelivered, unit);
-            }
-
-            // Get all sub-rows with class 'status-row'
-            var statusSubRows = tbody2.querySelectorAll('tr.status-row');
-
-            statusSubRows.forEach(function(subRow, index) {
-                if (index < subRowStatusKeys.length) {
-                    var srs = data.sub_rows_status[subRowStatusKeys[index]];
-                    var cells = subRow.querySelectorAll('td');
-                    var wattage = parseInt(srs.wattage_label) || conversionFactors.avgWattage;
-                    var cellIndex = 1;
-                    if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.total_order, unit, wattage), unit);
-                    if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.at_manufacturer || 0, unit, wattage), unit);
-                    if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.on_water || 0, unit, wattage), unit);
-                    if (data.combined.customs_hold > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.customs_hold || 0, unit, wattage), unit);
-                    if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.cleared_customs || 0, unit, wattage), unit);
-                    if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_transit_to_warehouse || 0, unit, wattage), unit);
-                    if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_warehouse || 0, unit, wattage), unit);
-                    if (data.combined.in_transit_to_project > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_transit_to_project || 0, unit, wattage), unit);
-                    if (cells[cellIndex]) cells[cellIndex].textContent = formatValue(convertValue(srs.delivered, unit, wattage), unit);
-                }
-            });
-        }
-    }
+    });
 }
 
 // Chart initialization flags
@@ -886,7 +758,6 @@ function initializeDeliveryCharts() {
     if (chartsInitialized.delivery) return;
     try {
         initLineChart();
-        initPieChart();
         chartsInitialized.delivery = true;
     } catch(e) {
         // Chart.js may not be loaded yet — will retry on next tab activation
@@ -993,14 +864,6 @@ function closeConversionModal() {
 // Chart data and functions
 var dateLabels = <?php echo $dateLabelsJSON; ?>;
 var lineData = <?php echo $lineChartDataJSON; ?>;
-var pieChartData = <?php echo json_encode(array_values($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
-var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
-var colorMap = {
-    'Delivered to Project': '#488C9A', 'At Manufacturer': '#293E4C', 'On Water': '#66B2FF',
-    'Customs Hold': '#dc2626',
-    'Cleared Customs': '#32CD32', 'In Transit to Warehouse': '#9370DB',
-    'In Transit to Project': '#C0C0C0', 'In Warehouse': '#FF6B6B', 'Exceptions': '#f57c00'
-};
 
 function initLineChart() {
     var ctxLineEl = document.getElementById('lineChart');
@@ -1021,19 +884,6 @@ function initLineChart() {
                 y: { beginAtZero: true, title: { display: true, text: '<?php echo ($view_mode=="mw") ? "MWs" : "Modules";?>' } }
             }
         }
-    });
-}
-
-function initPieChart() {
-    var ctxPieEl = document.getElementById('pieChart');
-    if (!ctxPieEl) return;
-    new Chart(ctxPieEl.getContext('2d'), {
-        type: 'pie',
-        data: {
-            labels: pieChartLabels,
-            datasets: [{ data: pieChartData, backgroundColor: pieChartLabels.map(l => colorMap[l] || '#ccc') }]
-        },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
     });
 }
 
