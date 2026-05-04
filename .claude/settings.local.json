@@ -80,7 +80,8 @@
       "Bash(netstat -ano)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" \"http://localhost/Solterra-Solutions/Solterra-Logistics-Portal/project_overview.php?project_id=174&tab=deliveries\")",
       "Bash(curl -s \"http://localhost/Solterra-Solutions/Solterra-Logistics-Portal/project_overview.php?project_id=174&tab=deliveries\")",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(awk 'NR==985,/^    <\\\\/div>$/{print NR\": \"$0; if\\(/^    <\\\\/div>$/ && NR>985\\) exit}' c:/xampp/htdocs/Solterra-Solutions/Solterra-Logistics-Portal/dashboard.php)"
     ],
     "deny": [],
     "ask": []

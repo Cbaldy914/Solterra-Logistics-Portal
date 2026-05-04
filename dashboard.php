@@ -175,29 +175,205 @@ if (count($accountIds) > 0) {
     $distribution_module_breakdown = array_values($distribution_rows_by_key);
 }
 
-$portfolio_module_cost = 0.0;
+// Portfolio cost: sum module cost + freight + accessorial (+ customs hold) across
+// all active projects for this account. Previously this was module-cost-only and
+// silently fell back to "N/A" when modules.cost_per_watt was unset, even on
+// projects that had logistics costs logged. Now we aggregate every cost source
+// and let any non-zero subtotal contribute.
+$portfolio_module_cost   = 0.0;
+$portfolio_logistics_cost = 0.0;
+$portfolio_total_cost    = 0.0;
 $portfolio_cost_per_watt = null;
+$portfolio_total_watts_with_cost = 0.0;
+$portfolio_total_watts_overall   = 0.0;
 if (count($accountIds) > 0) {
     $placeholders_cost = implode(',', array_fill(0, count($accountIds), '?'));
+    $types_cost = str_repeat('i', count($accountIds));
+
+    // Module costs — drop the cost_per_watt IS NOT NULL filter and use COALESCE
+    // so batches with a price contribute even when others don't.
     $sqlPortfolioCost = "
         SELECT
-            COALESCE(SUM(m.cost_per_watt * umi.wattage * umi.quantity), 0) AS total_cost,
-            COALESCE(SUM(umi.wattage * umi.quantity), 0) AS total_watts
+            COALESCE(SUM(COALESCE(m.cost_per_watt, 0) * umi.wattage * umi.quantity), 0) AS total_cost,
+            COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL THEN umi.wattage * umi.quantity ELSE 0 END), 0) AS total_watts_with_cost,
+            COALESCE(SUM(umi.wattage * umi.quantity), 0) AS total_watts_overall
         FROM modules m
         JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
         JOIN projects p ON p.id = m.project_id
         WHERE p.account_id IN ($placeholders_cost)
           AND (p.status IS NULL OR p.status = 'active')
-          AND m.cost_per_watt IS NOT NULL
     ";
     $stmtPortfolioCost = $conn->prepare($sqlPortfolioCost);
-    $stmtPortfolioCost->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
+    $stmtPortfolioCost->bind_param($types_cost, ...$accountIds);
     $stmtPortfolioCost->execute();
-    $stmtPortfolioCost->bind_result($portfolio_module_cost, $portfolio_total_watts_with_cost);
+    $stmtPortfolioCost->bind_result($portfolio_module_cost, $portfolio_total_watts_with_cost, $portfolio_total_watts_overall);
     $stmtPortfolioCost->fetch();
     $stmtPortfolioCost->close();
+
+    // Logistics costs — freight + accessorial from deliveries. The `customer_cost`
+    // column is the customer-billable freight rate; fall back to `freight_cost`
+    // when it isn't populated. Customs-hold and warehousing are handled per-pallet
+    // elsewhere and intentionally excluded from this portfolio rollup to keep
+    // the query cheap; module + freight + accessorial is the bulk of any project.
+    $sqlPortfolioLogistics = "
+        SELECT COALESCE(SUM(
+                   COALESCE(NULLIF(d.customer_cost, 0), d.freight_cost, 0)
+                 + COALESCE(d.accessorial_costs, 0)
+               ), 0) AS logistics_cost
+          FROM deliveries d
+          JOIN projects p ON p.id = d.project_id
+          WHERE p.account_id IN ($placeholders_cost)
+            AND (p.status IS NULL OR p.status = 'active')
+    ";
+    $stmtLogistics = $conn->prepare($sqlPortfolioLogistics);
+    if ($stmtLogistics) {
+        $stmtLogistics->bind_param($types_cost, ...$accountIds);
+        $stmtLogistics->execute();
+        $stmtLogistics->bind_result($portfolio_logistics_cost);
+        $stmtLogistics->fetch();
+        $stmtLogistics->close();
+    }
+
+    $portfolio_total_cost = (float)$portfolio_module_cost + (float)$portfolio_logistics_cost;
+
+    // $/W uses watts that actually had a cost_per_watt set (so we don't dilute
+    // the per-watt with un-priced modules).
     if (!empty($portfolio_total_watts_with_cost)) {
-        $portfolio_cost_per_watt = $portfolio_module_cost / $portfolio_total_watts_with_cost;
+        $portfolio_cost_per_watt = (float)$portfolio_module_cost / (float)$portfolio_total_watts_with_cost;
+    }
+}
+
+// --------------- Per-project Module Flow buckets ---------------
+// One row per project on the dashboard, each showing a compact 4-bucket
+// stacked bar. Single grouped query then post-processed in PHP so we don't
+// run N queries inside the project loop.
+$project_flow_buckets = []; // project_id => ['at_manufacturer' => int, 'in_transit' => int, 'staged' => int, 'delivered' => int, 'total' => int]
+if (count($accountIds) > 0) {
+    $sqlProjectFlow = "
+        SELECT p.id AS project_id, ip.status, SUM(ip.quantity) AS total
+          FROM inventory_pallets ip
+          LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+          LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+          LEFT JOIN projects p ON (p.id = m.project_id OR p.id = ip.assigned_project_id OR p.id = ip.current_project_id)
+          WHERE p.account_id IN ($placeholders_cost)
+            AND (p.status IS NULL OR p.status = 'active')
+            AND ip.status IS NOT NULL
+            AND p.id IS NOT NULL
+          GROUP BY p.id, ip.status
+    ";
+    $stmtPF = $conn->prepare($sqlProjectFlow);
+    if ($stmtPF) {
+        $stmtPF->bind_param($types_cost, ...$accountIds);
+        $stmtPF->execute();
+        $rpf = $stmtPF->get_result();
+        while ($row = $rpf->fetch_assoc()) {
+            $pid = (int)$row['project_id'];
+            $qty = (int)$row['total'];
+            if (!isset($project_flow_buckets[$pid])) {
+                $project_flow_buckets[$pid] = [
+                    'at_manufacturer' => 0,
+                    'in_transit'      => 0,
+                    'staged'          => 0,
+                    'delivered'       => 0,
+                    'total'           => 0,
+                ];
+            }
+            switch ($row['status']) {
+                case 'At Manufacturer':
+                case 'On Water':
+                case 'Customs Hold':
+                case 'Cleared Customs':
+                    $project_flow_buckets[$pid]['at_manufacturer'] += $qty;
+                    break;
+                case 'In Transit to Warehouse':
+                case 'In Transit to Project':
+                    $project_flow_buckets[$pid]['in_transit'] += $qty;
+                    break;
+                case 'In Warehouse':
+                    $project_flow_buckets[$pid]['staged'] += $qty;
+                    break;
+                case 'Delivered to Project':
+                    $project_flow_buckets[$pid]['delivered'] += $qty;
+                    break;
+            }
+        }
+        foreach ($project_flow_buckets as $pid => &$buckets) {
+            $buckets['total'] = $buckets['at_manufacturer'] + $buckets['in_transit'] + $buckets['staged'] + $buckets['delivered'];
+        }
+        unset($buckets);
+        $stmtPF->close();
+    }
+}
+
+// --------------- Recent activity across the portfolio ---------------
+// Last 5 completed events (delivered / arrived / departed) across every active
+// project for this account. Same shape and grouping as the project_overview
+// Recent Activity card so customers see consistent data wherever they look.
+$recent_activity = [];
+if (count($accountIds) > 0) {
+    $sqlRecent = "
+        SELECT MAX(sub.event_date) AS event_date,
+               sub.event_type,
+               sub.project_id,
+               sub.project_name,
+               sub.status_of_delivery,
+               sub.origin_type,
+               sub.origin_id,
+               sub.dest_warehouse_id,
+               w_dest.name   AS dest_warehouse_name,
+               w_origin.name AS origin_warehouse_name,
+               SUM(sub.qty)            AS qty,
+               SUM(sub.pallet_count)   AS pallet_count,
+               COUNT(*)                AS shipment_count
+          FROM (
+              SELECT
+                  d.id,
+                  d.project_id,
+                  p.project_name,
+                  d.status_of_delivery,
+                  d.origin_type,
+                  d.origin_id,
+                  d.warehouse_id AS dest_warehouse_id,
+                  d.quantity AS qty,
+                  IFNULL(pc.cnt, 0) AS pallet_count,
+                  CASE
+                      WHEN d.status_of_delivery = 'Delivered to Project' THEN 'delivered'
+                      WHEN d.warehouse_arrival_date IS NOT NULL THEN 'arrived'
+                      WHEN d.left_warehouse_date IS NOT NULL THEN 'departed'
+                      ELSE 'pending'
+                  END AS event_type,
+                  DATE(COALESCE(
+                      CASE WHEN d.status_of_delivery = 'Delivered to Project' THEN d.actual_delivery_date END,
+                      d.warehouse_arrival_date,
+                      d.left_warehouse_date
+                  )) AS event_date
+                FROM deliveries d
+                JOIN projects p ON p.id = d.project_id
+                LEFT JOIN (SELECT delivery_id, COUNT(*) AS cnt FROM delivery_pallets GROUP BY delivery_id) pc
+                       ON pc.delivery_id = d.id
+                WHERE p.account_id IN ($placeholders_cost)
+                  AND (p.status IS NULL OR p.status = 'active')
+                  AND (d.actual_delivery_date IS NOT NULL
+                       OR d.warehouse_arrival_date IS NOT NULL
+                       OR d.left_warehouse_date IS NOT NULL)
+          ) sub
+          LEFT JOIN warehouses w_dest   ON sub.dest_warehouse_id = w_dest.id
+          LEFT JOIN warehouses w_origin ON (sub.origin_type = 'warehouse' AND sub.origin_id = w_origin.id)
+          WHERE sub.event_date IS NOT NULL
+          GROUP BY sub.event_date, sub.event_type, sub.project_id, sub.status_of_delivery,
+                   sub.origin_type, sub.origin_id, sub.dest_warehouse_id
+          ORDER BY event_date DESC
+          LIMIT 5
+    ";
+    $stmtRecent = $conn->prepare($sqlRecent);
+    if ($stmtRecent) {
+        $stmtRecent->bind_param($types_cost, ...$accountIds);
+        $stmtRecent->execute();
+        $rrec = $stmtRecent->get_result();
+        while ($row = $rrec->fetch_assoc()) {
+            $recent_activity[] = $row;
+        }
+        $stmtRecent->close();
     }
 }
 
@@ -404,6 +580,7 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         .dashboard-header {
@@ -596,6 +773,75 @@ $conn->close();
         .no-projects h2 { color: #293E4C; margin-bottom: 8px; }
         .no-projects p { color: #6c757d; }
 
+        /* % Delivered stat card with inline progress bar */
+        .stat-card-progress { position: relative; }
+        .stat-progress-track { width: 100%; height: 6px; background: #f1f3f4; border-radius: 3px; overflow: hidden; margin-top: 10px; }
+        .stat-progress-fill { height: 100%; background: linear-gradient(90deg, #488C9A 0%, #28a745 100%); border-radius: 3px; transition: width 0.4s ease; }
+
+        /* Portfolio Module Flow card — per-project rows */
+        .portfolio-flow-card { display: flex; flex-direction: column; }
+        .portfolio-flow-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .portfolio-flow-header h3 { margin: 0; color: #293E4C; font-size: 1em; font-weight: 600; }
+        .portfolio-flow-content { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+
+        .portfolio-flow-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+        .portfolio-flow-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 0.7em; color: #6c757d; font-weight: 500; }
+        .portfolio-flow-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+        .portfolio-flow-legend-dot.pf-mfr       { background: #293E4C; }
+        .portfolio-flow-legend-dot.pf-transit   { background: #9370DB; }
+        .portfolio-flow-legend-dot.pf-staged    { background: #E07F3A; }
+        .portfolio-flow-legend-dot.pf-delivered { background: #488C9A; }
+
+        .project-flow-list { display: flex; flex-direction: column; gap: 4px; }
+        .project-flow-row { display: grid; grid-template-columns: minmax(80px, 1fr) 2fr auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: inherit; transition: background 0.15s ease, border-color 0.15s ease; border: 1px solid transparent; }
+        .project-flow-row:hover { background: #f8f9fa; border-color: #e9ecef; text-decoration: none; }
+        .project-flow-name { font-weight: 600; color: #293E4C; font-size: 0.85em; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .project-flow-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: #f1f3f4; min-width: 80px; }
+        .project-flow-seg { transition: filter 0.15s ease; min-width: 0; }
+        .project-flow-seg:hover { filter: brightness(1.08); }
+        .project-flow-seg.pf-mfr       { background: #293E4C; }
+        .project-flow-seg.pf-transit   { background: #9370DB; }
+        .project-flow-seg.pf-staged    { background: #E07F3A; }
+        .project-flow-seg.pf-delivered { background: #488C9A; }
+        .project-flow-summary { font-size: 0.75em; color: #488C9A; font-weight: 700; flex-shrink: 0; min-width: 56px; text-align: right; }
+
+        .project-flow-viewall { background: none; border: 1px dashed #cbd5e0; color: #488C9A; font-size: 0.78em; font-weight: 600; padding: 6px 10px; border-radius: 6px; cursor: pointer; transition: background 0.15s ease; margin-top: 4px; }
+        .project-flow-viewall:hover { background: rgba(72,140,154,0.06); }
+
+        .portfolio-flow-empty { text-align: center; padding: 20px 12px; color: #9ca3af; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+        .portfolio-flow-empty i { font-size: 1.6rem; opacity: 0.5; }
+        .portfolio-flow-empty p { margin: 0; font-size: 0.85em; }
+
+        /* Recent Activity card (compact, replaces Active Shipments strip) */
+        .recent-activity-card { background: #fff; padding: 14px 18px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; margin-bottom: 20px; }
+        .recent-activity-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+        .recent-activity-header h3 { margin: 0; color: #293E4C; font-size: 1em; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .recent-activity-header h3 i { color: #488C9A; }
+        .recent-activity-count { font-size: 0.72em; color: #6c757d; font-weight: 500; }
+        .recent-activity-empty { color: #9ca3af; font-style: italic; font-size: 0.85em; padding: 4px 0 6px; }
+
+        .recent-activity-list { list-style: none; margin: 0; padding: 0; }
+        .recent-activity-list li { border-bottom: 1px dashed #f1f3f4; }
+        .recent-activity-list li:last-child { border-bottom: none; }
+        .recent-activity-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; text-decoration: none; color: inherit; font-size: 0.85em; transition: background 0.15s ease; border-radius: 4px; }
+        .recent-activity-row:hover { background: #f8f9fa; text-decoration: none; }
+        .recent-activity-icon { width: 26px; height: 26px; border-radius: 50%; background: #f8f9fa; display: inline-flex; align-items: center; justify-content: center; font-size: 0.75em; flex-shrink: 0; }
+        .recent-activity-row.rev-delivered .recent-activity-icon { background: rgba(40,167,69,0.12);  color: #1e7e34; }
+        .recent-activity-row.rev-arrived   .recent-activity-icon { background: rgba(72,140,154,0.12); color: #3A6E7F; }
+        .recent-activity-row.rev-departed  .recent-activity-icon { background: rgba(147,112,219,0.12); color: #6d28d9; }
+        .recent-activity-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #293E4C; }
+        .recent-activity-verb { color: #6c757d; font-weight: 500; }
+        .recent-activity-where { font-weight: 700; }
+        .recent-activity-from { color: #6c757d; font-size: 0.92em; }
+        .recent-activity-project { color: #6c757d; font-size: 0.82em; flex-shrink: 0; max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .recent-activity-pill { background: rgba(147,112,219,0.12); color: #6d28d9; padding: 1px 7px; border-radius: 999px; font-size: 0.7em; font-weight: 700; flex-shrink: 0; }
+        .recent-activity-when { color: #488C9A; font-weight: 600; font-size: 0.8em; flex-shrink: 0; min-width: 60px; text-align: right; }
+
+        @media (max-width: 768px) {
+            .recent-activity-project { display: none; }
+            .recent-activity-from { display: none; }
+        }
+
         @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr 1fr; } .chart-content { flex-direction: row; } .chart-container { width: 100px; height: 100px; } }
         @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.3em; } .charts-section { grid-template-columns: 1fr; } .chart-container { width: 110px; height: 110px; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 980px; } }
     </style>
@@ -613,6 +859,14 @@ $conn->close();
             <button onclick="setUnit('mw')" id="btn-mw">MW</button>
         </div>
     </div>
+    <?php
+    // Headline portfolio KPIs used by the redesigned hero stat row.
+    $portfolio_total_modules_tracked = (int)$dashboard_totals['total_modules'] + (int)$unassigned_modules_count;
+    $portfolio_pct_delivered = ($dashboard_totals['total_project_size_mw'] > 0)
+        ? max(0, min(100, ($dashboard_totals['delivered_mw'] / $dashboard_totals['total_project_size_mw']) * 100))
+        : 0;
+    ?>
+
     <div class="stats-charts-row">
         <div class="stats-section">
             <div class="stat-card clickable" onclick="document.getElementById('projects-section').scrollIntoView({behavior:'smooth'})">
@@ -620,26 +874,26 @@ $conn->close();
                 <h3 class="stat-number"><?php echo count($projects); ?></h3>
                 <p class="stat-label">Active Projects</p>
             </div>
-            <a href="warehousing_overview.php" class="stat-card clickable">
-                <div class="stat-icon">🏭</div>
-                <h3 class="stat-number">
-                    <span class="unit-modules"><?php echo number_format($dashboard_totals['total_in_storage']); ?></span>
-                    <span class="unit-mw" style="display:none"><?php echo number_format($dashboard_totals['storage_mw'], 2); ?></span>
-                </h3>
-                <p class="stat-label">In Storage</p>
-            </a>
             <a href="modules.php" class="stat-card clickable">
                 <div class="stat-icon">📦</div>
                 <h3 class="stat-number">
-                    <span class="unit-modules"><?php echo number_format((int)$dashboard_totals['total_modules'] + (int)$unassigned_modules_count); ?></span>
+                    <span class="unit-modules"><?php echo number_format($portfolio_total_modules_tracked); ?></span>
                     <span class="unit-mw" style="display:none"><?php echo number_format($total_ordered_with_unassigned_mw, 2); ?></span>
                 </h3>
-                <p class="stat-label">Total <span class="unit-label-modules">Modules</span><span class="unit-label-mw" style="display:none">MW</span></p>
+                <p class="stat-label">Modules <span class="unit-label-modules">Tracked</span><span class="unit-label-mw" style="display:none">MW</span></p>
             </a>
+            <div class="stat-card stat-card-progress">
+                <div class="stat-icon">🚚</div>
+                <h3 class="stat-number"><?php echo number_format($portfolio_pct_delivered, 1); ?>%</h3>
+                <p class="stat-label">Delivered to Site</p>
+                <div class="stat-progress-track">
+                    <div class="stat-progress-fill" style="width: <?php echo number_format($portfolio_pct_delivered, 2); ?>%;"></div>
+                </div>
+            </div>
             <a href="module_cost_analysis.php" class="stat-card clickable">
                 <div class="stat-icon">💵</div>
                 <h3 class="stat-number">
-                    <span class="unit-modules"><?php echo $portfolio_module_cost > 0 ? '$' . number_format($portfolio_module_cost, 0) : 'N/A'; ?></span>
+                    <span class="unit-modules"><?php echo $portfolio_total_cost > 0 ? '$' . number_format($portfolio_total_cost, 0) : 'N/A'; ?></span>
                     <span class="unit-mw" style="display:none"><?php echo $portfolio_cost_per_watt !== null ? '$' . number_format($portfolio_cost_per_watt, 4) . '/W' : 'N/A'; ?></span>
                 </h3>
                 <p class="stat-label">Portfolio Cost</p>
@@ -658,19 +912,71 @@ $conn->close();
                     </div>
                 </div>
             </div>
-            <div class="chart-card" onclick="openChartModal('distribution')">
-                <h3>Module Distribution</h3>
-                <div class="chart-content">
-                    <div class="chart-container"><canvas id="coverageChart"></canvas></div>
-                    <div class="chart-legend">
-                        <div class="coverage-summary">
-                            <div class="coverage-row"><span>Project Needs</span><span><?php echo number_format($dashboard_totals['total_project_size_mw'], 1); ?> MW</span></div>
-                            <div class="coverage-row"><span>Assigned Ordered</span><span><?php echo number_format($assigned_ordered_mw, 1); ?> MW</span></div>
-                            <div class="coverage-row"><span>Unassigned Ordered</span><span><?php echo number_format($unassigned_ordered_mw, 1); ?> MW</span></div>
-                            <div class="coverage-row"><span>Total Ordered</span><span><?php echo number_format($total_ordered_with_unassigned_mw, 1); ?> MW</span></div>
-                            <div class="coverage-row <?php echo $mw_gap_total <= 0 ? 'highlight' : 'warning'; ?>"><span><?php echo $mw_gap_total <= 0 ? 'Surplus' : 'Gap'; ?></span><span><?php echo number_format(abs($mw_gap_total), 1); ?> MW</span></div>
-                        </div>
+            <div class="chart-card portfolio-flow-card" style="cursor:default">
+                <div class="portfolio-flow-header">
+                    <h3>Module Flow</h3>
+                    <div class="portfolio-flow-legend">
+                        <span class="portfolio-flow-legend-item"><span class="portfolio-flow-legend-dot pf-mfr"></span>At Mfr</span>
+                        <span class="portfolio-flow-legend-item"><span class="portfolio-flow-legend-dot pf-transit"></span>In Transit</span>
+                        <span class="portfolio-flow-legend-item"><span class="portfolio-flow-legend-dot pf-staged"></span>At Warehouses</span>
+                        <span class="portfolio-flow-legend-item"><span class="portfolio-flow-legend-dot pf-delivered"></span>Delivered</span>
                     </div>
+                </div>
+                <div class="chart-content portfolio-flow-content">
+                    <?php
+                    $flow_visible_limit = 4;
+                    $projects_with_flow = array_filter($projects, function($p) use ($project_flow_buckets) {
+                        $b = $project_flow_buckets[(int)$p['id']] ?? null;
+                        return $b && $b['total'] > 0;
+                    });
+                    $flow_overflow_count = max(0, count($projects_with_flow) - $flow_visible_limit);
+                    $flow_visible_projects = array_slice($projects_with_flow, 0, $flow_visible_limit);
+                    ?>
+                    <?php if (empty($projects_with_flow)): ?>
+                        <div class="portfolio-flow-empty">
+                            <i class="fas fa-boxes"></i>
+                            <p>No module flow data yet for your portfolio.</p>
+                        </div>
+                    <?php else: ?>
+                        <div class="project-flow-list">
+                            <?php
+                            $project_flow_meta = [
+                                'at_manufacturer' => ['label' => 'At Mfr',         'cls' => 'pf-mfr'],
+                                'in_transit'      => ['label' => 'In Transit',     'cls' => 'pf-transit'],
+                                'staged'          => ['label' => 'At Warehouses',  'cls' => 'pf-staged'],
+                                'delivered'       => ['label' => 'Delivered',      'cls' => 'pf-delivered'],
+                            ];
+                            foreach ($flow_visible_projects as $pp):
+                                $pid = (int)$pp['id'];
+                                $b = $project_flow_buckets[$pid];
+                                $total = $b['total'];
+                                $delivered_pct = $total > 0 ? ($b['delivered'] / $total) * 100 : 0;
+                            ?>
+                                <a class="project-flow-row" href="project_overview.php?project_id=<?php echo $pid; ?>#tab-deliveries"
+                                   title="<?php echo htmlspecialchars($pp['project_name']); ?> — click for the full flow">
+                                    <div class="project-flow-name"><?php echo htmlspecialchars($pp['project_name']); ?></div>
+                                    <div class="project-flow-bar">
+                                        <?php foreach ($project_flow_meta as $bk => $meta):
+                                            $val = $b[$bk];
+                                            if ($val <= 0) continue;
+                                            $pct = ($val / $total) * 100;
+                                        ?>
+                                            <div class="project-flow-seg <?php echo $meta['cls']; ?>"
+                                                 style="width: <?php echo number_format($pct, 4); ?>%;"
+                                                 title="<?php echo htmlspecialchars($meta['label']); ?>: <?php echo number_format($val); ?> modules (<?php echo number_format($pct, 1); ?>%)"></div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                    <div class="project-flow-summary"><?php echo number_format($delivered_pct, 0); ?>% del</div>
+                                </a>
+                            <?php endforeach; ?>
+                            <?php if ($flow_overflow_count > 0): ?>
+                                <button type="button" class="project-flow-viewall"
+                                        onclick="document.getElementById('projects-section').scrollIntoView({behavior:'smooth'})">
+                                    View all <?php echo (int)$flow_overflow_count; ?> more
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -815,6 +1121,67 @@ $conn->close();
     <?php else: ?>
     <div class="no-projects"><h2>No Active Projects</h2><p>Contact your administrator to get started.</p></div>
     <?php endif; ?>
+
+    <!-- Recent Activity (compact) — last 5 completed events across all projects -->
+    <div class="recent-activity-card">
+        <div class="recent-activity-header">
+            <h3><i class="fas fa-stream"></i> Recent Activity</h3>
+            <?php if (!empty($recent_activity)): ?>
+                <span class="recent-activity-count">last <?php echo count($recent_activity); ?></span>
+            <?php endif; ?>
+        </div>
+        <?php if (empty($recent_activity)): ?>
+            <div class="recent-activity-empty">No recent shipment activity.</div>
+        <?php else: ?>
+            <ul class="recent-activity-list">
+                <?php
+                $today_dt_dash = new DateTime('today');
+                $event_meta_dash = [
+                    'delivered' => ['icon' => 'fa-flag-checkered', 'verb' => 'Delivered to', 'cls' => 'rev-delivered'],
+                    'arrived'   => ['icon' => 'fa-warehouse',      'verb' => 'Arrived at',   'cls' => 'rev-arrived'],
+                    'departed'  => ['icon' => 'fa-truck-moving',   'verb' => 'Departed for', 'cls' => 'rev-departed'],
+                ];
+                foreach ($recent_activity as $rev):
+                    $type = $rev['event_type'] ?? 'arrived';
+                    $meta = $event_meta_dash[$type] ?? $event_meta_dash['arrived'];
+                    $is_final = ($type === 'delivered');
+                    $dest_name = $is_final
+                        ? ($rev['project_name'] ?? 'Project Site')
+                        : ($rev['dest_warehouse_name'] ?: 'Warehouse');
+                    $origin_name = ($rev['origin_type'] === 'warehouse' && $rev['origin_warehouse_name'])
+                        ? $rev['origin_warehouse_name']
+                        : 'Manufacturer';
+                    $event_date = new DateTime($rev['event_date']);
+                    $diff = (int)$event_date->diff($today_dt_dash)->format('%r%a');
+                    if ($diff <= 0)      $rel = 'today';
+                    elseif ($diff === 1) $rel = 'yesterday';
+                    elseif ($diff < 7)   $rel = $diff . 'd ago';
+                    elseif ($diff < 30)  $rel = floor($diff/7) . 'w ago';
+                    else                 $rel = $event_date->format('M j');
+                    $pcount = (int)$rev['pallet_count'];
+                    $scount = (int)($rev['shipment_count'] ?? 1);
+                    $link = 'project_overview.php?project_id=' . (int)$rev['project_id'] . '#tab-timeline';
+                ?>
+                    <li>
+                        <a class="recent-activity-row <?php echo $meta['cls']; ?>" href="<?php echo $link; ?>"
+                           title="<?php echo htmlspecialchars($rev['project_name'] . ' — ' . $origin_name . ' → ' . $dest_name); ?>">
+                            <span class="recent-activity-icon"><i class="fas <?php echo $meta['icon']; ?>"></i></span>
+                            <span class="recent-activity-text">
+                                <span class="recent-activity-verb"><?php echo $meta['verb']; ?></span>
+                                <span class="recent-activity-where"><?php echo htmlspecialchars($dest_name); ?></span>
+                                <span class="recent-activity-from">from <?php echo htmlspecialchars($origin_name); ?></span>
+                            </span>
+                            <span class="recent-activity-project"><?php echo htmlspecialchars($rev['project_name']); ?></span>
+                            <?php if ($scount > 1): ?>
+                                <span class="recent-activity-pill"><?php echo $scount; ?>×</span>
+                            <?php endif; ?>
+                            <span class="recent-activity-when"><?php echo $rel; ?></span>
+                        </a>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </div>
 </main>
 
 <div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
@@ -836,115 +1203,6 @@ $conn->close();
 const projectsData = <?php echo json_encode(array_map(function($p) {
     return ['name'=>$p['project_name'],'project_size'=>$p['project_size'],'ordered_mw'=>$p['ordered_mw'],'order_progress'=>$p['order_progress'],'delivered_mw'=>$p['delivered_mw'],'delivery_progress'=>$p['delivery_progress'],'total_modules'=>$p['total_modules'],'delivered_modules'=>$p['delivered_modules'],'wattage_breakdown'=>$p['wattage_breakdown'],'delivered_breakdown'=>$p['delivered_breakdown']];
 }, $projects)); ?>;
-const distributionData = {
-    projectNeedsMw: <?php echo json_encode((float)$dashboard_totals['total_project_size_mw']); ?>,
-    assignedOrderedMw: <?php echo json_encode((float)$assigned_ordered_mw); ?>,
-    unassignedOrderedMw: <?php echo json_encode((float)$unassigned_ordered_mw); ?>,
-    orderedTotalMw: <?php echo json_encode((float)$total_ordered_with_unassigned_mw); ?>,
-    coverageGapMw: <?php echo json_encode((float)$coverage_gap_mw); ?>,
-    surplusMw: <?php echo json_encode(max(0, (float)$total_ordered_with_unassigned_mw - (float)$dashboard_totals['total_project_size_mw'])); ?>
-};
-const distributionModuleBreakdown = <?php echo json_encode($distribution_module_breakdown); ?>;
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-let selectedDistributionRowIndex = null;
-
-function renderWattageSummaryCell(row) {
-    const details = Array.isArray(row?.wattage_details) ? row.wattage_details : [];
-    if (!details.length) return '—';
-
-    if (details.length === 1) {
-        return `<span style="font-size:0.88em;font-weight:600;color:#293E4C">${Number(details[0].wattage)}W</span>`;
-    }
-
-    const preview = details.slice(0, 3).map(d => `${Number(d.wattage)}W`).join(', ');
-    const remaining = details.length > 3 ? ` +${details.length - 3} more` : '';
-    return `
-        <div style="font-size:0.85em;font-weight:600;color:#293E4C;line-height:1.25">${preview}${remaining}</div>
-        <div style="font-size:0.7em;color:#6c757d;margin-top:2px">Click row to expand</div>
-    `;
-}
-
-function buildDistributionSubrowMarkup(row) {
-    const details = Array.isArray(row.wattage_details) ? row.wattage_details : [];
-    if (!details.length) {
-        return '<div style="padding:10px 12px;color:#6c757d;font-size:0.82em">No wattage-specific detail is available for this row.</div>';
-    }
-
-    const detailRowsHtml = details.map(d => {
-        const projectCount = row.assignment_scope === 'Assigned' ? Number(d.project_count || 0).toLocaleString() : '—';
-        const domestic = d.domestic_content_pct !== null ? `${Number(d.domestic_content_pct).toFixed(1)}%` : 'Not tracked';
-        return `
-            <tr>
-                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-weight:600;font-size:0.8em">${Number(d.wattage)}W</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${Number(d.module_count || 0).toLocaleString()}</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${Number(d.mw_total || 0).toFixed(2)} MW</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${Number(d.batch_count || 0).toLocaleString()}</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${projectCount}</td>
-                <td style="padding:6px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.8em">${domestic}</td>
-            </tr>
-        `;
-    }).join('');
-
-    return `
-        <div style="padding:8px 10px;background:#eef7fb;border-top:1px solid #d7eaf3;border-bottom:1px solid #d7eaf3;border-left:3px solid #9fd0e0">
-            <div style="padding:7px 8px;background:#f2f7f9;border:1px solid #e1eaef;border-radius:6px;font-size:0.78em;color:#4f5b65;margin-bottom:8px">
-                <strong style="color:#293E4C">${escapeHtml(row.manufacturer)}</strong> • ${escapeHtml(row.assignment_scope)} • Wattage breakout
-            </div>
-            <table style="width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;border:1px solid #e9ecef;border-radius:6px;overflow:hidden">
-                <thead>
-                    <tr>
-                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Wattage</th>
-                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Modules</th>
-                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">MW</th>
-                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Batches</th>
-                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Projects</th>
-                        <th style="padding:6px 8px;background:#f1f3f5;text-align:center;font-size:0.7em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px">Domestic %</th>
-                    </tr>
-                </thead>
-                <tbody>${detailRowsHtml}</tbody>
-            </table>
-        </div>
-    `;
-}
-
-function selectDistributionRow(index) {
-    const targetRow = document.querySelector(`.distribution-row[data-row-index="${index}"]`);
-    if (!targetRow) return;
-
-    const wasSelected = selectedDistributionRowIndex === index;
-    document.querySelectorAll('.distribution-subrow').forEach(row => row.remove());
-    document.querySelectorAll('.distribution-row').forEach(row => {
-        row.style.background = '';
-    });
-
-    if (wasSelected) {
-        selectedDistributionRowIndex = null;
-        return;
-    }
-
-    selectedDistributionRowIndex = index;
-    targetRow.style.background = '#f0f8fa';
-
-    const rowData = distributionModuleBreakdown[index];
-    const subRow = document.createElement('tr');
-    subRow.className = 'distribution-subrow';
-    const subCell = document.createElement('td');
-    subCell.colSpan = 7;
-    subCell.style.padding = '0';
-    subCell.innerHTML = buildDistributionSubrowMarkup(rowData);
-    subRow.appendChild(subCell);
-    targetRow.insertAdjacentElement('afterend', subRow);
-}
-
 function openModal(type, idx) {
     const p = projectsData[idx], modal = document.getElementById('modal-overlay'), circ = 2 * 3.14159 * 28;
     document.getElementById('modal-title').textContent = (type === 'order' ? 'Order Progress - ' : 'Delivery Progress - ') + p.name;
@@ -998,106 +1256,6 @@ function openChartModal(type) {
                 <p style="margin:0;font-size:0.85em;color:#495057">Projects that have been archived. Click to view the archived projects page.</p>
             </div>
         `;
-    } else if (type === 'distribution') {
-        title.textContent = 'Module Distribution - Coverage Guide';
-        const gapOrSurplus = distributionData.surplusMw > 0 ? 'surplus' : 'gap';
-        const gapOrSurplusValue = distributionData.surplusMw > 0 ? distributionData.surplusMw : distributionData.coverageGapMw;
-        const manufacturerCount = new Set(distributionModuleBreakdown.map(row => row.manufacturer)).size;
-        const totalBatches = distributionModuleBreakdown.reduce((sum, row) => sum + (Number(row.batch_count) || 0), 0);
-        const breakdownRowsHtml = distributionModuleBreakdown.length
-            ? distributionModuleBreakdown.map((row, idx) => {
-                const scope = row.assignment_scope === 'Assigned' ? 'Assigned' : 'Unassigned';
-                const scopeStyle = scope === 'Assigned'
-                    ? 'background:#e8f4f7;color:#1f4f5b;'
-                    : 'background:#fff4e5;color:#8a5a00;';
-                const moduleCount = Number(row.module_count || 0).toLocaleString();
-                const batchCount = Number(row.batch_count || 0).toLocaleString();
-                const projectCount = scope === 'Assigned' ? Number(row.project_count || 0).toLocaleString() : '—';
-                const domesticPct = row.domestic_content_pct !== null
-                    ? `${Number(row.domestic_content_pct).toFixed(1)}%`
-                    : 'Not tracked';
-                const wattageSummary = renderWattageSummaryCell(row);
-                const manufacturerUrl = `manufacturer_details?manufacturer=${encodeURIComponent(row.manufacturer)}`;
-                const modulesUrl = 'modules.php';
-
-                return `
-                    <tr class="distribution-row" data-row-index="${idx}" onclick="selectDistributionRow(${idx})" style="cursor:pointer;transition:background 0.15s ease">
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;font-weight:600;color:#293E4C;font-size:0.82em;word-break:break-word">
-                            <a href="${manufacturerUrl}" onclick="event.stopPropagation()" style="color:#2f6172;text-decoration:none;border-bottom:1px dotted #9bbecb">${escapeHtml(row.manufacturer)}</a>
-                        </td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center"><span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:0.68em;font-weight:600;${scopeStyle}">${scope}</span></td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${moduleCount}</td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">
-                            <div>${batchCount}</div>
-                            <a href="${modulesUrl}" onclick="event.stopPropagation()" style="font-size:0.7em;color:#488C9A;text-decoration:none">View</a>
-                        </td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${projectCount}</td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${wattageSummary}</td>
-                        <td style="padding:7px 8px;border-bottom:1px solid #eef1f3;text-align:center;color:#293E4C;font-size:0.82em">${domesticPct}</td>
-                    </tr>
-                `;
-            }).join('')
-            : '<tr><td colspan="7" style="padding:12px;text-align:center;color:#6c757d">No module batches found for this account.</td></tr>';
-
-        body.innerHTML = `
-            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px">
-                <h4 style="margin:0 0 8px;color:#293E4C;font-size:0.95em">What This Chart Shows</h4>
-                <p style="margin:0;font-size:0.85em;color:#495057">This chart compares project needs vs ordered modules and splits ordered MW into assigned and unassigned portions.</p>
-            </div>
-            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #488C9A">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                    <span style="width:12px;height:12px;border-radius:50%;background:#488C9A"></span>
-                    <strong style="color:#293E4C">Assigned Ordered (MW)</strong>
-                </div>
-                <p style="margin:0;font-size:0.85em;color:#495057">Ordered MW tied directly to projects.</p>
-            </div>
-            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #f59e0b">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                    <span style="width:12px;height:12px;border-radius:50%;background:#f59e0b"></span>
-                    <strong style="color:#293E4C">Unassigned Ordered (MW)</strong>
-                </div>
-                <p style="margin:0;font-size:0.85em;color:#495057">Ordered MW not yet tied to a specific project.</p>
-            </div>
-            <div style="padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #e9ecef">
-                <div style="display:flex;justify-content:space-between;font-size:0.85em;color:#495057;margin-bottom:4px"><span>Project Needs</span><strong style="color:#293E4C">${distributionData.projectNeedsMw.toFixed(2)} MW</strong></div>
-                <div style="display:flex;justify-content:space-between;font-size:0.85em;color:#495057;margin-bottom:4px"><span>Total Ordered</span><strong style="color:#293E4C">${distributionData.orderedTotalMw.toFixed(2)} MW</strong></div>
-                <div style="display:flex;justify-content:space-between;font-size:0.85em;color:#495057"><span>${gapOrSurplus === 'surplus' ? 'Surplus' : 'Gap'}</span><strong style="color:${gapOrSurplus === 'surplus' ? '#28a745' : '#dc3545'}">${gapOrSurplusValue.toFixed(2)} MW</strong></div>
-            </div>
-            <div style="margin-top:16px;padding:14px;background:#f8f9fa;border-radius:10px">
-                <h4 style="margin:0 0 10px;color:#293E4C;font-size:0.95em">Manufacturer & Module Detail</h4>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px">
-                    <div style="padding:8px 10px;background:#fff;border:1px solid #e9ecef;border-radius:8px">
-                        <div style="font-size:0.72em;color:#6c757d;text-transform:uppercase;font-weight:600">Manufacturers</div>
-                        <div style="font-size:1.1em;color:#293E4C;font-weight:700">${manufacturerCount.toLocaleString()}</div>
-                    </div>
-                    <div style="padding:8px 10px;background:#fff;border:1px solid #e9ecef;border-radius:8px">
-                        <div style="font-size:0.72em;color:#6c757d;text-transform:uppercase;font-weight:600">Batches</div>
-                        <div style="font-size:1.1em;color:#293E4C;font-weight:700">${totalBatches.toLocaleString()}</div>
-                    </div>
-                    <div style="padding:8px 10px;background:#fff;border:1px solid #e9ecef;border-radius:8px">
-                        <div style="font-size:0.72em;color:#6c757d;text-transform:uppercase;font-weight:600">Total Ordered</div>
-                        <div style="font-size:1.1em;color:#293E4C;font-weight:700">${distributionData.orderedTotalMw.toFixed(2)} MW</div>
-                    </div>
-                </div>
-                <div style="overflow-x:auto;border:1px solid #e9ecef;border-radius:8px;background:#fff">
-                    <table style="width:100%;border-collapse:collapse;table-layout:fixed">
-                        <thead>
-                            <tr>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:25%">Manufacturer</th>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:13%">Scope</th>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:11%">Modules</th>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:10%">Batches</th>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:10%">Projects</th>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:20%">Wattage</th>
-                                <th style="padding:7px 8px;background:#f1f3f5;text-align:center;font-size:0.69em;color:#5c6770;text-transform:uppercase;letter-spacing:.2px;width:11%">Domestic %</th>
-                            </tr>
-                        </thead>
-                        <tbody>${breakdownRowsHtml}</tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-        selectedDistributionRowIndex = null;
     }
 
     modal.classList.add('active');
@@ -1208,92 +1366,6 @@ const pipelineChart = new Chart(document.getElementById('pipelineChart'), {
     }
 });
 document.getElementById('pipelineChart').style.cursor = 'pointer';
-function getCoverageTooltipEl() {
-    let tooltipEl = document.getElementById('coverage-chart-tooltip');
-    if (!tooltipEl) {
-        tooltipEl = document.createElement('div');
-        tooltipEl.id = 'coverage-chart-tooltip';
-        tooltipEl.style.position = 'absolute';
-        tooltipEl.style.pointerEvents = 'none';
-        tooltipEl.style.background = 'rgba(41, 62, 76, 0.95)';
-        tooltipEl.style.color = '#fff';
-        tooltipEl.style.padding = '8px 10px';
-        tooltipEl.style.borderRadius = '8px';
-        tooltipEl.style.fontSize = '12px';
-        tooltipEl.style.fontWeight = '600';
-        tooltipEl.style.whiteSpace = 'nowrap';
-        tooltipEl.style.zIndex = '3000';
-        tooltipEl.style.opacity = '0';
-        tooltipEl.style.transition = 'opacity 120ms ease';
-        document.body.appendChild(tooltipEl);
-    }
-    return tooltipEl;
-}
-
-function coverageExternalTooltip(context) {
-    const { chart, tooltip } = context;
-    const tooltipEl = getCoverageTooltipEl();
-
-    if (tooltip.opacity === 0) {
-        tooltipEl.style.opacity = '0';
-        return;
-    }
-
-    if (tooltip.body) {
-        const lines = tooltip.body.map(b => b.lines).flat();
-        tooltipEl.innerHTML = lines.map(line => `<div>${escapeHtml(line)}</div>`).join('');
-    }
-
-    const canvasRect = chart.canvas.getBoundingClientRect();
-    let left = canvasRect.left + window.scrollX + tooltip.caretX;
-    let top = canvasRect.top + window.scrollY + tooltip.caretY - 10;
-    let transform = 'translate(-50%, -100%)';
-
-    tooltipEl.style.left = `${left}px`;
-    tooltipEl.style.top = `${top}px`;
-    tooltipEl.style.transform = transform;
-    tooltipEl.style.opacity = '1';
-
-    const margin = 8;
-    const rect = tooltipEl.getBoundingClientRect();
-    if (rect.left < margin) left += (margin - rect.left);
-    if (rect.right > window.innerWidth - margin) left -= (rect.right - (window.innerWidth - margin));
-    if (rect.top < margin) {
-        top = canvasRect.top + window.scrollY + tooltip.caretY + 12;
-        transform = 'translate(-50%, 0)';
-    }
-
-    tooltipEl.style.left = `${left}px`;
-    tooltipEl.style.top = `${top}px`;
-    tooltipEl.style.transform = transform;
-}
-
-new Chart(document.getElementById('coverageChart'), {
-    type: 'doughnut',
-    data: {
-        labels: ['Assigned Ordered', 'Unassigned Ordered', 'Gap'],
-        datasets: [{
-            data: [distributionData.assignedOrderedMw, distributionData.unassignedOrderedMw, distributionData.coverageGapMw],
-            backgroundColor: ['#488C9A', '#f59e0b', '#e9ecef'],
-            borderWidth: 0
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { display: false },
-            tooltip: {
-                enabled: false,
-                external: coverageExternalTooltip,
-                callbacks: {
-                    label: context => `${context.label}: ${Number(context.raw).toFixed(1)} MW`
-                }
-            }
-        },
-        cutout: '60%'
-    }
-});
 
 document.addEventListener('DOMContentLoaded', () => {
     setUnit(localStorage.getItem('dashboardUnit')||'modules');
