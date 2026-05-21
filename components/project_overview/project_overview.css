@@ -5290,6 +5290,34 @@
     font-weight: 700;
 }
 
+.flow-header-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.flow-exception-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 5px 11px;
+    border-radius: 999px;
+    text-decoration: none;
+    background: rgba(220,53,69,0.1);
+    color: #b02a37;
+    border: 1px solid rgba(220,53,69,0.3);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.flow-exception-chip:hover {
+    background: rgba(220,53,69,0.16);
+    border-color: rgba(220,53,69,0.5);
+    text-decoration: none;
+}
+
 .flow-3col {
     display: grid;
     grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 1.4fr) auto minmax(180px, 1fr);

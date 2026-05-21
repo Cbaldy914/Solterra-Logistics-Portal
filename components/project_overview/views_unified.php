@@ -2017,12 +2017,21 @@ document.addEventListener('keydown', function(e) {
         <div class="flow-card">
             <div class="flow-header">
                 <h2>Module Flow</h2>
-                <span class="flow-caption">
-                    <?php echo number_format($flow_total_raw); ?> modules tracked
-                    <?php if ($flow_total_raw > 0): ?>
-                        · <span class="flow-caption-pct"><?php echo number_format($flow_pct_delivered, 1); ?>% delivered to site</span>
+                <div class="flow-header-meta">
+                    <?php if (!empty($open_warranty_claims)): ?>
+                        <a class="flow-exception-chip" href="warranty.php?project_id=<?php echo $project_id; ?>"
+                           title="View open exceptions for this project">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <?php echo (int)$open_warranty_claims; ?> open exception<?php echo $open_warranty_claims === 1 ? '' : 's'; ?>
+                        </a>
                     <?php endif; ?>
-                </span>
+                    <span class="flow-caption">
+                        <?php echo number_format($flow_total_raw); ?> modules tracked
+                        <?php if ($flow_total_raw > 0): ?>
+                            · <span class="flow-caption-pct"><?php echo number_format($flow_pct_delivered, 1); ?>% delivered to site</span>
+                        <?php endif; ?>
+                    </span>
+                </div>
             </div>
 
             <?php if ($flow_total_raw <= 0): ?>

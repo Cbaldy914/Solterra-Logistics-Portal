@@ -962,6 +962,20 @@ while ($warranty_row = $res_warranty->fetch_assoc()) {
 }
 $stmt_warranty->close();
 
+// Count open (non-Closed) warranty claims for this project — flags exceptions on Module Flow
+$open_warranty_claims = 0;
+$stmt_open_wc = $conn->prepare(
+    "SELECT COUNT(*) AS open_count
+       FROM warranty_claims wc
+       JOIN site_scheduling s ON wc.scheduling_id = s.id
+      WHERE s.project_id = ? AND wc.status <> 'Closed'"
+);
+$stmt_open_wc->bind_param('i', $project_id);
+$stmt_open_wc->execute();
+$res_open_wc = $stmt_open_wc->get_result();
+$open_warranty_claims = (int)(($res_open_wc->fetch_assoc()['open_count']) ?? 0);
+$stmt_open_wc->close();
+
 // Build delivery_totals structure to match expected format
 $delivery_totals = [];
 $delivered_raw_total = 0; // Raw module count for timeline calculations
