@@ -6114,6 +6114,44 @@ button.journey-step:hover .journey-step-dot {
     padding: 4px 0;
 }
 
+.subflow-dest-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 160px;
+    min-width: 160px;
+    max-width: 220px;
+}
+
+.subflow-dest-wrap > button.subflow-stop {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+}
+
+.subflow-exception-flag {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    border-radius: 8px;
+    text-decoration: none;
+    background: rgba(220,53,69,0.1);
+    color: #b02a37;
+    border: 1px solid rgba(220,53,69,0.3);
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.subflow-exception-flag:hover {
+    background: rgba(220,53,69,0.16);
+    border-color: rgba(220,53,69,0.5);
+    transform: translateY(-1px);
+    text-decoration: none;
+}
+
 button.subflow-stop {
     background: #fff;
     border: 2px solid #e9ecef;
@@ -6439,6 +6477,7 @@ button.subflow-edge:not([disabled]):hover .subflow-edge-pill {
     .activity-feed-card { padding: 16px; }
     .subflow-row { flex-direction: column; }
     button.subflow-stop { max-width: none; min-width: 0; }
+    .subflow-dest-wrap { max-width: none; min-width: 0; }
     button.subflow-edge { margin: 6px 0; min-width: 0; width: 100%; flex-direction: row; gap: 12px; padding: 4px 0; }
     .subflow-edge-line { width: 2px; height: 28px; }
     .subflow-edge-line::after {

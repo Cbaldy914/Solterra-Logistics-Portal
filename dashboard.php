@@ -792,8 +792,8 @@ $conn->close();
         .portfolio-flow-legend-dot.pf-staged    { background: #E07F3A; }
         .portfolio-flow-legend-dot.pf-delivered { background: #488C9A; }
 
-        .project-flow-list { display: flex; flex-direction: column; gap: 4px; }
-        .project-flow-row { display: grid; grid-template-columns: minmax(80px, 1fr) 2fr auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: inherit; transition: background 0.15s ease, border-color 0.15s ease; border: 1px solid transparent; }
+        .project-flow-list { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+        .project-flow-row { display: grid; grid-template-columns: minmax(80px, 1fr) 2fr auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: inherit; transition: background 0.15s ease, border-color 0.15s ease; border: 1px solid transparent; width: 100%; box-sizing: border-box; }
         .project-flow-row:hover { background: #f8f9fa; border-color: #e9ecef; text-decoration: none; }
         .project-flow-name { font-weight: 600; color: #293E4C; font-size: 0.85em; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .project-flow-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: #f1f3f4; min-width: 80px; }

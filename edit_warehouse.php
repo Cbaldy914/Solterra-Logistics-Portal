@@ -107,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new Exception("Error preparing update statement: " . $conn->error);
         }
 
-        $stmt->bind_param("issssssssii", $account_id_update, $name, $combined_address, $street_address, $city, $state, $zip_code, $country, $is_port, $warehouse_id);
+        $stmt->bind_param("isssssssii", $account_id_update, $name, $combined_address, $street_address, $city, $state, $zip_code, $country, $is_port, $warehouse_id);
         
         if ($stmt->execute()) {
             // Smart UPSERT for cost items - preserve IDs where possible
@@ -154,6 +154,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt_insert = $conn->prepare("INSERT INTO warehouse_cost_items
                 (warehouse_id, label, trigger_event, amount, unit_type, pallets_per_truck, sqft_per_pallet, display_order)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            if (!$stmt_update || !$stmt_insert) {
+                throw new Exception("Error preparing cost item statements: " . $conn->error);
+            }
 
             $display_order = 0;
             foreach ($warehouse_fees as $fee) {
@@ -173,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($fee['id']) && in_array(intval($fee['id']), $existing_ids)) {
                     // Update existing
                     $fee_id = intval($fee['id']);
-                    $stmt_update->bind_param("ssdsiidii",
+                    $stmt_update->bind_param("ssdsidiii",
                         $label, $trigger, $amount, $unit_type,
                         $pallets_per_truck, $sqft_per_pallet, $display_order,
                         $fee_id, $warehouse_id

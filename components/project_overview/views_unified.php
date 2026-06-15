@@ -542,7 +542,16 @@ document.addEventListener('keydown', function(e) {
                         $col_label = $node['pos'] === 'origin' ? 'Origin'
                                    : ($node['pos'] === 'destination' ? 'Destination' : 'Stop');
                         $first_seen_iso = $node['first_seen'] ?? '';
+                        $dest_flag = ($node['pos'] === 'destination' && !empty($open_warranty_claims));
                     ?>
+                        <?php if ($dest_flag): ?>
+                        <div class="subflow-dest-wrap">
+                            <a class="subflow-exception-flag" href="warranty.php?project_id=<?php echo $project_id; ?>"
+                               title="View open exceptions for this project">
+                                <i class="fas fa-triangle-exclamation"></i>
+                                <?php echo (int)$open_warranty_claims; ?> open exception<?php echo $open_warranty_claims === 1 ? '' : 's'; ?>
+                            </a>
+                        <?php endif; ?>
                         <button type="button"
                                 class="subflow-stop subflow-stop-<?php echo $kind; ?> <?php echo $cls_state; ?>"
                                 data-stop-idx="<?php echo (int)$node['idx']; ?>"
@@ -575,6 +584,9 @@ document.addEventListener('keydown', function(e) {
                                 <?php endif; ?>
                             </div>
                         </button>
+                        <?php if ($dest_flag): ?>
+                        </div>
+                        <?php endif; ?>
 
                         <?php
                         // Edge after this node, if there's another node.

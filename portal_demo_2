@@ -20,9 +20,9 @@ We built this around an **exceptions-based approach**—so instead of digging th
 > "This is your command center. 
 
 
-### Module Distribution
+### Module Flow
 
-> "This chart is a quick sanity check for if you're short on modules for any project, or do you have excess that might need storage? It's simple math, but it keeps you ahead of surprises. And if you need help deciding where to store excess inventory, we have tools for that too."
+> "This is Module Flow—it shows where every project's modules are right now: at the manufacturer, in transit, at a warehouse, or delivered to site. It's an instant read on how far along each project is and where inventory is stacking up. If something looks off, you click straight into the project to dig in."
 
 
 
@@ -33,7 +33,7 @@ We built this around an **exceptions-based approach**—so instead of digging th
 
 
 
-**[Click into a warranty claim in 'Submitted' status → warranty_detail.php]**
+**[Deliveries tab → click the red "open exceptions" flag on the Module Flow card → warranty.php → open the 'Submitted' claim → warranty_detail.php]**
 
 > "I can see exactly what happened: which pallets, when they arrived, photos of the damage, and the current status. Everything is documented and tied back to the original shipment."
 
